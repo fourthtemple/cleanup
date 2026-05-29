@@ -1,0 +1,472 @@
+import * as THREE from "../node_modules/three/build/three.module.js";
+import { GLTFLoader } from "../node_modules/three/examples/jsm/loaders/GLTFLoader.js";
+import { FBXLoader } from "../node_modules/three/examples/jsm/loaders/FBXLoader.js";
+import { OrbitControls } from "../node_modules/three/examples/jsm/controls/OrbitControls.js";
+import { TransformControls } from "../node_modules/three/examples/jsm/controls/TransformControls.js";
+import {
+  cloneClipWithStartDeleted,
+  cloneClipWithStartOffsetApplied,
+  configuredClipStartOffsetSeconds,
+  remainingClipStartOffsetSeconds
+} from "./animation/animation-clip-utils.js";
+import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
+import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js";
+import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js";
+import { installCurveEditorMethods } from "./weight-editor/curve-editor.js";
+import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js";
+import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js";
+import { installPaintToolMethods } from "./weight-editor/paint-tools.js";
+import { installPoseCoreMethods } from "./weight-editor/pose-core.js";
+import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js";
+import { installIkSolverMethods } from "./weight-editor/ik-solver.js";
+import { installRigEditorMethods } from "./weight-editor/rig-editor.js";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js";
+import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
+import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js";
+import { installWeightMethods } from "./weight-editor/weights.js";
+
+const BIRD_WEIGHT_PATCH_FILE_NAME = "mixamo-cleanup-weight-patch.json";
+const ADDITIVE_POSE_EASE_FRAMES = 8;
+const EDIT_ONLY_TOOLS = new Set(["move", "pull", "push"]);
+const ACTOR_TARGETS = Object.freeze([
+  Object.freeze({
+    id: "imported",
+    label: "Imported FBX",
+    sourceLabel: "Import a raw Mixamo FBX to begin",
+    modelUrl: "",
+    mode: "embedded-clips",
+    displayHeight: 1.8,
+    defaultScale: 1,
+    defaultAction: "",
+    actions: [],
+    patchFile: BIRD_WEIGHT_PATCH_FILE_NAME,
+    defaultBone: "Hips",
+    animationLibraryFolder: ""
+  })
+]);
+
+const WING_BONES = [
+  "LeftShoulder",
+  "LeftArm",
+  "LeftForeArm",
+  "LeftHand",
+  "RightShoulder",
+  "RightArm",
+  "RightForeArm",
+  "RightHand"
+];
+
+const BODY_BONES = ["Spine", "Spine01", "Spine02", "neck", "Head", "headfront"];
+
+const PREVIEW_PARAMS = {
+  shoulderYBase: 0.02,
+  shoulderYStroke: 0.06,
+  shoulderZBase: 0.03,
+  shoulderZStroke: 0.475,
+  armYBase: 0.18,
+  armYStroke: 0.1,
+  armZBase: -0.32,
+  armZStroke: 0.52,
+  forearmYBase: 0.02,
+  forearmYStroke: 0.18,
+  forearmZBase: 0.355,
+  forearmZStroke: 0.385,
+  handYBase: -0.285,
+  handYStroke: 0,
+  handZBase: 0,
+  handZStroke: 0.21,
+  bodyX: -0.006,
+  bodyY: 0.011
+};
+
+const BASE_COLOR = new THREE.Color(0x8f9694);
+const SELECTED_COLOR = new THREE.Color(0xf0b85a);
+const MODIFIED_COLOR = new THREE.Color(0x4ba9ff);
+const SELECTED_MODIFIED_COLOR = new THREE.Color(0xf06fa8);
+const CURVE_CHANNELS = Object.freeze({
+  x: { label: "Rotate X", min: -1.8, max: 1.8, decimals: 2 },
+  y: { label: "Rotate Y", min: -1.8, max: 1.8, decimals: 2 },
+  z: { label: "Rotate Z", min: -1.8, max: 1.8, decimals: 2 },
+  px: { label: "Move X", min: -30, max: 30, decimals: 3 },
+  py: { label: "Move Y", min: -30, max: 30, decimals: 3 },
+  pz: { label: "Move Z", min: -30, max: 30, decimals: 3 }
+});
+const CURVE_CHANNEL_KEYS = Object.keys(CURVE_CHANNELS);
+const RIG_BONE_GROUPS = Object.freeze([
+  { id: "all", label: "All", pattern: /./ },
+  { id: "body", label: "Body", pattern: /(hips|spine|neck|head|pelvis|chest)/i },
+  { id: "arms", label: "Arms", pattern: /(shoulder|arm|hand|finger|thumb|wrist|claw)/i },
+  { id: "legs", label: "Legs", pattern: /(leg|foot|toe|ankle|knee)/i },
+  { id: "tail", label: "Tail", pattern: /(tail)/i },
+  { id: "face", label: "Face", pattern: /(head|eye|lid|blink|brow|jaw|mouth|nose|ear|whisker|face)/i }
+]);
+
+function finitePoseValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+class BirdWeightEditor {
+  constructor() {
+    window.mixamoCleanupEditor = this;
+    this.app = document.querySelector(".weight-editor-app");
+    this.canvas = document.getElementById("viewer-canvas");
+    this.toolButtons = Array.from(document.querySelectorAll("[data-tool]"));
+    this.viewModeButtons = Array.from(document.querySelectorAll("[data-view-mode]"));
+    this.undoButton = document.getElementById("undo-edit");
+    this.redoButton = document.getElementById("redo-edit");
+    this.cleanPreviewButton = document.getElementById("clean-preview");
+    this.mirrorModeButton = document.getElementById("mirror-mode");
+    this.characterSelect = document.getElementById("weight-character-select");
+    this.actionSelect = document.getElementById("weight-action-select");
+    this.importAnimationFileButton = document.getElementById("import-animation-file-button");
+    this.importAnimationFileInput = document.getElementById("import-animation-file");
+    this.animationLibraryFolderSelect = document.getElementById("animation-library-folder-select");
+    this.animationLibraryFolderName = document.getElementById("animation-library-folder-name");
+    this.createAnimationLibraryFolderButton = document.getElementById("create-animation-library-folder");
+    this.animationLibraryImportButton = document.getElementById("animation-library-import-button");
+    this.animationLibrarySaveAsButton = document.getElementById("animation-library-save-as");
+    this.animationLibrarySaveAsRow = document.getElementById("animation-library-save-as-row");
+    this.animationLibrarySaveAsNameInput = document.getElementById("animation-library-save-as-name");
+    this.animationLibrarySaveAsOkButton = document.getElementById("animation-library-save-as-ok");
+    this.animationLibrarySaveAsCancelButton = document.getElementById("animation-library-save-as-cancel");
+    this.animationLibraryFileInput = document.getElementById("animation-library-file");
+    this.animationLibraryRefreshButton = document.getElementById("animation-library-refresh");
+    this.animationLibraryList = document.getElementById("animation-library-list");
+    this.timelineBlendActionSelect = document.getElementById("timeline-blend-action-select");
+    this.timelineBlendControl = document.getElementById("timeline-blend-control");
+    this.timelineBlendOutput = document.getElementById("timeline-blend-output");
+    this.rigPanel = document.querySelector(".rig-bone-panel");
+    this.rigPanelToggle = document.getElementById("rig-panel-toggle");
+    this.rigPanelBody = document.getElementById("rig-panel-body");
+    this.rigBoneSearch = document.getElementById("rig-bone-search");
+    this.rigBoneGroups = document.getElementById("rig-bone-groups");
+    this.rigBoneList = document.getElementById("rig-bone-list");
+    this.addBoneParentSelect = document.getElementById("add-bone-parent-select");
+    this.addBoneNameInput = document.getElementById("add-bone-name");
+    this.addBonePosX = document.getElementById("add-bone-pos-x");
+    this.addBonePosY = document.getElementById("add-bone-pos-y");
+    this.addBonePosZ = document.getElementById("add-bone-pos-z");
+    this.addBoneRotX = document.getElementById("add-bone-rot-x");
+    this.addBoneRotY = document.getElementById("add-bone-rot-y");
+    this.addBoneRotZ = document.getElementById("add-bone-rot-z");
+    this.addBoneButton = document.getElementById("add-bone");
+    this.addBoneChainMembersSelect = document.getElementById("add-bone-chain-members");
+    this.addBoneChainButton = document.getElementById("add-bone-chain");
+    this.placeBoneSelectionButton = document.getElementById("place-bone-selection");
+    this.updateBoneButton = document.getElementById("update-bone");
+    this.deleteBoneButton = document.getElementById("delete-bone");
+    this.boneGizmoButton = document.getElementById("bone-gizmo");
+    this.ikGizmoButton = document.getElementById("ik-gizmo");
+    this.ikSolverModeSelect = document.getElementById("ik-solver-mode");
+    this.ikCounterRotation = document.getElementById("ik-counter-rotation");
+    this.ikCounterRotationOutput = document.getElementById("ik-counter-rotation-output");
+    this.brushRadius = document.getElementById("brush-radius");
+    this.throughSelectionToggle = document.getElementById("through-selection-toggle");
+    this.sculptStrength = document.getElementById("sculpt-strength");
+    this.sculptStrengthOutput = document.getElementById("sculpt-strength-output");
+    this.moveSensitivity = document.getElementById("move-sensitivity");
+    this.moveSensitivityOutput = document.getElementById("move-sensitivity-output");
+    this.clearSelectionButton = document.getElementById("clear-selection");
+    this.clearAllSelectionButton = document.getElementById("clear-all-selection");
+    this.invertSelectionButton = document.getElementById("invert-selection");
+    this.boneSelect = document.getElementById("bone-select");
+    this.boneChainSelect = document.getElementById("bone-chain-select");
+    this.weightValue = document.getElementById("weight-value");
+    this.weightValueOutput = document.getElementById("weight-value-output");
+    this.applyWeightButton = document.getElementById("apply-weight");
+    this.commitWeightButton = document.getElementById("commit-weight");
+    this.removeWeightButton = document.getElementById("remove-weight");
+    this.resetWeightsButton = document.getElementById("reset-weights");
+    this.redistributeChainWeightsButton = document.getElementById("redistribute-chain-weights");
+    this.selectionInfluenceList = document.getElementById("selection-influence-list");
+    this.poseBoneSelect = document.getElementById("pose-bone-select");
+    this.poseRotX = document.getElementById("pose-rot-x");
+    this.poseRotY = document.getElementById("pose-rot-y");
+    this.poseRotZ = document.getElementById("pose-rot-z");
+    this.poseRotXValue = document.getElementById("pose-rot-x-value");
+    this.poseRotYValue = document.getElementById("pose-rot-y-value");
+    this.poseRotZValue = document.getElementById("pose-rot-z-value");
+    this.posePosX = document.getElementById("pose-pos-x");
+    this.posePosY = document.getElementById("pose-pos-y");
+    this.posePosZ = document.getElementById("pose-pos-z");
+    this.posePosXValue = document.getElementById("pose-pos-x-value");
+    this.posePosYValue = document.getElementById("pose-pos-y-value");
+    this.posePosZValue = document.getElementById("pose-pos-z-value");
+    this.clearPoseButton = document.getElementById("clear-pose");
+    this.keyCurrentPoseButton = document.getElementById("key-current-pose");
+    this.playToggle = document.getElementById("play-toggle");
+    this.timelinePlayToggle = document.getElementById("timeline-play-toggle");
+    this.restartClip = document.getElementById("restart-clip");
+    this.timeScrub = document.getElementById("time-scrub");
+    this.timelineScrub = document.getElementById("timeline-scrub");
+    this.timelineKeys = document.getElementById("timeline-keys");
+    this.frameReadout = document.getElementById("frame-readout");
+    this.prevKeyButton = document.getElementById("prev-key");
+    this.nextKeyButton = document.getElementById("next-key");
+    this.deleteKeyButton = document.getElementById("delete-key");
+    this.clearKeysButton = document.getElementById("clear-keys");
+    this.boneLayerList = document.getElementById("bone-layer-list");
+    this.boneLabelToggle = document.getElementById("bone-label-toggle");
+    this.boneLabels = document.getElementById("bone-labels");
+    this.speedControl = document.getElementById("speed-control");
+    this.speedOutput = document.getElementById("weight-speed-output");
+    this.scaleControl = document.getElementById("weight-scale-control");
+    this.scaleOutput = document.getElementById("weight-scale-output");
+    this.loopToggle = document.getElementById("loop-toggle");
+    this.skeletonToggle = document.getElementById("skeleton-toggle");
+    this.weightJson = document.getElementById("weight-json");
+    this.savePatchButton = document.getElementById("save-patch");
+    this.loadPatchButton = document.getElementById("load-patch");
+    this.patchFileInput = document.getElementById("patch-file-input");
+    this.copyPatchButton = document.getElementById("copy-patch");
+    this.applyPatchJsonButton = document.getElementById("apply-patch-json");
+    this.clearPatchButton = document.getElementById("clear-patch");
+    this.repairSeamsButton = document.getElementById("repair-seams");
+    this.selectionCount = document.getElementById("selection-count");
+    this.patchCount = document.getElementById("patch-count");
+    this.keyCount = document.getElementById("key-count");
+    this.source = document.getElementById("clip-source");
+    this.status = document.getElementById("viewer-status");
+    this.sidePanelToggle = document.getElementById("side-panel-toggle");
+    this.sidePanelShowToggle = document.getElementById("side-panel-show-toggle");
+    this.timelineCompactToggle = document.getElementById("timeline-compact-toggle");
+    this.timelineHideToggle = document.getElementById("timeline-hide-toggle");
+    this.timelineShowToggle = document.getElementById("timeline-show-toggle");
+    this.useTimelineKeysToggle = document.getElementById("use-timeline-keys");
+    this.cameraGizmo = document.getElementById("camera-gizmo");
+    this.cameraGizmoPad = document.getElementById("camera-gizmo-pad");
+    this.cameraRollLeftButton = document.getElementById("camera-roll-left");
+    this.cameraRollRightButton = document.getElementById("camera-roll-right");
+    this.cameraRollResetButton = document.getElementById("camera-roll-reset");
+    this.cameraGizmoSpeed = document.getElementById("camera-gizmo-speed");
+    this.cameraGizmoSpeedOutput = document.getElementById("camera-gizmo-speed-output");
+    this.cameraBackgroundColor = document.getElementById("camera-background-color");
+    this.cameraAmbientLight = document.getElementById("camera-ambient-light");
+    this.cameraAmbientLightOutput = document.getElementById("camera-ambient-light-output");
+    this.cameraKeyLight = document.getElementById("camera-key-light");
+    this.cameraKeyLightOutput = document.getElementById("camera-key-light-output");
+    this.cameraRimLight = document.getElementById("camera-rim-light");
+    this.cameraRimLightOutput = document.getElementById("camera-rim-light-output");
+    this.cameraTextureGain = document.getElementById("camera-texture-gain");
+    this.cameraTextureGainOutput = document.getElementById("camera-texture-gain-output");
+    this.timelinePlayBothButton = document.getElementById("timeline-play-both");
+    this.timelineSequenceScrub = document.getElementById("timeline-sequence-scrub");
+    this.sequenceReadout = document.getElementById("sequence-readout");
+    this.sequencePhaseTrack = document.getElementById("sequence-phase-track");
+    this.sequenceSourceReadout = document.getElementById("sequence-source-readout");
+    this.sequenceMixReadout = document.getElementById("sequence-mix-readout");
+    this.sequenceTargetReadout = document.getElementById("sequence-target-readout");
+
+    this.loader = new GLTFLoader();
+    this.fbxLoader = new FBXLoader();
+    this.raycaster = new THREE.Raycaster();
+    this.pointer = new THREE.Vector2();
+    this.modelRoot = new THREE.Group();
+    this.actorTarget = ACTOR_TARGETS[0];
+    this.animationLibrarySelectedFolder = this.actorTarget.animationLibraryFolder || "";
+    this.loadToken = 0;
+    this.model = null;
+    this.baseModelScale = 1;
+    this.actorScaleMultiplier = 1;
+    this.mixer = null;
+    this.activeClipAction = null;
+    this.activeClipEntry = null;
+    this.blendClipAction = null;
+    this.blendClipEntry = null;
+    this.blendActionId = "";
+    this.clipEntries = [];
+    this.clipCleanupEdits = new Map();
+    this.lastClipSampleTime = null;
+    this.animationLibraryFolders = [];
+    this.birdFlapParams = { ...PREVIEW_PARAMS };
+    this.birdPreviewUsesFlapParams = false;
+    this.bindPose = [];
+    this.bones = new Map();
+    this.paintRecords = [];
+    this.activeTool = "paint";
+    this.activeBoneName = "";
+    this.selectedBoneChainRootName = "";
+    this.rigBoneGroup = "all";
+    this.rigBoneSearchText = "";
+    this.viewMode = "rendered";
+    this.cleanPreview = false;
+    this.mirrorMode = false;
+    this.backgroundColor = this.cameraBackgroundColor?.value || "#11171c";
+    const controlNumber = (control, fallback) => {
+      const value = Number(control?.value);
+      return Number.isFinite(value) ? value : fallback;
+    };
+    this.sceneLightLevels = {
+      ambient: controlNumber(this.cameraAmbientLight, 0.75),
+      key: controlNumber(this.cameraKeyLight, 1.25),
+      rim: controlNumber(this.cameraRimLight, 0.35)
+    };
+    this.textureGain = controlNumber(this.cameraTextureGain, 1);
+    this.manualPose = new Map();
+    this.poseKeyframes = new Map();
+    this.poseKeyframeMode = "additive";
+    this.poseKeyframesGenerated = false;
+    this.timelineKeysSourceWasAutoGenerated = false;
+    this.virtualBones = [];
+    this.manualBoneChains = [];
+    this.ikChainSettings = new Map();
+    this.boneLayerNames = [];
+    this.bonePickerNames = [];
+    this.moveDrag = null;
+    this.boneMoveDrag = null;
+    this.ikTarget = null;
+    this.ikTargetMarker = null;
+    this.ikTargetGizmoArmed = false;
+    this.ikDrag = null;
+    this.playing = false;
+    this.draggingScrub = false;
+    this.draggingPoseControl = false;
+    this.painting = false;
+    this.neighborStroke = null;
+    this.cameraGizmoDrag = null;
+    this.undoStack = [];
+    this.redoStack = [];
+    this.maxUndoSteps = 40;
+    this.markerVertexCount = 0;
+    this.vertexMarkerCount = 0;
+    this.progress = 0;
+    this.timelineFrames = 96;
+    this.sequencePlaying = false;
+    this.sequenceElapsed = 0;
+    this.sequenceRootAnchor = null;
+    this.sequenceTargetRootStart = null;
+    this.timelineReadoutLastUpdate = 0;
+    this.timelineReadoutIntervalMs = 300;
+    this.playbackReadoutLastUpdate = 0;
+    this.playbackReadoutIntervalMs = 180;
+    this.sequenceReadoutLastUpdate = 0;
+    this.sequenceReadoutIntervalMs = 180;
+    this.curveReadoutLastUpdate = 0;
+    this.curveReadoutIntervalMs = 600;
+    this.boneLayerValueNodes = [];
+    this.pendingBonePlacement = false;
+    this.boneMoveGizmoArmed = false;
+    this.expandedBoneName = "";
+    this.curveChannelKey = "y";
+    this.curveCanvas = null;
+    this.curveContext = null;
+    this.curvePlayhead = null;
+    this.curveReadout = null;
+    this.curveDragging = null;
+    this.lastFrameTime = performance.now();
+
+    this.tempVector = new THREE.Vector3();
+    this.tempWorld = new THREE.Vector3();
+    this.tempNormal = new THREE.Vector3();
+    this.tempWorldDelta = new THREE.Vector3();
+    this.tempMatrix = new THREE.Matrix4();
+    this.tempSkinMatrix = new THREE.Matrix4();
+    this.tempWeightedSkinMatrix = new THREE.Matrix4();
+    this.tempBoneMatrix = new THREE.Matrix4();
+    this.tempNormalMatrix = new THREE.Matrix3();
+    this.tempLocalA = new THREE.Vector3();
+    this.tempLocalB = new THREE.Vector3();
+    this.tempDesiredWorld = new THREE.Vector3();
+    this.tempDesiredLocal = new THREE.Vector3();
+    this.tempWorldNormal = new THREE.Vector3();
+
+    this.createScene();
+    this.renderCharacterOptions();
+    this.bindControls();
+    this.setPlayback(false);
+    void this.refreshAnimationLibrary?.({ silent: true });
+    this.setSidePanelOpen(this.app?.classList.contains("is-side-panel-open"));
+    this.renderActionOptions();
+    this.syncTimelineControls();
+    this.syncPatchJson();
+    this.setStatus("Import a raw Mixamo FBX to begin");
+    this.animate();
+  }
+}
+
+const BIRD_WEIGHT_EDITOR_DEPS = {
+  THREE,
+  FBXLoader,
+  OrbitControls,
+  TransformControls,
+  cloneClipWithStartDeleted,
+  cloneClipWithStartOffsetApplied,
+  configuredClipStartOffsetSeconds,
+  remainingClipStartOffsetSeconds,
+  loadBirdFlapProfile,
+  BIRD_WEIGHT_PATCH_FILE_NAME,
+  ACTOR_TARGETS,
+  WING_BONES,
+  BODY_BONES,
+  PREVIEW_PARAMS,
+  BASE_COLOR,
+  SELECTED_COLOR,
+  MODIFIED_COLOR,
+  SELECTED_MODIFIED_COLOR,
+  CURVE_CHANNELS,
+  CURVE_CHANNEL_KEYS,
+  ADDITIVE_POSE_EASE_FRAMES,
+  RIG_BONE_GROUPS,
+  EDIT_ONLY_TOOLS,
+  finitePoseValue,
+  writeJsonFile,
+  writeAnimationLibraryCleanupFile
+};
+
+installSceneAndControlMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installAnimationLibraryMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installActorAndModelMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installRigEditorMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installIkSolverMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installPaintToolMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installWeightMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installVertexPatchMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installPoseCoreMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installPoseTimelineMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installSequencePlaybackMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installOverlayAndRenderMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installCurveEditorMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installAutoKeySolverMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+
+
+async function writeJsonFile(fileName, text, description) {
+  if (typeof window.showSaveFilePicker === "function") {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: fileName,
+      types: [{
+        description,
+        accept: { "application/json": [".json"] }
+      }]
+    });
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    return "file";
+  }
+  const blob = new Blob([text], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return "download";
+}
+
+async function writeAnimationLibraryCleanupFile(folder, fileName, text) {
+  try {
+    const response = await fetch("/api/animation-library/cleanup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder, fileName, content: text })
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+new BirdWeightEditor();

@@ -1,0 +1,14 @@
+{
+  "name": "mixamo-cleanup-editor",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Standalone browser-based Mixamo cleanup editor for raw FBX animation imports.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "node ./scripts/dev-server.mjs"
+  },
+  "dependencies": {
+    "three": "^0.184.0"
+  }
+}

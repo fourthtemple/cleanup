@@ -1,0 +1,1482 @@
+export function installSceneAndControlMethods(BirdWeightEditor, deps) {
+  const {
+    THREE,
+    OrbitControls,
+    TransformControls,
+    cloneClipWithStartOffsetApplied,
+    configuredClipStartOffsetSeconds,
+    remainingClipStartOffsetSeconds,
+    loadBirdFlapProfile,
+    ACTOR_TARGETS,
+    PREVIEW_PARAMS,
+    BASE_COLOR,
+    SELECTED_COLOR,
+    MODIFIED_COLOR,
+    SELECTED_MODIFIED_COLOR,
+    CURVE_CHANNELS,
+    CURVE_CHANNEL_KEYS,
+    ADDITIVE_POSE_EASE_FRAMES,
+    RIG_BONE_GROUPS,
+    EDIT_ONLY_TOOLS,
+    finitePoseValue,
+    writeJsonFile
+  } = deps;
+  Object.assign(BirdWeightEditor.prototype, {
+    createScene() {
+      this.renderer = new THREE.WebGLRenderer({
+        canvas: this.canvas,
+        antialias: true,
+        alpha: false,
+        preserveDrawingBuffer: true
+      });
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+      this.applyBackgroundColor(this.backgroundColor || "#11171c");
+      this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+      this.scene = new THREE.Scene();
+      this.scene.fog = new THREE.Fog(this.backgroundColor || "#11171c", 30, 140);
+      this.applyBackgroundColor(this.backgroundColor || "#11171c");
+      this.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 220);
+      this.camera.position.set(0, 1.35, 4.2);
+
+      this.controls = new OrbitControls(this.camera, this.canvas);
+      this.controls.target.set(0, 0.92, 0);
+      this.controls.enableDamping = true;
+      this.controls.dampingFactor = 0.08;
+      this.controls.minDistance = 1.4;
+      this.controls.maxDistance = 120;
+      this.controls.mouseButtons = {
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN
+      };
+      this.controls.touches = {
+        ONE: THREE.TOUCH.ROTATE,
+        TWO: THREE.TOUCH.DOLLY_PAN
+      };
+      this.controls.screenSpacePanning = true;
+      this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
+
+      this.ambientSceneLight = new THREE.HemisphereLight(0xf4dec4, 0x25303b, 1);
+      this.scene.add(this.ambientSceneLight);
+
+      const key = new THREE.DirectionalLight(0xffe2b8, 1);
+      key.position.set(3.4, 4.2, 4.5);
+      this.keySceneLight = key;
+      this.scene.add(key);
+
+      const rim = new THREE.DirectionalLight(0x8bb7ff, 1);
+      rim.position.set(-3.6, 2.4, -2.8);
+      rim.target.position.copy(this.controls.target);
+      this.rimSceneLight = rim;
+      this.scene.add(rim);
+      this.scene.add(rim.target);
+      this.applySceneLighting();
+
+      const grid = new THREE.GridHelper(8, 32, 0xdfb45d, 0x35434a);
+      grid.name = "ground reference grid";
+      grid.material.transparent = true;
+      grid.material.opacity = 0.32;
+      grid.material.depthWrite = false;
+      grid.renderOrder = 1;
+      this.groundGrid = grid;
+      this.scene.add(grid);
+
+      const floor = new THREE.Mesh(
+        new THREE.CircleGeometry(4, 72),
+        new THREE.MeshBasicMaterial({
+          color: 0x172026,
+          transparent: true,
+          opacity: 0.72,
+          depthWrite: false
+        })
+      );
+      floor.name = "ground reference floor";
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.y = -0.012;
+      floor.renderOrder = 0;
+      this.groundFloor = floor;
+      this.scene.add(floor);
+
+      this.markerGeometry = new THREE.BufferGeometry();
+      this.markerMaterial = new THREE.PointsMaterial({
+        size: 4,
+        sizeAttenuation: false,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.72,
+        depthTest: true,
+        depthWrite: false
+      });
+      this.selectionMarkers = new THREE.Points(this.markerGeometry, this.markerMaterial);
+      this.selectionMarkers.frustumCulled = false;
+      this.selectionMarkers.renderOrder = 20;
+      this.scene.add(this.selectionMarkers);
+
+      this.selectedBoneLineGeometry = new THREE.BufferGeometry();
+      this.selectedBoneLine = new THREE.LineSegments(
+        this.selectedBoneLineGeometry,
+        new THREE.LineBasicMaterial({
+          color: 0xffd36e,
+          transparent: true,
+          opacity: 0.98,
+          depthTest: false,
+          depthWrite: false
+        })
+      );
+      this.selectedBoneLine.renderOrder = 30;
+      this.scene.add(this.selectedBoneLine);
+
+      this.selectedBoneJointGeometry = new THREE.BufferGeometry();
+      this.selectedBoneJoints = new THREE.Points(
+        this.selectedBoneJointGeometry,
+        new THREE.PointsMaterial({
+          color: 0xfff0b5,
+          size: 13,
+          sizeAttenuation: false,
+          transparent: true,
+          opacity: 0.96,
+          depthTest: false,
+          depthWrite: false
+        })
+      );
+      this.selectedBoneJoints.renderOrder = 31;
+      this.scene.add(this.selectedBoneJoints);
+
+      this.bonePickerLineGeometry = new THREE.BufferGeometry();
+      this.bonePickerLines = new THREE.LineSegments(
+        this.bonePickerLineGeometry,
+        new THREE.LineBasicMaterial({
+          color: 0x78cfff,
+          transparent: true,
+          opacity: 0.58,
+          depthTest: false,
+          depthWrite: false
+        })
+      );
+      this.bonePickerLines.renderOrder = 28;
+      this.bonePickerLines.visible = false;
+      this.scene.add(this.bonePickerLines);
+
+      this.bonePickerGeometry = new THREE.BufferGeometry();
+      this.bonePickerJoints = new THREE.Points(
+        this.bonePickerGeometry,
+        new THREE.PointsMaterial({
+          size: 10,
+          sizeAttenuation: false,
+          vertexColors: true,
+          transparent: true,
+          opacity: 0.96,
+          depthTest: false,
+          depthWrite: false
+        })
+      );
+      this.bonePickerJoints.renderOrder = 29;
+      this.bonePickerJoints.visible = false;
+      this.scene.add(this.bonePickerJoints);
+
+      this.vertexGeometry = new THREE.BufferGeometry();
+      this.vertexMaterial = new THREE.PointsMaterial({
+        size: 3,
+        sizeAttenuation: false,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.76,
+        depthTest: true,
+        depthWrite: false
+      });
+      this.vertexMarkers = new THREE.Points(this.vertexGeometry, this.vertexMaterial);
+      this.vertexMarkers.frustumCulled = false;
+      this.vertexMarkers.renderOrder = 12;
+      this.vertexMarkers.visible = false;
+      this.scene.add(this.vertexMarkers);
+
+      this.neighborHoverGeometry = new THREE.BufferGeometry();
+      this.neighborHoverMarker = new THREE.Points(
+        this.neighborHoverGeometry,
+        new THREE.PointsMaterial({
+          color: 0x7af7ff,
+          size: 14,
+          sizeAttenuation: false,
+          transparent: true,
+          opacity: 0.98,
+          depthTest: false,
+          depthWrite: false
+        })
+      );
+      this.neighborHoverMarker.frustumCulled = false;
+      this.neighborHoverMarker.renderOrder = 34;
+      this.neighborHoverMarker.visible = false;
+      this.scene.add(this.neighborHoverMarker);
+
+      this.selectionPivot = new THREE.Object3D();
+      this.selectionPivot.visible = false;
+      this.scene.add(this.selectionPivot);
+
+      this.selectionPivotMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.025, 16, 12),
+        new THREE.MeshBasicMaterial({
+          color: 0xffd36e,
+          transparent: true,
+          opacity: 0.92,
+          depthTest: false,
+          depthWrite: false
+        })
+      );
+      this.selectionPivotMarker.renderOrder = 32;
+      this.selectionPivotMarker.visible = false;
+      this.scene.add(this.selectionPivotMarker);
+
+      this.createIkTarget?.();
+
+      this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
+      this.transformControls.setMode("translate");
+      this.transformControls.setSize(0.72);
+      this.transformControls.enabled = false;
+      this.transformControls.visible = false;
+      this.transformControls.addEventListener("dragging-changed", (event) => {
+        if (event.value) {
+          if (this.activeTool === "bone" && this.ikTargetGizmoArmed && this.transformControls.object === this.ikTarget) {
+            this.beginIkMove();
+          } else if (this.activeTool === "bone" && this.boneMoveGizmoArmed) {
+            this.beginBoneMove();
+          } else {
+            this.beginSelectionMove();
+          }
+          this.pausePlayback();
+        } else {
+          if (this.ikDrag) {
+            this.finishIkMove();
+          } else if (this.boneMoveDrag) {
+            this.finishBoneMove();
+          } else {
+            this.finishSelectionMove();
+          }
+        }
+        this.controls.enabled = event.value ? false : this.activeTool === "orbit" || this.activeTool === "bone";
+      });
+      this.transformControls.addEventListener("objectChange", () => {
+        if (this.ikDrag) {
+          this.applyIkMove();
+        } else if (this.boneMoveDrag) {
+          this.applyBoneMove();
+        } else {
+          this.applySelectionMove();
+        }
+      });
+      this.transformHelper = this.transformControls.getHelper();
+      this.transformHelper.visible = false;
+      this.scene.add(this.transformHelper);
+
+      this.scene.add(this.modelRoot);
+      this.resize();
+      window.addEventListener("resize", () => this.resize());
+    },
+
+    bindControls() {
+      this.characterSelect?.addEventListener("change", () => {
+        void this.selectActor(this.characterSelect.value);
+      });
+      this.actionSelect?.addEventListener("change", () => {
+        if (this.selectedLibraryCharacterFolderName?.()) {
+          this.setStatus(`Ready to load ${this.actionSelect.value || "animation"}`);
+          return;
+        }
+        void this.selectClipAction(this.actionSelect.value);
+      });
+      this.importAnimationFileButton?.addEventListener("click", () => {
+        void this.loadSelectedAnimationLibraryFile?.();
+      });
+      this.importAnimationFileInput?.addEventListener("change", () => {
+        const file = this.importAnimationFileInput.files?.[0];
+        if (file) {
+          void this.loadImportedAnimationFile(file);
+        }
+      });
+      this.bindAnimationLibraryControls?.();
+      this.timelineBlendActionSelect?.addEventListener("change", () => {
+        void this.selectBlendAction(this.timelineBlendActionSelect.value);
+      });
+      this.rigPanelToggle?.addEventListener("click", () => this.setRigPanelOpen(this.rigPanel?.classList.contains("is-collapsed")));
+      this.rigBoneSearch?.addEventListener("input", () => {
+        this.rigBoneSearchText = this.rigBoneSearch.value.trim().toLowerCase();
+        this.updateRigBoneList();
+      });
+      this.rigBoneGroups?.addEventListener("click", (event) => {
+        const button = event.target.closest?.("[data-rig-bone-group]");
+        if (!button) {
+          return;
+        }
+        this.rigBoneGroup = button.dataset.rigBoneGroup || "all";
+        this.updateRigBoneList();
+      });
+      this.addBoneButton?.addEventListener("click", () => this.withUndo("Add bone", () => this.addBoneFromControls()));
+      this.addBoneChainButton?.addEventListener("click", () => this.withUndo("Add chain", () => this.addBoneChainFromControls()));
+      this.placeBoneSelectionButton?.addEventListener("click", () => this.beginBonePlacement());
+      this.addBoneParentSelect?.addEventListener("change", () => {
+        if (this.customBoneRecord?.(this.activeBoneName)) {
+          this.withUndo("Update bone", () => this.updateActiveVirtualBoneFromInspector?.());
+          return;
+        }
+        this.setActiveBone(this.addBoneParentSelect.value);
+      });
+      this.updateBoneButton?.addEventListener("click", () => {
+        const updated = this.withUndo("Update bone", () => this.updateActiveVirtualBoneFromInspector?.());
+        if (updated) {
+          this.showActiveBoneMoveGizmo?.();
+        } else {
+          this.setStatus("Select a custom bone to move");
+        }
+      });
+      const rigNumberInputs = [
+        this.addBonePosX,
+        this.addBonePosY,
+        this.addBonePosZ,
+        this.addBoneRotX,
+        this.addBoneRotY,
+        this.addBoneRotZ
+      ].filter(Boolean);
+      const beginRigInspectorUndo = () => {
+        if (this.customBoneRecord?.(this.activeBoneName)) {
+          this.beginPoseControlUndo("Update bone");
+        }
+      };
+      const updateRigInspector = (status = false) => {
+        const updated = this.updateActiveVirtualBoneFromInspector?.({ status });
+        if (updated) {
+          this.updateBoneMoveGizmo?.();
+        }
+      };
+      for (const input of rigNumberInputs) {
+        input.addEventListener("pointerdown", beginRigInspectorUndo);
+        input.addEventListener("focus", beginRigInspectorUndo);
+        input.addEventListener("input", () => updateRigInspector(false));
+        input.addEventListener("change", () => updateRigInspector(true));
+        input.addEventListener("blur", () => this.endPoseControlUndo());
+      }
+      this.addBoneNameInput?.addEventListener("focus", beginRigInspectorUndo);
+      this.addBoneNameInput?.addEventListener("change", () => updateRigInspector(true));
+      this.addBoneNameInput?.addEventListener("blur", () => {
+        updateRigInspector(true);
+        this.endPoseControlUndo();
+      });
+      this.deleteBoneButton?.addEventListener("click", () => this.withUndo("Delete bone", () => this.deleteActiveVirtualBone()));
+      this.boneGizmoButton?.addEventListener("click", () => this.toggleActiveBoneMoveGizmo?.());
+      this.ikGizmoButton?.addEventListener("click", () => this.toggleIkMoveGizmo?.());
+      this.ikSolverModeSelect?.addEventListener("change", () => {
+        this.withUndo("IK settings", () => this.updateSelectedIkSettingsFromControls?.());
+      });
+      this.ikCounterRotation?.addEventListener("input", () => {
+        if (this.ikCounterRotationOutput) {
+          this.ikCounterRotationOutput.textContent = (Number(this.ikCounterRotation.value) || 0).toFixed(2);
+        }
+      });
+      this.ikCounterRotation?.addEventListener("change", () => {
+        this.withUndo("IK settings", () => this.updateSelectedIkSettingsFromControls?.());
+      });
+
+      this.viewModeButtons.forEach((button) => {
+        button.addEventListener("click", () => this.setViewMode(button.dataset.viewMode));
+      });
+      this.cleanPreviewButton.addEventListener("click", () => this.setCleanPreview(!this.cleanPreview));
+      this.mirrorModeButton.addEventListener("click", () => this.setMirrorMode(!this.mirrorMode));
+      this.setViewMode("rendered", { silent: true });
+
+      this.toolButtons.forEach((button) => {
+        button.addEventListener("click", () => this.setTool(button.dataset.tool));
+      });
+      this.setTool("paint");
+      this.updateUndoButton();
+      this.undoButton?.addEventListener("click", () => this.undoLastEdit());
+      this.redoButton?.addEventListener("click", () => this.redoLastEdit());
+      window.addEventListener("keydown", (event) => {
+        const isUndo = (event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "z";
+        const isRedo = (event.metaKey || event.ctrlKey)
+          && ((event.shiftKey && event.key.toLowerCase() === "z") || event.key.toLowerCase() === "y");
+        if (!isUndo || event.target?.matches?.("input, textarea, select")) {
+          if (!isRedo || event.target?.matches?.("input, textarea, select")) {
+            return;
+          }
+          event.preventDefault();
+          this.redoLastEdit();
+          return;
+        }
+        event.preventDefault();
+        this.undoLastEdit();
+      });
+
+      this.canvas.addEventListener("pointerdown", (event) => this.onPointerDown(event));
+      this.canvas.addEventListener("pointermove", (event) => this.onPointerMove(event));
+      window.addEventListener("pointerup", () => {
+        this.draggingPoseControl = false;
+        this.endPoseControlUndo();
+        this.onPointerUp();
+      });
+
+      this.clearSelectionButton.addEventListener("click", () => this.withUndo("Clear selection", () => this.clearSelection()));
+      this.clearAllSelectionButton.addEventListener("click", () => this.withUndo("Reset all", () => this.resetWeights()));
+      this.invertSelectionButton.addEventListener("click", () => this.withUndo("Invert selection", () => this.invertSelection()));
+      this.applyWeightButton.addEventListener("click", () => {
+        this.withUndo("Set weight", () => this.assignSelectionToBone(this.boneSelect.value, Number(this.weightValue.value)));
+      });
+      this.commitWeightButton.addEventListener("click", () => {
+        this.withUndo("Commit weight", () => this.assignSelectionToBone(this.boneSelect.value, Number(this.weightValue.value), { clearSelection: true }));
+      });
+      this.removeWeightButton.addEventListener("click", () => {
+        this.withUndo("De-weight", () => this.removeBoneInfluenceFromSelection(this.boneSelect.value));
+      });
+      this.resetWeightsButton.addEventListener("click", () => this.withUndo("Reset weights", () => this.resetWeights()));
+      this.redistributeChainWeightsButton?.addEventListener("click", () => {
+        this.withUndo("Distribute chain", () => this.redistributeSelectionAcrossBoneChain(this.boneChainSelect?.value || this.selectedBoneChainRootName));
+      });
+      this.selectionInfluenceList.addEventListener("input", (event) => {
+        const slider = event.target.closest("[data-adjust-influence]");
+        if (!slider) {
+          return;
+        }
+        const value = slider.closest(".selection-influence-row")?.querySelector(".selection-influence-value");
+        if (value) {
+          value.textContent = `${Math.round(Number(slider.value) * 100)}%`;
+        }
+      });
+      this.selectionInfluenceList.addEventListener("change", (event) => {
+        const slider = event.target.closest("[data-adjust-influence]");
+        if (!slider) {
+          return;
+        }
+        this.withUndo("Adjust influence", () => this.adjustSelectionInfluenceFromControl(slider.dataset.adjustInfluence, Number(slider.value)));
+      });
+      this.updateRangeOutputs();
+      this.throughSelectionToggle?.addEventListener("change", () => {
+        this.setStatus(this.throughSelectionToggle.checked ? "Through selection on" : "Through selection off");
+      });
+      this.sculptStrength.addEventListener("input", () => this.updateRangeOutputs());
+      this.moveSensitivity.addEventListener("input", () => this.updateRangeOutputs());
+      this.weightValue.addEventListener("input", () => this.updateRangeOutputs());
+      this.speedControl?.addEventListener("input", () => this.updateRangeOutputs());
+      this.scaleControl?.addEventListener("input", () => {
+        this.setActorScaleFromControlValue(Number(this.scaleControl.value) || 0);
+      });
+      this.timelineBlendControl?.addEventListener("input", () => {
+        this.updateBlendOutput();
+        this.syncSequenceControls();
+        if (this.sequencePlaying) {
+          this.stopSequencePreview({ applyPose: true });
+        }
+      });
+      this.boneSelect.addEventListener("change", () => {
+        this.setActiveBone(this.boneSelect.value);
+      });
+      this.boneChainSelect?.addEventListener("change", () => {
+        this.selectBoneChain(this.boneChainSelect.value);
+      });
+      this.poseBoneSelect.addEventListener("change", () => {
+        this.setActiveBone(this.poseBoneSelect.value);
+        this.syncPoseControls();
+        this.updateBoneLayerList();
+      });
+      for (const input of [this.poseRotX, this.poseRotY, this.poseRotZ, this.posePosX, this.posePosY, this.posePosZ]) {
+        input.addEventListener("pointerdown", () => {
+          this.beginPoseControlUndo();
+          this.draggingPoseControl = true;
+        });
+        input.addEventListener("pointerup", () => {
+          this.draggingPoseControl = false;
+          this.endPoseControlUndo();
+        });
+        input.addEventListener("focus", () => this.beginPoseControlUndo());
+        input.addEventListener("blur", () => {
+          this.draggingPoseControl = false;
+          this.endPoseControlUndo();
+        });
+        input.addEventListener("input", () => {
+          this.beginPoseControlUndo();
+          this.pausePlayback();
+          this.updateManualPoseFromControls();
+        });
+      }
+      for (const [range, numberInput, channel] of [
+        [this.poseRotX, this.poseRotXValue, "x"],
+        [this.poseRotY, this.poseRotYValue, "y"],
+        [this.poseRotZ, this.poseRotZValue, "z"],
+        [this.posePosX, this.posePosXValue, "px"],
+        [this.posePosY, this.posePosYValue, "py"],
+        [this.posePosZ, this.posePosZValue, "pz"]
+      ]) {
+        if (numberInput?.tagName !== "INPUT") {
+          continue;
+        }
+        const applyNumberInput = () => {
+          const value = Number(numberInput.value);
+          if (!Number.isFinite(value)) {
+            return;
+          }
+          this.beginPoseControlUndo();
+          this.expandPoseControlDomainForValue(channel, value);
+          range.value = String(value);
+          this.pausePlayback();
+          this.updateManualPoseFromControls();
+        };
+        numberInput.addEventListener("pointerdown", () => {
+          this.beginPoseControlUndo();
+          this.draggingPoseControl = true;
+        });
+        numberInput.addEventListener("focus", () => this.beginPoseControlUndo());
+        numberInput.addEventListener("input", applyNumberInput);
+        numberInput.addEventListener("change", applyNumberInput);
+        numberInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            applyNumberInput();
+            numberInput.blur();
+          }
+        });
+        numberInput.addEventListener("blur", () => {
+          this.draggingPoseControl = false;
+          this.endPoseControlUndo();
+        });
+      }
+      this.clearPoseButton.addEventListener("click", () => this.withUndo("Clear pose", () => this.clearCurrentPose()));
+      this.keyCurrentPoseButton.addEventListener("click", () => (
+        this.withUndo("Key pose", () => this.keyCurrentPose(), { clearManualPose: true })
+      ));
+      this.useTimelineKeysToggle?.addEventListener("change", () => {
+        const enabled = this.useTimelineKeysToggle.checked;
+        this.withUndo(
+          enabled ? "Use timeline keys" : "Use raw FBX clip",
+          () => this.setTimelineKeysSourceEnabled(enabled),
+          { clearManualPose: true }
+        );
+      });
+
+      this.playToggle.addEventListener("click", () => {
+        this.setPlayback(!this.playing);
+      });
+      this.timelinePlayToggle.addEventListener("click", () => {
+        this.setPlayback(!this.playing);
+      });
+      this.restartClip.addEventListener("click", () => {
+        this.stopSequencePreview({ applyPose: false, resetElapsed: true });
+        this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
+        this.progress = 0;
+        this.timeScrub.value = "0";
+        this.applyPose(this.progress);
+        this.syncPoseControlsToCurrentBone();
+        this.setPlayback(true);
+      });
+      this.timeScrub.addEventListener("pointerdown", () => {
+        this.draggingScrub = true;
+      });
+      this.timeScrub.addEventListener("pointerup", () => {
+        this.draggingScrub = false;
+      });
+      this.timeScrub.addEventListener("input", () => {
+        this.stopSequencePreview({ applyPose: false, resetElapsed: true });
+        this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
+        this.progress = Number(this.timeScrub.value);
+        this.syncTimelineControls();
+        this.applyPose(this.progress);
+        this.syncPoseControlsToCurrentBone();
+        this.updateBoneLayerValues({ force: true });
+      });
+      this.timelineScrub.addEventListener("input", () => {
+        this.stopSequencePreview({ applyPose: false, resetElapsed: true });
+        this.pausePlayback();
+        this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
+        this.progress = Number(this.timelineScrub.value) / this.timelineFrames;
+        this.timeScrub.value = String(this.progress);
+        this.syncTimelineControls();
+        this.applyPose(this.progress);
+        this.syncPoseControlsToCurrentBone();
+        this.updateBoneLayerValues({ force: true });
+      });
+      this.timelinePlayBothButton?.addEventListener("click", () => {
+        if (this.sequencePlaying || this.timelinePlayBothButton.textContent === "Stop Sequence") {
+          this.stopSequencePreview({ applyPose: true, resetElapsed: true });
+        } else {
+          void this.playBothSequence();
+        }
+      });
+      this.timelineSequenceScrub?.addEventListener("input", () => {
+        const duration = this.sequenceDurationSeconds();
+        if (duration <= 0) {
+          return;
+        }
+        this.setPlayback(false);
+        this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
+        this.sequencePlaying = false;
+        this.sequenceElapsed = (Number(this.timelineSequenceScrub.value) / 1000) * duration;
+        this.applySequencePose();
+        this.syncSequenceControls();
+        this.updateBoneLayerValues({ force: true });
+      });
+      this.loopToggle.addEventListener("change", () => {
+        if (this.activeClipAction) {
+          this.activeClipAction.setLoop(this.loopToggle.checked ? THREE.LoopRepeat : THREE.LoopOnce, this.loopToggle.checked ? Infinity : 1);
+          this.activeClipAction.clampWhenFinished = !this.loopToggle.checked;
+        }
+      });
+      this.prevKeyButton.addEventListener("click", () => this.goToAdjacentKey(-1));
+      this.nextKeyButton.addEventListener("click", () => this.goToAdjacentKey(1));
+      this.deleteKeyButton.addEventListener("click", () => this.withUndo("Delete key", () => this.deleteCurrentKey()));
+      this.clearKeysButton.addEventListener("click", () => this.withUndo("Clear keys", () => this.clearKeyframes()));
+      this.skeletonToggle.addEventListener("change", () => this.updateSkeletonHelper());
+      this.boneLabelToggle.addEventListener("change", () => this.updateBoneLabels());
+
+      this.savePatchButton?.addEventListener("click", () => this.savePatchFile());
+      this.loadPatchButton?.addEventListener("click", () => {
+        if (this.patchFileInput) {
+          this.patchFileInput.value = "";
+          this.patchFileInput.click();
+        }
+      });
+      this.patchFileInput?.addEventListener("change", () => {
+        const file = this.patchFileInput.files?.[0];
+        if (file) {
+          void this.loadPatchFile(file);
+        }
+      });
+      this.copyPatchButton?.addEventListener("click", async () => {
+        this.syncPatchJson();
+        try {
+          await navigator.clipboard.writeText(this.weightJson.value);
+          this.setStatus("Copied weight patch JSON");
+        } catch {
+          this.weightJson.select();
+          this.setStatus("Weight patch JSON selected");
+        }
+      });
+      this.applyPatchJsonButton?.addEventListener("click", () => this.applyPatchJson());
+      this.clearPatchButton?.addEventListener("click", () => this.withUndo("Clear patch", () => {
+        this.resetWeights();
+        this.resetVirtualBones();
+        this.clearSelection();
+        this.poseKeyframes.clear();
+        this.manualPose.clear();
+        this.poseKeyframeMode = "additive";
+        this.poseKeyframesGenerated = false;
+        this.clipCleanupEdits.clear();
+        this.syncPoseControls();
+        this.refreshRigControls();
+        this.syncPatchJson();
+        this.updateTimelineKeyMarkers();
+        this.updateCounts();
+        this.setStatus("Cleared patch");
+      }));
+      this.repairSeamsButton?.addEventListener("click", () => this.repairSeams());
+      this.sidePanelToggle?.addEventListener("click", () => {
+        this.setSidePanelOpen(!this.app.classList.contains("is-side-panel-open"));
+      });
+      this.sidePanelShowToggle?.addEventListener("click", () => {
+        this.setSidePanelOpen(true);
+      });
+      this.timelineCompactToggle?.addEventListener("click", () => {
+        this.setTimelineCompact(!this.app.classList.contains("is-timeline-compact"));
+      });
+      this.timelineHideToggle?.addEventListener("click", () => this.setTimelineHidden(true));
+      this.timelineShowToggle?.addEventListener("click", () => this.setTimelineHidden(false));
+
+      document.querySelectorAll("[data-camera]").forEach((button) => {
+        button.addEventListener("click", () => this.setCameraPreset(button.dataset.camera));
+      });
+      document.querySelectorAll("[data-camera-axis]").forEach((button) => {
+        button.addEventListener("pointerdown", (event) => this.beginCameraAxisDrag(event, button.dataset.cameraAxis));
+        button.addEventListener("pointermove", (event) => this.dragCameraGizmo(event));
+        button.addEventListener("pointerup", (event) => this.endCameraGizmoDrag(event));
+        button.addEventListener("pointercancel", (event) => this.endCameraGizmoDrag(event));
+      });
+      this.cameraGizmoPad?.addEventListener("pointerdown", (event) => this.beginCameraGizmoDrag(event));
+      this.cameraGizmoPad?.addEventListener("pointermove", (event) => this.dragCameraGizmo(event));
+      this.cameraGizmoPad?.addEventListener("pointerup", (event) => this.endCameraGizmoDrag(event));
+      this.cameraGizmoPad?.addEventListener("pointercancel", (event) => this.endCameraGizmoDrag(event));
+      this.cameraGizmoPad?.addEventListener("dblclick", () => this.resetCameraRoll());
+      this.cameraRollLeftButton?.addEventListener("click", () => this.rollCameraBy(-Math.PI / 2));
+      this.cameraRollRightButton?.addEventListener("click", () => this.rollCameraBy(Math.PI / 2));
+      this.cameraRollResetButton?.addEventListener("click", () => this.resetCameraRoll());
+      this.cameraGizmoSpeed?.addEventListener("input", () => this.updateRangeOutputs());
+      this.cameraBackgroundColor?.addEventListener("input", () => this.applyBackgroundColor(this.cameraBackgroundColor.value));
+      for (const input of [
+        this.cameraAmbientLight,
+        this.cameraKeyLight,
+        this.cameraRimLight,
+        this.cameraTextureGain
+      ]) {
+        input?.addEventListener("input", () => this.applySceneLighting());
+      }
+    },
+
+    applyBackgroundColor(value) {
+      const color = /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : "#11171c";
+      this.backgroundColor = color;
+      if (this.cameraBackgroundColor && this.cameraBackgroundColor.value !== color) {
+        this.cameraBackgroundColor.value = color;
+      }
+      this.renderer?.setClearColor(color, 1);
+      if (this.scene?.fog) {
+        this.scene.fog.color.set(color);
+      }
+    },
+
+    lightingControlValue(input, fallback) {
+      const value = Number(input?.value);
+      return Number.isFinite(value) ? value : fallback;
+    },
+
+    applySceneLighting() {
+      const levels = {
+        ambient: this.lightingControlValue(this.cameraAmbientLight, this.sceneLightLevels?.ambient ?? 0.75),
+        key: this.lightingControlValue(this.cameraKeyLight, this.sceneLightLevels?.key ?? 1.25),
+        rim: this.lightingControlValue(this.cameraRimLight, this.sceneLightLevels?.rim ?? 0.35)
+      };
+      const textureGain = this.lightingControlValue(this.cameraTextureGain, this.textureGain ?? 1);
+
+      this.sceneLightLevels = levels;
+      this.textureGain = textureGain;
+      if (this.ambientSceneLight) {
+        this.ambientSceneLight.intensity = levels.ambient;
+      }
+      if (this.keySceneLight) {
+        this.keySceneLight.intensity = levels.key;
+      }
+      if (this.rimSceneLight) {
+        this.rimSceneLight.intensity = levels.rim;
+      }
+      this.updateCameraRelativeLights();
+      this.applyTextureGainToModel?.();
+      this.updateRangeOutputs?.();
+    },
+
+    updateCameraRelativeLights() {
+      if (!this.rimSceneLight || !this.camera || !this.controls) {
+        return;
+      }
+      const target = this.controls.target;
+      const viewOffset = new THREE.Vector3().subVectors(this.camera.position, target);
+      const distance = Math.max(viewOffset.length(), 1);
+      const viewDirection = viewOffset.normalize();
+      const right = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 0).normalize();
+      const up = new THREE.Vector3().setFromMatrixColumn(this.camera.matrixWorld, 1).normalize();
+
+      this.rimSceneLight.target.position.copy(target);
+      this.rimSceneLight.position
+        .copy(target)
+        .addScaledVector(viewDirection, distance * 0.35)
+        .addScaledVector(right, -distance * 0.9)
+        .addScaledVector(up, distance * 0.55);
+      this.rimSceneLight.target.updateMatrixWorld();
+    },
+
+    applyTextureGainToModel() {
+      this.model?.traverse?.((object) => {
+        this.applyTextureGainToMaterial(object.material);
+      });
+    },
+
+    applyTextureGainToMaterial(material) {
+      if (Array.isArray(material)) {
+        for (const entry of material) {
+          this.applyTextureGainToMaterial(entry);
+        }
+        return;
+      }
+      const baseColor = material?.userData?.editorBaseColor;
+      if (!baseColor?.isColor || !material?.color) {
+        return;
+      }
+      material.color.copy(baseColor).multiplyScalar(this.textureGain ?? 1);
+      material.needsUpdate = true;
+    },
+
+    beginCameraGizmoDrag(event) {
+      if (event.target?.closest?.("[data-camera-axis]")) {
+        return;
+      }
+      if (event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      this.cameraGizmoDrag = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        target: this.cameraGizmoPad
+      };
+      this.cameraGizmoPad?.setPointerCapture?.(event.pointerId);
+      this.cameraGizmoPad?.classList.add("is-dragging");
+      this.controls.enabled = false;
+      this.setStatus("Camera gizmo");
+    },
+
+    beginCameraAxisDrag(event, axis) {
+      if (event.button !== 0) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation?.();
+      const target = event.currentTarget;
+      this.cameraGizmoDrag = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        axis,
+        target
+      };
+      target?.setPointerCapture?.(event.pointerId);
+      target?.classList.add("is-dragging");
+      this.cameraGizmoPad?.classList.add("is-dragging");
+      this.controls.enabled = false;
+      this.setStatus(`Camera ${String(axis || "").toUpperCase()} axis`);
+    },
+
+    dragCameraGizmo(event) {
+      if (!this.cameraGizmoDrag || this.cameraGizmoDrag.pointerId !== event.pointerId) {
+        return;
+      }
+      if (event.buttons !== undefined && (event.buttons & 1) !== 1) {
+        this.endCameraGizmoDrag(event);
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation?.();
+      const dx = event.clientX - this.cameraGizmoDrag.x;
+      const dy = event.clientY - this.cameraGizmoDrag.y;
+      this.cameraGizmoDrag.x = event.clientX;
+      this.cameraGizmoDrag.y = event.clientY;
+      if (this.cameraGizmoDrag.axis) {
+        this.rotateCameraAxisByPixels(this.cameraGizmoDrag.axis, dx, dy);
+      } else {
+        this.orbitCameraByPixels(dx, dy);
+      }
+    },
+
+    endCameraGizmoDrag(event) {
+      if (!this.cameraGizmoDrag || this.cameraGizmoDrag.pointerId !== event.pointerId) {
+        return;
+      }
+      event.stopPropagation?.();
+      this.cameraGizmoDrag.target?.releasePointerCapture?.(event.pointerId);
+      this.cameraGizmoDrag.target?.classList.remove("is-dragging");
+      this.cameraGizmoPad?.classList.remove("is-dragging");
+      const axis = this.cameraGizmoDrag.axis;
+      this.cameraGizmoDrag = null;
+      this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
+      this.setStatus(axis ? `Camera ${String(axis).toUpperCase()} axis ready` : "Camera gizmo ready");
+    },
+
+    orbitCameraByPixels(dx, dy) {
+      if (!this.camera || !this.controls) {
+        return;
+      }
+      const target = this.controls.target;
+      const offset = this.camera.position.clone().sub(target);
+      const spherical = new THREE.Spherical().setFromVector3(offset);
+      const speed = this.cameraGizmoSpeedValue();
+      spherical.theta -= dx * speed;
+      spherical.phi = THREE.MathUtils.clamp(spherical.phi - dy * speed, 0.04, Math.PI - 0.04);
+      offset.setFromSpherical(spherical);
+      this.camera.position.copy(target).add(offset);
+      this.camera.lookAt(target);
+      this.controls.update();
+      this.updateBoneLabels?.();
+    },
+
+    cameraGizmoSpeedValue() {
+      const value = Number(this.cameraGizmoSpeed?.value);
+      return Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0.0005, 0.02) : 0.0052;
+    },
+
+    rotateCameraAxisByPixels(axisName, dx, dy) {
+      const speed = this.cameraGizmoSpeedValue();
+      const axis = String(axisName || "").toLowerCase();
+      const angle = axis === "x"
+        ? -dy * speed
+        : axis === "y"
+          ? -dx * speed
+          : dx * speed;
+      this.rotateCameraAroundAxis(axis, angle);
+    },
+
+    rotateCameraAroundAxis(axisName, angleRadians) {
+      if (!this.camera || !this.controls || !Number.isFinite(angleRadians) || Math.abs(angleRadians) < 0.000001) {
+        return;
+      }
+      const target = this.controls.target;
+      if (axisName === "z") {
+        this.rollCameraBy(angleRadians, { silent: true });
+        return;
+      }
+      const axis = axisName === "x"
+        ? new THREE.Vector3(1, 0, 0)
+        : new THREE.Vector3(0, 1, 0);
+      const offset = this.camera.position.clone().sub(target).applyAxisAngle(axis, angleRadians);
+      this.camera.position.copy(target).add(offset);
+      this.camera.up.applyAxisAngle(axis, angleRadians).normalize();
+      this.camera.lookAt(target);
+      this.controls.update();
+      this.updateBoneLabels?.();
+    },
+
+    rollCameraBy(angleRadians, options = {}) {
+      if (!this.camera || !this.controls) {
+        return;
+      }
+      const axis = new THREE.Vector3().subVectors(this.controls.target, this.camera.position).normalize();
+      this.camera.up.applyAxisAngle(axis, angleRadians).normalize();
+      this.camera.lookAt(this.controls.target);
+      this.controls.update();
+      this.updateBoneLabels?.();
+      if (!options.silent) {
+        this.setStatus(`Camera rolled ${Math.round(THREE.MathUtils.radToDeg(angleRadians))} degrees`);
+      }
+    },
+
+    resetCameraRoll() {
+      if (!this.camera || !this.controls) {
+        return;
+      }
+      this.camera.up.set(0, 1, 0);
+      this.camera.lookAt(this.controls.target);
+      this.controls.update();
+      this.updateBoneLabels?.();
+      this.setStatus("Camera roll reset");
+    },
+
+    captureUndoState(label = "Edit", options = {}) {
+      if (!this.model || !this.weightJson) {
+        return null;
+      }
+      const patch = this.syncPatchJson();
+      const state = {
+        label,
+        patch,
+        patchText: this.serializePatchText?.(patch).trimEnd() || this.weightJson.value,
+        selected: this.paintRecords.map((record) => [...record.selected]),
+        activeBoneName: this.activeBoneName,
+        poseBoneName: this.poseBoneSelect?.value || "",
+        selectedBoneChainRootName: this.selectedBoneChainRootName,
+        progress: this.progress,
+        poseGizmoMode: this.activePoseGizmoMode?.() || "",
+        rigEditor: this.captureRigEditorUndoState?.() || null,
+        includeClip: Boolean(options.includeClip),
+        clipCleanupEdits: this.serializeClipCleanupEdits?.() || [],
+        poseKeyframeMode: this.poseKeyframeMode,
+        poseKeyframesGenerated: Boolean(this.poseKeyframesGenerated),
+        poseKeyframes: this.serializePoseKeyframes?.() || [],
+        manualPose: options.clearManualPose
+          ? []
+          : [...this.manualPose.entries()].map(([name, pose]) => [name, { ...pose }])
+      };
+      if (options.includeClip) {
+        state.clipState = this.captureActiveClipUndoState();
+      }
+      return state;
+    },
+
+    captureActiveClipUndoState() {
+      const entry = this.activeClipEntry;
+      if (!entry) {
+        return null;
+      }
+      return {
+        entryId: entry.id || entry.name || "",
+        sourceClip: entry.sourceClip?.clone?.() || null,
+        clip: entry.clip?.clone?.() || null,
+        startOffsetSeconds: entry.startOffsetSeconds || 0
+      };
+    },
+
+    restoreActiveClipUndoState(clipState) {
+      if (!clipState) {
+        return false;
+      }
+      const entry = this.clipEntries.find((candidate) => (
+        (candidate.id || candidate.name || "") === clipState.entryId
+      )) || this.activeClipEntry;
+      if (!entry) {
+        return false;
+      }
+      entry.sourceClip = clipState.sourceClip?.clone?.() || null;
+      entry.clip = clipState.clip?.clone?.() || null;
+      entry.startOffsetSeconds = clipState.startOffsetSeconds || 0;
+      this.activeClipEntry = entry;
+      if (entry.clip) {
+        void this.playClipEntry(entry);
+      }
+      this.syncClipCleanupControls?.();
+      return true;
+    },
+
+    pushUndoState(label = "Edit", options = {}) {
+      const state = this.captureUndoState(label, options);
+      if (!state) {
+        return false;
+      }
+      this.undoStack.push(state);
+      if (this.undoStack.length > this.maxUndoSteps) {
+        this.undoStack.shift();
+      }
+      if (!options.preserveRedo) {
+        this.redoStack = [];
+      }
+      this.updateUndoButton();
+      return true;
+    },
+
+    withUndo(label, callback, options = {}) {
+      this.pushUndoState(label, options);
+      return callback?.();
+    },
+
+    beginPoseControlUndo(label = "Pose edit") {
+      if (this.poseControlUndoActive && this.undoStack.length) {
+        return false;
+      }
+      this.poseControlUndoActive = this.pushUndoState(label);
+      return this.poseControlUndoActive;
+    },
+
+    endPoseControlUndo() {
+      this.poseControlUndoActive = false;
+    },
+
+    updateUndoButton() {
+      if (this.undoButton) {
+        this.undoButton.disabled = !this.undoStack.length;
+      }
+      if (this.redoButton) {
+        this.redoButton.disabled = !this.redoStack?.length;
+      }
+    },
+
+    refreshRestoredPose() {
+      this.lastClipSampleTime = null;
+      this.applyPose(this.progress);
+      this.model?.updateMatrixWorld(true);
+      for (const record of this.paintRecords || []) {
+        record.object?.skeleton?.update?.();
+      }
+      this.updateSkeletonHelper?.();
+      this.updateSelectionMarkers();
+      this.updateMoveGizmo();
+      if (this.boneLabelToggle?.checked) {
+        this.updateBoneLabels();
+      }
+    },
+
+    restoreEditorState(state, statusPrefix) {
+      this.poseControlUndoActive = false;
+      this.boneMoveDrag = null;
+      this.ikDrag = null;
+      if (!state) {
+        return false;
+      }
+      const patch = state.patch || JSON.parse(state.patchText);
+      this.setPatchJsonFromPatch?.(patch);
+      this.applyPatchObject?.(patch, { status: false });
+      if (Array.isArray(state.poseKeyframes)) {
+        this.applySerializedPoseKeyframes?.(state.poseKeyframes);
+        this.poseKeyframeMode = state.poseKeyframeMode === "replace" ? "replace" : "additive";
+        this.poseKeyframesGenerated = Boolean(state.poseKeyframesGenerated);
+      }
+      if (Array.isArray(state.clipCleanupEdits)) {
+        this.applySerializedClipCleanupEdits?.(state.clipCleanupEdits);
+      }
+      this.restoreActiveClipUndoState(state.clipState);
+      this.manualPose = new Map((state.manualPose || [])
+        .filter(([name]) => this.bones.has(name))
+        .map(([name, pose]) => [name, { ...pose }]));
+      state.selected.forEach((selected, index) => {
+        const record = this.paintRecords[index];
+        if (!record) {
+          return;
+        }
+        record.selected = new Set(selected.filter((vertexIndex) => (
+          vertexIndex < record.geometry.attributes.position.count && !record.deleted?.has(vertexIndex)
+        )));
+        this.updateRecordColors(record);
+      });
+      if (state.activeBoneName && this.bones.has(state.activeBoneName)) {
+        this.setActiveBone(state.activeBoneName);
+      }
+      if (state.poseBoneName && this.bones.has(state.poseBoneName)) {
+        this.poseBoneSelect.value = state.poseBoneName;
+        this.setActiveBone(state.poseBoneName);
+      }
+      this.selectedBoneChainRootName = state.selectedBoneChainRootName || "";
+      this.renderBoneChainOptions?.();
+      this.renderAddBoneChainMemberOptions?.();
+      this.restoreRigEditorUndoState?.(state.rigEditor);
+      if (Number.isFinite(state.progress)) {
+        this.progress = THREE.MathUtils.clamp(state.progress, 0, 1);
+        this.timeScrub.value = String(this.progress);
+        this.syncTimelineControls();
+      }
+      this.updateSelectionMarkers();
+      this.updateMoveGizmo();
+      this.refreshRestoredPose();
+      if (state.includeClip || state.clipState || Array.isArray(state.clipCleanupEdits)) {
+        window.requestAnimationFrame(() => this.refreshRestoredPose());
+      }
+      this.syncPoseControlsToCurrentBone();
+      this.flushPoseUpdates?.();
+      this.restorePoseGizmoMode?.(state.poseGizmoMode || "");
+      this.syncPatchJson();
+      this.updateCounts();
+      this.updateUndoButton();
+      this.setStatus(`${statusPrefix} ${state.label}`);
+      return true;
+    },
+
+    undoLastEdit() {
+      const state = this.undoStack.pop();
+      if (!state) {
+        this.updateUndoButton();
+        this.setStatus("Nothing to undo");
+        return false;
+      }
+      const current = this.captureUndoState(state.label, { includeClip: Boolean(state.includeClip || state.clipState) });
+      if (current) {
+        this.redoStack.push(current);
+        if (this.redoStack.length > this.maxUndoSteps) {
+          this.redoStack.shift();
+        }
+      }
+      return this.restoreEditorState(state, "Undid");
+    },
+
+    redoLastEdit() {
+      const state = this.redoStack?.pop();
+      if (!state) {
+        this.updateUndoButton();
+        this.setStatus("Nothing to redo");
+        return false;
+      }
+      const current = this.captureUndoState(state.label, { includeClip: Boolean(state.includeClip || state.clipState) });
+      if (current) {
+        this.undoStack.push(current);
+        if (this.undoStack.length > this.maxUndoSteps) {
+          this.undoStack.shift();
+        }
+      }
+      return this.restoreEditorState(state, "Redid");
+    },
+
+    clearRedoStack() {
+      this.redoStack = [];
+      this.updateUndoButton();
+      return true;
+    },
+
+    setTool(tool) {
+      if (tool !== "bone") {
+        this.preparePoseGizmoModeSwitch?.("");
+        this.setBonePlacementPending?.(false);
+      }
+      this.activeTool = tool;
+      this.controls.enabled = tool === "orbit" || tool === "bone";
+      if (EDIT_ONLY_TOOLS.has(tool)) {
+        this.pausePlayback();
+        this.setViewMode("edit", { silent: true });
+      }
+      if (tool === "bone") {
+        this.pausePlayback();
+        this.setSidePanelOpen(true);
+        this.setRigPanelOpen(true);
+        this.setViewMode("rendered", { silent: true });
+        if (this.skeletonToggle) {
+          this.skeletonToggle.checked = true;
+          this.updateSkeletonHelper();
+        }
+        this.updateBonePickerOverlay();
+      }
+      this.toolButtons.forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.tool === tool);
+      });
+      this.updateMoveGizmo();
+      this.updateBoneMoveGizmo?.();
+      this.updateIkMoveGizmo?.();
+      this.updateNeighborHover?.();
+      let usedEraseSelectionCommand = false;
+      if (tool === "erase" && this.viewMode === "edit" && this.hasSelection()) {
+        usedEraseSelectionCommand = this.withUndo("Clean vertices", () => this.cleanSelectedVertices?.()) > 0;
+      }
+      const labels = {
+        paint: "Pen tool",
+        neighbor: "Neighbor pen: selects connected vertices from the hovered vertex",
+        deselect: "Deselect tool: removes painted selection only",
+        erase: this.viewMode === "edit" ? "Erase tool: cleans selected vertices from the mesh" : "Erase tool: removes weight and vertex edits",
+        move: this.hasSelection() ? "Move selected vertices" : "Move tool needs a painted vertex selection",
+        bone: "Bone gizmo tool",
+        pull: "Pull sculpt tool",
+        push: "Push sculpt tool",
+        orbit: "Orbit camera: left drag rotates, wheel zooms, right drag pans"
+      };
+      if (!usedEraseSelectionCommand) {
+        this.setStatus(labels[tool] || "Ready");
+      }
+    },
+
+    setViewMode(mode, options = {}) {
+      this.viewMode = mode;
+      this.app?.classList.toggle("is-3d-edit-mode", mode === "edit");
+      if (mode !== "edit" && EDIT_ONLY_TOOLS.has(this.activeTool)) {
+        this.activeTool = "paint";
+        this.controls.enabled = false;
+      }
+      this.viewModeButtons.forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.viewMode === mode);
+      });
+      this.toolButtons.forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.tool === this.activeTool);
+      });
+
+      for (const record of this.paintRecords) {
+        for (const material of this.getObjectMaterials(record.object.material)) {
+          material.wireframe = !this.cleanPreview && mode === "mesh";
+          material.vertexColors = false;
+          material.transparent = !this.cleanPreview && mode === "edit";
+          material.opacity = !this.cleanPreview && mode === "edit" ? 0.88 : 1;
+          material.depthWrite = this.cleanPreview || mode !== "edit";
+          material.needsUpdate = true;
+        }
+      }
+
+      this.updateSelectionMarkerStyle();
+      if (this.selectionMarkers) {
+        this.selectionMarkers.visible = !this.cleanPreview && this.markerVertexCount > 0;
+      }
+
+      if (this.vertexMarkers) {
+        this.vertexMarkers.visible = !this.cleanPreview && mode === "edit";
+        if (!this.cleanPreview && mode === "edit" && this.activeTool !== "bone") {
+          this.updateAllVertexMarkers();
+        } else {
+          this.vertexMarkerCount = 0;
+        }
+      }
+
+      this.updateMoveGizmo();
+      this.updateBoneMoveGizmo?.();
+      this.updateIkMoveGizmo?.();
+      this.updateNeighborHover?.();
+      this.updateSkeletonHelper();
+      this.updateSelectedBoneHighlight();
+      this.updateBonePickerOverlay();
+      this.updateBoneLabels();
+
+      if (!options.silent) {
+        const labels = {
+          rendered: "Rendered preview mode",
+          mesh: "Mesh mode",
+          edit: "3D edit mode"
+        };
+        this.setStatus(labels[mode] || "Ready");
+      }
+    },
+
+    updateSelectionMarkerStyle() {
+      if (!this.markerMaterial || !this.selectionMarkers) {
+        return;
+      }
+
+      const selectedCount = this.markerVertexCount || 0;
+      const crowded = selectedCount > 250;
+      const dense = selectedCount > 900;
+      const rendered = this.viewMode === "rendered";
+
+      this.markerMaterial.size = rendered
+        ? (dense ? 2.5 : crowded ? 3.25 : 4)
+        : (dense ? 4 : crowded ? 5.5 : 7);
+      this.markerMaterial.opacity = rendered
+        ? (dense ? 0.44 : crowded ? 0.58 : 0.72)
+        : (dense ? 0.62 : crowded ? 0.78 : 0.92);
+      this.markerMaterial.depthTest = rendered || dense;
+      this.markerMaterial.needsUpdate = true;
+      this.selectionMarkers.renderOrder = rendered ? 12 : 20;
+    },
+
+    getObjectMaterials(material) {
+      if (!material) {
+        return [];
+      }
+      return Array.isArray(material) ? material.filter(Boolean) : [material];
+    },
+
+    setCleanPreview(enabled) {
+      this.cleanPreview = enabled;
+      this.cleanPreviewButton.classList.toggle("is-active", enabled);
+      this.cleanPreviewButton.setAttribute("aria-pressed", String(enabled));
+      this.setViewMode(this.viewMode, { silent: true });
+      this.updateSelectionMarkers();
+      this.updateAllVertexMarkers();
+      this.updateMoveGizmo();
+      this.updateIkMoveGizmo?.();
+      this.updateSkeletonHelper();
+      this.updateSelectedBoneHighlight();
+      this.updateBonePickerOverlay();
+      this.updateBoneLabels();
+      this.setStatus(enabled ? "Clean preview: selections hidden" : "Selection view restored");
+    },
+
+    setMirrorMode(enabled) {
+      this.mirrorMode = enabled;
+      this.mirrorModeButton.classList.toggle("is-active", enabled);
+      this.mirrorModeButton.setAttribute("aria-pressed", String(enabled));
+      if (enabled) {
+        this.updateManualPoseFromControls({ silent: true });
+        this.mirrorCurrentSelection();
+      }
+      this.populateBoneSelect();
+      this.syncPoseControls();
+      this.updateTimelineKeyMarkers();
+      this.applyPose(this.progress);
+      this.syncPatchJson();
+      this.setStatus(enabled ? "Mirror mode: paired bones and selections" : "Mirror mode off");
+    },
+
+    setPlayback(playing) {
+      if (playing) {
+        this.stopSequencePreview({ applyPose: false });
+        this.discardUnkeyedPosePreview({ status: true });
+      }
+      this.playing = playing;
+      const label = playing ? "Pause" : "Play";
+      this.playToggle.textContent = label;
+      this.timelinePlayToggle.textContent = label;
+    },
+
+    stopSequencePreview({ applyPose = false, resetElapsed = false } = {}) {
+      if (!this.sequencePlaying && this.timelinePlayBothButton?.textContent !== "Stop Sequence") {
+        this.syncSequenceControls();
+        return;
+      }
+      this.sequencePlaying = false;
+      if (resetElapsed) {
+        this.sequenceElapsed = 0;
+      }
+      this.sequenceRootAnchor = null;
+      this.sequenceTargetRootStart = null;
+      if (this.timelinePlayBothButton) {
+        this.timelinePlayBothButton.textContent = "Play Sequence";
+      }
+      this.syncSequenceControls();
+      if (applyPose) {
+        this.applyPose(this.progress);
+        this.syncPoseControlsToCurrentBone();
+      }
+    },
+
+    async playBothSequence() {
+      if (!this.blendClipEntry || this.actorTarget?.mode === "bird-flap") {
+        this.setStatus("Choose a Blend To animation first");
+        return;
+      }
+      if (!this.blendClipEntry.clip) {
+        this.blendClipEntry.clip = await this.loadClipForEntry(this.blendClipEntry);
+      }
+      if (!this.activeClipEntry?.clip) {
+        return;
+      }
+      this.setPlayback(false);
+      this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
+      this.sequencePlaying = true;
+      this.sequenceElapsed = 0;
+      this.sequenceRootAnchor = null;
+      this.sequenceTargetRootStart = null;
+      if (this.timelinePlayBothButton) {
+        this.timelinePlayBothButton.textContent = "Stop Sequence";
+      }
+      this.syncSequenceControls();
+      this.setStatus(`Playing sequence: ${this.activeClipEntry.name || this.activeClipEntry.id} -> ${this.blendClipEntry.name || this.blendClipEntry.id}`);
+    },
+
+    setSidePanelOpen(open) {
+      if (!this.app || !this.sidePanelToggle) {
+        return;
+      }
+      this.app.classList.toggle("is-side-panel-open", open);
+      this.sidePanelToggle.textContent = "-";
+      this.sidePanelToggle.setAttribute("aria-label", "Hide panel");
+      this.sidePanelToggle.title = "Hide panel";
+      this.sidePanelToggle.setAttribute("aria-pressed", String(open));
+      if (this.sidePanelShowToggle) {
+        this.sidePanelShowToggle.hidden = open;
+        this.sidePanelShowToggle.setAttribute("aria-pressed", String(open));
+      }
+      this.resize();
+    },
+
+    setTimelineCompact(compact) {
+      if (!this.app || !this.timelineCompactToggle) {
+        return;
+      }
+      this.app.classList.toggle("is-timeline-compact", compact);
+      this.timelineCompactToggle.textContent = compact ? "+" : "v";
+      this.timelineCompactToggle.setAttribute("aria-label", compact ? "Expand timeline" : "Compact timeline");
+      this.timelineCompactToggle.title = compact ? "Expand timeline" : "Compact timeline";
+      this.timelineCompactToggle.setAttribute("aria-pressed", String(compact));
+      if (!compact) {
+        this.updateBoneLayerValues({ force: true });
+      }
+      this.resize();
+    },
+
+    setTimelineHidden(hidden) {
+      if (!this.app || !this.timelineShowToggle || !this.timelineHideToggle) {
+        return;
+      }
+      this.app.classList.toggle("is-timeline-hidden", hidden);
+      this.timelineShowToggle.hidden = !hidden;
+      this.timelineHideToggle.textContent = "-";
+      this.timelineHideToggle.setAttribute("aria-label", "Hide timeline");
+      this.timelineHideToggle.title = "Hide timeline";
+      this.timelineHideToggle.setAttribute("aria-pressed", String(hidden));
+      if (!hidden) {
+        this.updateBoneLayerValues({ force: true });
+      }
+      this.resize();
+    },
+
+    setRigPanelOpen(open) {
+      if (!this.rigPanel || !this.rigPanelToggle) {
+        return;
+      }
+      this.rigPanel.classList.toggle("is-collapsed", !open);
+      this.rigPanelToggle.textContent = open ? "-" : "+";
+      this.rigPanelToggle.setAttribute("aria-expanded", String(open));
+    },
+
+    pausePlayback() {
+      this.setPlayback(false);
+    },
+
+    updateRangeOutputs() {
+      if (this.sculptStrengthOutput) {
+        this.sculptStrengthOutput.textContent = Number(this.sculptStrength.value).toFixed(4);
+      }
+      if (this.moveSensitivityOutput) {
+        this.moveSensitivityOutput.textContent = Number(this.moveSensitivity.value).toFixed(2);
+      }
+      if (this.weightValueOutput) {
+        this.weightValueOutput.textContent = Number(this.weightValue.value).toFixed(2);
+      }
+      if (this.cameraGizmoSpeedOutput && this.cameraGizmoSpeed) {
+        this.cameraGizmoSpeedOutput.textContent = Number(this.cameraGizmoSpeed.value).toFixed(4);
+      }
+      if (this.cameraAmbientLightOutput && this.cameraAmbientLight) {
+        this.cameraAmbientLightOutput.textContent = Number(this.cameraAmbientLight.value).toFixed(2);
+      }
+      if (this.cameraKeyLightOutput && this.cameraKeyLight) {
+        this.cameraKeyLightOutput.textContent = Number(this.cameraKeyLight.value).toFixed(2);
+      }
+      if (this.cameraRimLightOutput && this.cameraRimLight) {
+        this.cameraRimLightOutput.textContent = Number(this.cameraRimLight.value).toFixed(2);
+      }
+      if (this.cameraTextureGainOutput && this.cameraTextureGain) {
+        this.cameraTextureGainOutput.textContent = Number(this.cameraTextureGain.value).toFixed(2);
+      }
+      if (this.speedOutput && this.speedControl) {
+        this.speedOutput.textContent = Number(this.speedControl.value).toFixed(2);
+      }
+    }
+  });
+}

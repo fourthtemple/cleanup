@@ -1,0 +1,14 @@
+.DS_Store
+node_modules/
+npm-debug.log*
+
+# Local scratch output
+*.log
+*.tmp
+*.pyc
+__pycache__/
+
+# Imported animation libraries can become large; keep the folder scaffolded,
+# but do not commit user-imported FBX files or saved cleanup patches by default.
+assets/models/animation-library/*
+!assets/models/animation-library/.gitkeep

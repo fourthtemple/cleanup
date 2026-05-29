@@ -1,0 +1,2081 @@
+:root {
+  color-scheme: dark;
+  --panel: rgba(11, 15, 18, 0.92);
+  --panel-line: rgba(243, 230, 196, 0.18);
+  --text: #f4ead6;
+  --muted: rgba(244, 234, 214, 0.66);
+  --gold: #dfb45d;
+  --green: #69b38a;
+  --red: #d57d75;
+  --blue: #78a7d8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #10151a;
+  color: var(--text);
+  font-family: "Avenir Next", Avenir, "Trebuchet MS", sans-serif;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+.viewer-app {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+}
+
+.animation-editor-app,
+.weight-editor-app {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.animation-editor-app .viewer-panel,
+.weight-editor-app .viewer-panel {
+  display: none;
+}
+
+.animation-editor-app.is-side-panel-open,
+.weight-editor-app.is-side-panel-open {
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+}
+
+.animation-editor-app.is-side-panel-open .viewer-panel,
+.weight-editor-app.is-side-panel-open .viewer-panel {
+  display: flex;
+}
+
+.viewer-panel {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 18px;
+  overflow: auto;
+  border-right: 1px solid var(--panel-line);
+  background: var(--panel);
+  box-shadow: none;
+}
+
+.viewer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.editor-control-panel .viewer-header {
+  min-height: 78px;
+  padding-left: 36px;
+}
+
+.panel-collapse-toggle,
+.panel-show-toggle {
+  min-width: 28px;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  line-height: 1;
+}
+
+.panel-collapse-toggle {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+}
+
+.viewer-header-links {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.viewer-kicker {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.viewer-header h1 {
+  margin: 0;
+  font-size: 27px;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.viewer-link,
+.viewer-file span,
+button {
+  min-height: 34px;
+  border: 1px solid rgba(244, 234, 214, 0.28);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.viewer-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 0 12px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.viewer-section {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--panel-line);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.animation-side-section {
+  gap: 8px;
+}
+
+.animation-side-section select,
+.animation-side-section button {
+  min-height: 30px;
+}
+
+.animation-side-section .viewer-field {
+  gap: 4px;
+}
+
+.animation-side-section .viewer-checks {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.animation-side-section .import-options {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.animation-library-section {
+  gap: 8px;
+}
+
+.animation-library-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 8px;
+}
+
+.animation-library-heading button,
+.animation-library-section > button {
+  min-height: 30px;
+}
+
+.animation-library-create {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 8px;
+}
+
+.animation-library-create input {
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid rgba(244, 234, 214, 0.28);
+  background: rgba(0, 0, 0, 0.38);
+  color: var(--text);
+  padding: 0 8px;
+}
+
+.animation-library-save-row,
+.animation-library-save-as-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.animation-library-save-as-row {
+  grid-template-columns: minmax(0, 1fr) 28px 28px;
+}
+
+.animation-library-save-as-row[hidden] {
+  display: none;
+}
+
+.animation-library-save-as-row input {
+  min-width: 0;
+  min-height: 30px;
+  border: 1px solid rgba(244, 234, 214, 0.28);
+  background: rgba(0, 0, 0, 0.38);
+  color: var(--text);
+  padding: 0 8px;
+}
+
+.animation-library-list {
+  display: grid;
+  gap: 5px;
+  max-height: 132px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.animation-library-file-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 5px;
+}
+
+.animation-library-file-row.is-engine-asset {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.animation-library-file {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  text-align: left;
+  width: 100%;
+}
+
+.animation-library-file-row.is-engine-asset .animation-library-file {
+  border-color: rgba(120, 167, 216, 0.26);
+}
+
+.animation-library-file-row.is-unavailable {
+  opacity: 0.54;
+}
+
+.animation-library-file-delete {
+  min-height: 30px;
+  padding: 0;
+  text-align: center;
+}
+
+.animation-library-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.animation-library-file-meta,
+.animation-library-empty {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.animation-library-empty {
+  margin: 0;
+}
+
+.viewer-field {
+  display: grid;
+  gap: 6px;
+}
+
+.viewer-range-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 8px;
+}
+
+.viewer-range-row output {
+  color: var(--text);
+  font-size: 12px;
+  text-align: right;
+}
+
+.viewer-field span,
+.viewer-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+select {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(244, 234, 214, 0.28);
+  background: rgba(0, 0, 0, 0.38);
+  color: var(--text);
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--gold);
+}
+
+input[type="color"] {
+  width: 100%;
+  min-height: 34px;
+  padding: 3px;
+  border: 1px solid rgba(244, 234, 214, 0.28);
+  background: rgba(0, 0, 0, 0.38);
+  cursor: pointer;
+}
+
+.camera-color-field {
+  gap: 6px;
+}
+
+.viewer-actions,
+.viewer-segments,
+.viewer-grid-actions,
+.viewer-checks {
+  display: grid;
+  gap: 8px;
+}
+
+.viewer-actions,
+.viewer-segments {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.viewer-segments {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.viewer-grid-actions {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.editor-presets {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.editor-save-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.import-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.weight-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.camera-view-actions {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.camera-roll-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.weight-actions #redistribute-chain-weights {
+  grid-column: 1 / -1;
+}
+
+.cleanup-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.selection-influence-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.selection-influence-list {
+  display: grid;
+  gap: 6px;
+}
+
+.selection-influence-row {
+  display: grid;
+  grid-template-columns: minmax(76px, 0.85fr) minmax(86px, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+}
+
+.selection-influence-row.is-active .selection-influence-name {
+  color: var(--accent);
+}
+
+.selection-influence-name,
+.selection-influence-value,
+.selection-influence-empty {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.selection-influence-value {
+  color: var(--muted);
+  text-align: right;
+}
+
+.selection-influence-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.rig-bone-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rig-bone-heading .viewer-label {
+  margin: 0;
+}
+
+.rig-bone-heading button {
+  width: 26px;
+  min-width: 26px;
+  min-height: 24px;
+  padding: 0;
+  line-height: 1;
+}
+
+.rig-bone-panel.is-collapsed .rig-panel-body {
+  display: none;
+}
+
+.rig-panel-body {
+  display: grid;
+  gap: 8px;
+}
+
+.rig-bone-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.rig-bone-groups button {
+  min-width: 0;
+  min-height: 23px;
+  padding: 0 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.rig-bone-groups button[aria-pressed="true"] {
+  border-color: rgba(223, 180, 93, 0.88);
+  background: rgba(223, 180, 93, 0.18);
+  color: var(--text);
+}
+
+.rig-bone-create {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rig-bone-create .rig-bone-wide {
+  grid-column: 1 / -1;
+}
+
+.rig-bone-create .rig-bone-actions {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.rig-bone-chain-members {
+  grid-column: 1 / -1;
+}
+
+.rig-bone-chain-action {
+  grid-column: 1 / -1;
+}
+
+.ik-chain-settings {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 8px;
+}
+
+.rig-bone-create input[type="text"],
+.rig-bone-create input[type="number"] {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(244, 234, 214, 0.28);
+  background: rgba(0, 0, 0, 0.38);
+  color: var(--text);
+  padding: 0 8px;
+}
+
+.rig-bone-create select[multiple] {
+  min-height: 92px;
+  padding: 6px 8px;
+}
+
+.rig-bone-list {
+  display: grid;
+  gap: 5px;
+  max-height: 156px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.rig-bone-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  padding: 0 8px;
+  border: 1px solid rgba(244, 234, 214, 0.16);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  text-align: left;
+}
+
+.rig-bone-item.is-active {
+  border-color: rgba(223, 180, 93, 0.95);
+  background: rgba(223, 180, 93, 0.18);
+}
+
+.rig-bone-item.is-chain-selected:not(.is-active) {
+  border-color: rgba(92, 204, 173, 0.58);
+  background: rgba(92, 204, 173, 0.1);
+}
+
+.rig-bone-name {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rig-bone-meta,
+.rig-bone-empty,
+.rig-bone-note {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.rig-bone-meta {
+  text-transform: uppercase;
+}
+
+.rig-bone-empty,
+.rig-bone-note {
+  margin: 0;
+}
+
+button {
+  padding: 0 10px;
+}
+
+button:hover,
+.viewer-link:hover,
+.viewer-file span:hover {
+  border-color: rgba(223, 180, 93, 0.78);
+  background: rgba(223, 180, 93, 0.14);
+}
+
+button.is-active {
+  border-color: rgba(223, 180, 93, 0.95);
+  background: rgba(223, 180, 93, 0.22);
+}
+
+.viewer-file {
+  display: block;
+}
+
+.viewer-file input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.viewer-file span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.viewer-drop {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  border: 1px dashed rgba(244, 234, 214, 0.32);
+  color: var(--muted);
+  text-align: center;
+}
+
+.viewer-drop.is-dragging {
+  border-color: var(--green);
+  color: var(--text);
+  background: rgba(105, 179, 138, 0.13);
+}
+
+.viewer-checks {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.viewer-checks label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+}
+
+.viewer-meta {
+  margin-top: auto;
+}
+
+.viewer-meta dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.viewer-meta dl div {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.viewer-meta dt {
+  color: var(--muted);
+}
+
+.viewer-meta dd {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#viewer-status {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.viewer-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(58, 74, 86, 0.4), rgba(17, 23, 26, 0.6)),
+    #10151a;
+}
+
+#viewer-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.editor-controls {
+  display: grid;
+  gap: 9px;
+}
+
+.editor-control {
+  display: grid;
+  grid-template-columns: minmax(112px, 1fr) minmax(110px, 1fr) 48px;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-control span,
+.editor-control output {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.editor-control output {
+  color: var(--text);
+  text-align: right;
+}
+
+.param-layer-row .bone-layer-name {
+  border-color: rgba(120, 167, 216, 0.38);
+}
+
+.param-layer-row.is-active .bone-layer-name {
+  border-color: rgba(120, 167, 216, 0.95);
+  background: rgba(120, 167, 216, 0.18);
+}
+
+.param-layer-row .bone-layer-key {
+  background: var(--blue);
+}
+
+.editor-json {
+  width: 100%;
+  min-height: 132px;
+  resize: vertical;
+  border: 1px solid rgba(244, 234, 214, 0.28);
+  background: rgba(0, 0, 0, 0.38);
+  color: var(--text);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.weight-editor-app .viewer-panel {
+  grid-template-columns: none;
+  gap: 8px;
+  padding: 12px;
+  font-size: 12px;
+}
+
+.weight-editor-app.is-side-panel-open {
+  grid-template-columns: minmax(210px, 255px) minmax(0, 1fr);
+}
+
+.weight-editor-app .viewer-header {
+  gap: 10px;
+}
+
+.weight-editor-app .editor-control-panel .viewer-header {
+  min-height: 54px;
+  padding-left: 30px;
+}
+
+.weight-editor-app .viewer-kicker {
+  margin-bottom: 2px;
+  font-size: 9px;
+}
+
+.weight-editor-app .viewer-header h1 {
+  font-size: 20px;
+  line-height: 1.05;
+}
+
+.weight-editor-app .viewer-section {
+  gap: 7px;
+  padding: 9px;
+}
+
+.weight-editor-app .viewer-field {
+  gap: 4px;
+}
+
+.weight-editor-app .viewer-label,
+.weight-editor-app .viewer-field span {
+  font-size: 10px;
+  letter-spacing: 0.035em;
+}
+
+.weight-editor-app .viewer-range-row {
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 6px;
+}
+
+.weight-editor-app .viewer-range-row output {
+  font-size: 11px;
+}
+
+.weight-editor-app .viewer-actions,
+.weight-editor-app .viewer-segments,
+.weight-editor-app .viewer-grid-actions,
+.weight-editor-app .viewer-checks {
+  gap: 5px;
+}
+
+.weight-editor-app .viewer-checks {
+  font-size: 11px;
+}
+
+.weight-editor-app .viewer-link,
+.weight-editor-app .viewer-file span,
+.weight-editor-app .viewer-panel button {
+  min-height: 28px;
+  padding: 0 7px;
+  font-size: 11px;
+  line-height: 1.05;
+}
+
+.weight-editor-app .viewer-panel select,
+.weight-editor-app .viewer-panel input[type="text"],
+.weight-editor-app .viewer-panel input[type="search"],
+.weight-editor-app .viewer-panel input[type="number"],
+.weight-editor-app .animation-library-create input,
+.weight-editor-app .animation-library-save-as-row input,
+.weight-editor-app .rig-bone-create input[type="text"],
+.weight-editor-app .rig-bone-create input[type="number"] {
+  min-height: 28px;
+  padding: 0 7px;
+  font-size: 12px;
+}
+
+.weight-editor-app .rig-bone-create select[multiple] {
+  min-height: 76px;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.weight-editor-app .animation-library-heading button,
+.weight-editor-app .animation-library-section > button,
+.weight-editor-app .animation-library-save-row button,
+.weight-editor-app .animation-library-save-as-row button,
+.weight-editor-app .animation-library-file,
+.weight-editor-app .animation-library-file-delete {
+  min-height: 26px;
+  font-size: 11px;
+}
+
+.weight-editor-app .animation-library-file-meta,
+.weight-editor-app .animation-library-empty,
+.weight-editor-app .rig-bone-meta,
+.weight-editor-app .rig-bone-empty,
+.weight-editor-app .rig-bone-note {
+  font-size: 9px;
+}
+
+.weight-editor-app .selection-influence-row {
+  min-height: 24px;
+}
+
+.weight-editor-app .selection-influence-name,
+.weight-editor-app .selection-influence-value,
+.weight-editor-app .selection-influence-empty {
+  font-size: 11px;
+}
+
+.weight-json {
+  min-height: 170px;
+}
+
+.weight-viewport-tools {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: min(560px, calc(100% - 28px));
+  padding: 6px;
+  border: 1px solid rgba(244, 234, 214, 0.24);
+  background: rgba(11, 15, 18, 0.94);
+  box-shadow: none;
+  contain: layout paint style;
+}
+
+.viewport-tool-group {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.viewport-mode-group button {
+  min-width: 58px;
+}
+
+.weight-viewport-tools button {
+  min-width: 42px;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.weight-viewport-tools .viewport-edit-only {
+  display: none;
+}
+
+.weight-editor-app.is-3d-edit-mode .weight-viewport-tools .viewport-edit-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.camera-gizmo {
+  position: absolute;
+  top: 64px;
+  left: 14px;
+  z-index: 5;
+  display: grid;
+  gap: 6px;
+  width: 90px;
+  padding: 7px;
+  border: 1px solid rgba(244, 234, 214, 0.24);
+  background: rgba(11, 15, 18, 0.94);
+  contain: layout paint style;
+  user-select: none;
+}
+
+.camera-gizmo-pad {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  justify-self: center;
+  border: 1px solid rgba(244, 234, 214, 0.36);
+  border-radius: 50%;
+  background:
+    linear-gradient(90deg, transparent 48%, rgba(244, 234, 214, 0.2) 48%, rgba(244, 234, 214, 0.2) 52%, transparent 52%),
+    linear-gradient(0deg, transparent 48%, rgba(244, 234, 214, 0.2) 48%, rgba(244, 234, 214, 0.2) 52%, transparent 52%),
+    rgba(17, 23, 28, 0.86);
+  cursor: grab;
+  touch-action: none;
+}
+
+.camera-gizmo-pad:active {
+  cursor: grabbing;
+}
+
+.camera-gizmo-pad.is-dragging {
+  border-color: rgba(223, 180, 93, 0.9);
+  background:
+    linear-gradient(90deg, transparent 48%, rgba(223, 180, 93, 0.26) 48%, rgba(223, 180, 93, 0.26) 52%, transparent 52%),
+    linear-gradient(0deg, transparent 48%, rgba(223, 180, 93, 0.26) 48%, rgba(223, 180, 93, 0.26) 52%, transparent 52%),
+    rgba(29, 25, 18, 0.9);
+}
+
+.camera-gizmo-axis {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  min-height: 20px;
+  padding: 0;
+  border: 1px solid rgba(244, 234, 214, 0.28);
+  border-radius: 50%;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.34);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  touch-action: none;
+}
+
+.camera-gizmo-axis-y {
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.camera-gizmo-axis-x {
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.camera-gizmo-axis-z {
+  left: 50%;
+  top: 50%;
+  color: #11171c;
+  background: rgba(223, 180, 93, 0.9);
+  transform: translate(-50%, -50%);
+}
+
+.camera-gizmo-axis.is-dragging {
+  border-color: rgba(223, 180, 93, 0.95);
+  background: rgba(223, 180, 93, 0.24);
+}
+
+.camera-gizmo-axis-z.is-dragging {
+  background: rgba(223, 180, 93, 0.95);
+}
+
+.weight-timeline-panel {
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  left: 18px;
+  z-index: 4;
+  display: grid;
+  gap: 7px;
+  padding: 9px 10px;
+  border: 1px solid rgba(244, 234, 214, 0.22);
+  background: rgba(11, 15, 18, 0.96);
+  box-shadow: none;
+  contain: layout paint style;
+  isolation: isolate;
+}
+
+.weight-timeline-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.weight-timeline-toolbar .timeline-toolbar-bone-field {
+  flex: 1 1 auto;
+  grid-template-columns: minmax(30px, max-content) minmax(140px, 1fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.weight-editor-app .weight-timeline-panel button,
+.weight-editor-app .weight-timeline-panel select,
+.weight-editor-app .weight-timeline-panel input {
+  font-size: 11px;
+}
+
+.weight-editor-app .weight-timeline-panel select {
+  min-height: 28px;
+  padding: 0 8px;
+}
+
+.animation-editor-app.is-timeline-compact .bone-layer-list,
+.weight-editor-app.is-timeline-compact .bone-layer-list {
+  display: none;
+}
+
+.animation-editor-app.is-timeline-hidden .animation-timeline-panel {
+  display: none;
+}
+
+.weight-editor-app.is-timeline-hidden .weight-timeline-panel {
+  display: none;
+}
+
+.animation-editor-app.is-timeline-hidden .timeline-show-toggle,
+.weight-editor-app.is-timeline-hidden .timeline-show-toggle {
+  display: inline-flex;
+}
+
+.animation-editor-app:not(.is-bird-target) .bird-only-section {
+  display: none;
+}
+
+.animation-editor-tools {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 5;
+  display: flex;
+  gap: 8px;
+}
+
+.animation-editor-tools [hidden] {
+  display: none !important;
+}
+
+.animation-editor-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.animation-editor-tools button,
+.timeline-layout-actions button {
+  min-width: 28px;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.animation-editor-tools .timeline-show-toggle {
+  min-width: 74px;
+}
+
+.timeline-pose-row,
+.timeline-position-row,
+.timeline-track-row,
+.timeline-global-row {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+}
+
+.timeline-global-row {
+  grid-template-columns: minmax(118px, 0.55fr) minmax(150px, 0.8fr) minmax(160px, 0.72fr) minmax(136px, auto) minmax(176px, 1fr) minmax(128px, auto) minmax(126px, auto) minmax(160px, auto);
+}
+
+.timeline-target-field,
+.timeline-speed-field,
+.timeline-scale-field,
+.timeline-blend-field {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+}
+
+.timeline-target-field {
+  grid-template-columns: 62px minmax(0, 1fr);
+}
+
+.timeline-speed-field {
+  grid-template-columns: 46px minmax(120px, 1fr) 42px;
+}
+
+.timeline-scale-field {
+  grid-template-columns: 42px minmax(92px, 1fr) 48px;
+}
+
+.timeline-blend-field {
+  grid-template-columns: 32px minmax(92px, 1fr) 36px;
+}
+
+.timeline-target-field select {
+  min-width: 0;
+}
+
+.timeline-target-field span,
+.timeline-speed-field span,
+.timeline-scale-field span,
+.timeline-blend-field span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.timeline-speed-field output,
+.timeline-scale-field output,
+.timeline-blend-field output,
+.timeline-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.timeline-status {
+  margin: 0;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.timeline-layout-actions {
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 6px;
+}
+
+.timeline-layout-actions button {
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+
+.animation-editor-app .animation-timeline-panel button {
+  min-width: 0;
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.animation-editor-app .animation-timeline-panel .timeline-key-marker {
+  width: 6px;
+  min-width: 0;
+  height: 5px;
+  min-height: 0;
+  padding: 0;
+  font-size: 0;
+}
+
+.animation-editor-app .animation-timeline-panel .viewer-actions,
+.animation-editor-app .animation-timeline-panel .timeline-layout-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.animation-editor-app .animation-timeline-panel .timeline-layout-actions {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  grid-template-columns: repeat(2, max-content);
+  gap: 6px;
+}
+
+.animation-editor-app .animation-timeline-panel .timeline-layout-actions button {
+  width: auto;
+  min-width: 24px;
+  min-height: 22px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+
+.animation-editor-app .animation-timeline-panel .timeline-status {
+  display: none;
+}
+
+.animation-editor-app .animation-timeline-panel {
+  font-size: 12px;
+}
+
+.animation-editor-app .timeline-target-field span,
+.animation-editor-app .timeline-scale-field span,
+.animation-editor-app .timeline-speed-field span,
+.animation-editor-app .timeline-blend-field span,
+.animation-editor-app .timeline-bone-field span,
+.animation-editor-app .timeline-rot-field span,
+.animation-editor-app .timeline-frame-readout {
+  font-size: 10px;
+}
+
+.animation-editor-app .timeline-scale-field output,
+.animation-editor-app .timeline-speed-field output,
+.animation-editor-app .timeline-blend-field output,
+.animation-editor-app .timeline-pose-row .timeline-rot-field output,
+.animation-editor-app .timeline-position-row .timeline-rot-field output {
+  font-size: 10px;
+}
+
+.animation-editor-app .animation-timeline-panel select {
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.animation-editor-app .timeline-pose-actions button {
+  min-height: 24px;
+  font-size: 11px;
+}
+
+.animation-editor-app.is-timeline-compact .animation-timeline-panel {
+  gap: 6px;
+  padding: 8px;
+}
+
+.animation-editor-app.is-timeline-compact .timeline-global-row,
+.animation-editor-app.is-timeline-compact .timeline-pose-row,
+.animation-editor-app.is-timeline-compact .timeline-position-row,
+.animation-editor-app.is-timeline-compact .timeline-track-row {
+  gap: 6px;
+}
+
+.animation-editor-app.is-timeline-compact .timeline-global-row {
+  padding-left: 58px;
+}
+
+.animation-editor-app.is-timeline-compact .timeline-pose-row {
+  padding-left: 58px;
+}
+
+.animation-editor-app.is-timeline-compact .timeline-target-field,
+.animation-editor-app.is-timeline-compact .timeline-scale-field,
+.animation-editor-app.is-timeline-compact .timeline-speed-field,
+.animation-editor-app.is-timeline-compact .timeline-bone-field,
+.animation-editor-app.is-timeline-compact .timeline-rot-field {
+  gap: 2px;
+}
+
+.animation-editor-app.is-timeline-compact .timeline-target-field span,
+.animation-editor-app.is-timeline-compact .timeline-scale-field span,
+.animation-editor-app.is-timeline-compact .timeline-speed-field span,
+.animation-editor-app.is-timeline-compact .timeline-bone-field span,
+.animation-editor-app.is-timeline-compact .timeline-rot-field span,
+.animation-editor-app.is-timeline-compact .timeline-frame-readout {
+  font-size: 10px;
+}
+
+.animation-editor-app.is-timeline-compact .timeline-scale-field output,
+.animation-editor-app.is-timeline-compact .timeline-speed-field output,
+.animation-editor-app.is-timeline-compact .timeline-pose-row .timeline-rot-field output,
+.animation-editor-app.is-timeline-compact .timeline-position-row .timeline-rot-field output {
+  font-size: 10px;
+}
+
+.animation-editor-app.is-timeline-compact .animation-timeline-panel button,
+.animation-editor-app.is-timeline-compact .animation-timeline-panel select {
+  min-height: 24px;
+  font-size: 12px;
+}
+
+.animation-editor-app.is-timeline-compact .animation-timeline-panel .timeline-layout-actions {
+  top: 6px;
+  left: 6px;
+  gap: 4px;
+}
+
+.animation-editor-app.is-timeline-compact .animation-timeline-panel .timeline-layout-actions button {
+  min-width: 24px;
+  min-height: 22px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+
+.animation-editor-app.is-timeline-compact .animation-timeline-panel .timeline-key-marker {
+  width: 6px;
+  min-width: 0;
+  height: 5px;
+  min-height: 0;
+  padding: 0;
+  font-size: 0;
+}
+
+.animation-editor-app.is-timeline-compact .timeline-pose-actions button {
+  min-height: 24px;
+  font-size: 11px;
+}
+
+.animation-editor-app.is-timeline-compact .timeline-track {
+  min-height: 22px;
+}
+
+.animation-editor-app .timeline-global-row {
+  grid-template-columns: repeat(auto-fit, minmax(142px, 1fr));
+  gap: 8px;
+  padding-left: 70px;
+}
+
+.animation-editor-app .timeline-target-field {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 3px;
+}
+
+.animation-editor-app .timeline-scale-field,
+.animation-editor-app .timeline-speed-field,
+.animation-editor-app .timeline-blend-field {
+  grid-template-columns: minmax(0, 1fr) minmax(34px, 42px);
+  grid-template-areas:
+    "label label"
+    "slider value";
+  gap: 3px 6px;
+}
+
+.animation-editor-app .timeline-scale-field span,
+.animation-editor-app .timeline-speed-field span,
+.animation-editor-app .timeline-blend-field span {
+  grid-area: label;
+}
+
+.animation-editor-app .timeline-scale-field input,
+.animation-editor-app .timeline-speed-field input,
+.animation-editor-app .timeline-blend-field input {
+  grid-area: slider;
+}
+
+.animation-editor-app .timeline-scale-field output,
+.animation-editor-app .timeline-speed-field output,
+.animation-editor-app .timeline-blend-field output {
+  grid-area: value;
+  justify-self: end;
+  font-size: 11px;
+}
+
+.timeline-pose-row {
+  grid-template-columns: minmax(120px, 160px) repeat(3, minmax(148px, 1fr)) minmax(78px, auto) minmax(78px, auto);
+  gap: 8px;
+}
+
+.animation-editor-app .timeline-pose-row {
+  grid-template-columns: minmax(130px, 0.85fr) repeat(3, minmax(134px, 1fr));
+  padding-left: 58px;
+}
+
+.weight-editor-app .timeline-pose-row {
+  grid-template-columns: minmax(48px, 56px) repeat(3, minmax(104px, 1fr)) minmax(48px, 54px) minmax(40px, 48px);
+  gap: 5px;
+}
+
+.timeline-position-row {
+  grid-template-columns: repeat(3, minmax(148px, 1fr));
+  gap: 8px;
+}
+
+.weight-editor-app .timeline-position-row {
+  grid-template-columns: minmax(48px, 56px) repeat(3, minmax(104px, 1fr)) minmax(48px, 54px) minmax(40px, 48px);
+  gap: 5px;
+}
+
+.weight-editor-app .timeline-position-row .timeline-rot-field:nth-child(1) {
+  grid-column: 2;
+}
+
+.weight-editor-app .timeline-position-row .timeline-rot-field:nth-child(2) {
+  grid-column: 3;
+}
+
+.weight-editor-app .timeline-position-row .timeline-rot-field:nth-child(3) {
+  grid-column: 4;
+}
+
+.animation-editor-app .timeline-position-row {
+  grid-template-columns: minmax(130px, 0.85fr) repeat(3, minmax(134px, 1fr));
+}
+
+.timeline-track-row {
+  grid-template-columns: 76px 92px minmax(0, 1fr) minmax(260px, auto) 64px;
+}
+
+.weight-editor-app .timeline-track-row:not(.timeline-sequence-row) {
+  grid-template-columns: minmax(48px, auto) minmax(68px, auto) minmax(0, 1fr) minmax(48px, auto);
+  gap: 5px 8px;
+}
+
+.weight-editor-app .timeline-track-row:not(.timeline-sequence-row) .timeline-track {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-height: 22px;
+}
+
+.weight-editor-app .timeline-track-row:not(.timeline-sequence-row) #timeline-play-toggle {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.weight-editor-app .timeline-track-row:not(.timeline-sequence-row) .timeline-frame-readout {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: center;
+}
+
+.weight-editor-app .timeline-track-row:not(.timeline-sequence-row) .timeline-key-actions {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.weight-editor-app .timeline-track-row:not(.timeline-sequence-row) .timeline-hold-toggle {
+  grid-column: 4;
+  grid-row: 2;
+  align-self: center;
+}
+
+.animation-editor-app.is-side-panel-open .timeline-track-row {
+  grid-template-columns: minmax(58px, auto) minmax(72px, auto) minmax(0, 1fr);
+}
+
+.animation-editor-app.is-side-panel-open .timeline-key-actions {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.timeline-sequence-row {
+  grid-template-columns: minmax(76px, auto) 92px minmax(0, 1fr) minmax(150px, auto);
+}
+
+.timeline-blend-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.1;
+  text-align: right;
+}
+
+.timeline-sequence-track {
+  display: grid;
+  gap: 5px;
+}
+
+.sequence-phase-track {
+  --sequence-source-width: 33.333%;
+  --sequence-mix-width: 33.333%;
+  --sequence-target-width: 33.333%;
+  display: grid;
+  grid-template-columns: minmax(34px, var(--sequence-source-width)) minmax(34px, var(--sequence-mix-width)) minmax(34px, var(--sequence-target-width));
+  gap: 3px;
+}
+
+.sequence-phase-track span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 18px;
+  padding: 0 5px;
+  overflow: hidden;
+  border: 1px solid rgba(244, 234, 214, 0.13);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.sequence-phase-track span.is-active {
+  border-color: rgba(223, 180, 93, 0.74);
+  background: rgba(223, 180, 93, 0.16);
+  color: var(--text);
+}
+
+.sequence-phase-track b,
+.sequence-phase-track output {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sequence-phase-track output {
+  margin-left: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.animation-editor-app:not(.has-blend-target) .timeline-sequence-row {
+  opacity: 0.48;
+}
+
+.weight-editor-app:not(.has-blend-target) .timeline-sequence-row {
+  display: none;
+}
+
+.timeline-bone-field,
+.timeline-rot-field {
+  display: grid;
+  gap: 5px;
+}
+
+.weight-editor-app .timeline-bone-field,
+.weight-editor-app .timeline-rot-field,
+.animation-editor-app .timeline-rot-field {
+  min-width: 0;
+}
+
+.timeline-bone-field span,
+.timeline-rot-field span,
+.timeline-frame-readout {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.weight-editor-app .timeline-bone-field span,
+.weight-editor-app .timeline-rot-field span,
+.weight-editor-app .timeline-frame-readout {
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
+.timeline-rot-field {
+  grid-template-columns: 52px minmax(68px, 1fr) 68px;
+  align-items: center;
+  gap: 6px;
+}
+
+.weight-editor-app .timeline-rot-field {
+  grid-template-columns: minmax(28px, max-content) minmax(44px, 1fr) minmax(46px, 58px);
+  gap: 4px;
+}
+
+.animation-editor-app .timeline-pose-row .timeline-rot-field,
+.animation-editor-app .timeline-position-row .timeline-rot-field {
+  grid-template-columns: minmax(44px, max-content) minmax(0, 1fr);
+  grid-template-areas:
+    "label slider"
+    ". value";
+  gap: 2px 6px;
+}
+
+.animation-editor-app .timeline-pose-row .timeline-rot-field span,
+.animation-editor-app .timeline-position-row .timeline-rot-field span {
+  grid-area: label;
+}
+
+.animation-editor-app .timeline-pose-row .timeline-rot-field input[type="range"],
+.animation-editor-app .timeline-position-row .timeline-rot-field input[type="range"] {
+  grid-area: slider;
+}
+
+.animation-editor-app .timeline-pose-row .timeline-rot-field output,
+.animation-editor-app .timeline-position-row .timeline-rot-field output {
+  grid-area: value;
+  justify-self: stretch;
+}
+
+.timeline-rot-field span {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.timeline-rot-field output {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  text-align: right;
+  text-overflow: ellipsis;
+}
+
+.timeline-value-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  padding: 0 5px;
+  border: 1px solid rgba(244, 234, 214, 0.22);
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: right;
+}
+
+.weight-editor-app .timeline-value-input {
+  min-height: 24px;
+  font-size: 10px;
+}
+
+.weight-editor-app .timeline-rot-field output {
+  font-size: 11px;
+}
+
+.animation-editor-app .timeline-pose-row .timeline-rot-field output,
+.animation-editor-app .timeline-position-row .timeline-rot-field output {
+  font-size: 10px;
+}
+
+.timeline-pose-row button {
+  min-width: 78px;
+  padding: 0 8px;
+}
+
+.weight-editor-app .timeline-pose-row button {
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 1.05;
+}
+
+.timeline-pose-tools {
+  display: grid;
+  align-self: end;
+  grid-template-columns: 1fr;
+  grid-template-rows: repeat(2, minmax(14px, 1fr));
+  gap: 2px;
+}
+
+.timeline-bone-tool {
+  align-self: end;
+  min-height: 36px;
+}
+
+.weight-editor-app .timeline-pose-tools .timeline-bone-tool {
+  align-self: stretch;
+  min-height: 14px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+.timeline-pose-actions {
+  display: grid;
+  align-self: end;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.timeline-pose-actions button {
+  min-width: 0;
+  width: 100%;
+  min-height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+}
+
+.timeline-track {
+  position: relative;
+  display: grid;
+  align-items: center;
+  min-height: 28px;
+}
+
+.timeline-track input {
+  position: relative;
+  z-index: 2;
+  margin: 0;
+}
+
+.timeline-keys {
+  position: absolute;
+  right: 6px;
+  bottom: 0;
+  left: 6px;
+  height: 5px;
+  pointer-events: none;
+}
+
+.timeline-key-marker {
+  position: absolute;
+  top: 0;
+  width: 6px;
+  height: 5px;
+  padding: 0;
+  min-width: 0;
+  min-height: 0;
+  transform: translateX(-50%);
+  border: 0;
+  background: var(--red);
+  pointer-events: auto;
+}
+
+.timeline-key-menu {
+  position: fixed;
+  z-index: 20;
+  display: grid;
+  gap: 6px;
+  min-width: 132px;
+  padding: 8px;
+  border: 1px solid rgba(244, 234, 214, 0.24);
+  background: rgba(11, 15, 18, 0.94);
+  box-shadow: none;
+}
+
+.timeline-key-menu span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.timeline-key-menu button {
+  min-height: 28px;
+  text-align: left;
+}
+
+.timeline-key-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(68px, 1fr));
+  gap: 8px;
+}
+
+.weight-editor-app .timeline-key-actions {
+  grid-template-columns: repeat(4, minmax(58px, 1fr));
+  gap: 5px;
+}
+
+.weight-editor-app .timeline-key-actions button,
+.weight-editor-app .timeline-track-row:not(.timeline-sequence-row) #timeline-play-toggle {
+  min-height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 1.05;
+}
+
+.curve-channel-field {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px;
+}
+
+.curve-channel-field span,
+.bone-layer-curve-toolbar output {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.bone-layer-curve-toolbar output {
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bone-layer-curve-canvas {
+  display: block;
+  width: 100%;
+  height: 112px;
+  border: 1px solid rgba(244, 234, 214, 0.16);
+  background: rgba(0, 0, 0, 0.3);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.bone-layer-curve-stage {
+  position: relative;
+  min-width: 0;
+  overscroll-behavior: contain;
+}
+
+.bone-layer-curve-playhead {
+  position: absolute;
+  z-index: 2;
+  width: 2px;
+  transform: translateX(-1px);
+  background: rgba(213, 125, 117, 0.95);
+  pointer-events: none;
+}
+
+.timeline-hold-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bone-layer-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: min(22vh, 188px);
+  overflow: auto;
+  padding-top: 2px;
+}
+
+.bone-layer-row {
+  display: block;
+  flex: 0 0 auto;
+  min-height: 24px;
+  contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: 28px;
+}
+
+.bone-layer-row.is-expanded {
+  padding: 4px;
+  border: 1px solid rgba(223, 180, 93, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+  contain-intrinsic-size: 188px;
+}
+
+.bone-layer-header {
+  display: grid;
+  grid-template-columns: 24px minmax(128px, 172px) minmax(154px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.bone-layer-row.is-expanded .bone-layer-header {
+  grid-template-columns: 24px minmax(112px, 156px) minmax(136px, auto) minmax(380px, 1fr);
+  gap: 6px;
+}
+
+.bone-layer-expand-toggle {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-color: rgba(244, 234, 214, 0.2);
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.bone-layer-row.is-active .bone-layer-name {
+  border-color: rgba(223, 180, 93, 0.95);
+  background: rgba(223, 180, 93, 0.2);
+}
+
+.bone-layer-row.is-mirror-active .bone-layer-name {
+  border-color: rgba(111, 190, 255, 0.78);
+  background: rgba(111, 190, 255, 0.14);
+}
+
+.bone-layer-name {
+  min-height: 24px;
+  padding: 0 8px;
+  overflow: hidden;
+  border: 1px solid rgba(244, 234, 214, 0.18);
+  background: rgba(255, 255, 255, 0.045);
+  color: var(--text);
+  font-size: 11px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bone-layer-values {
+  display: grid;
+  grid-template-columns: repeat(3, 46px);
+  gap: 4px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.bone-layer-track {
+  position: relative;
+  height: 16px;
+  border: 1px solid rgba(244, 234, 214, 0.12);
+  background: rgba(255, 255, 255, 0.055);
+  background-repeat: no-repeat;
+}
+
+.weight-editor-app .bone-layer-track {
+  pointer-events: none;
+}
+
+.bone-layer-key {
+  position: absolute;
+  top: 2px;
+  width: 7px;
+  height: 10px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  transform: translateX(-50%);
+  border: 0;
+  background: var(--gold);
+}
+
+.bone-layer-curve-panel {
+  display: grid;
+  gap: 0;
+  clear: both;
+  margin-left: 32px;
+  margin-top: 5px;
+  margin-bottom: 0;
+  padding: 4px;
+  border: 1px solid rgba(223, 180, 93, 0.22);
+  border-left: 2px solid rgba(223, 180, 93, 0.68);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.bone-layer-curve-toolbar {
+  display: grid;
+  grid-template-columns: minmax(142px, 178px) repeat(3, minmax(58px, 76px)) minmax(80px, 1fr);
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.weight-editor-app .bone-layer-curve-toolbar button {
+  min-height: 24px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.weight-editor-app .bone-layer-curve-toolbar select {
+  min-height: 24px;
+  padding: 0 5px;
+  font-size: 10px;
+}
+
+.bone-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.bone-label {
+  position: absolute;
+  max-width: 126px;
+  padding: 2px 5px;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(244, 234, 214, 0.22);
+  background: rgba(11, 15, 18, 0.72);
+  color: rgba(244, 234, 214, 0.9);
+  font-size: 10px;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px), (max-height: 560px) {
+  .viewer-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .viewer-panel {
+    order: 2;
+    max-height: 38vh;
+    padding: 12px;
+    border-top: 1px solid var(--panel-line);
+    border-right: 0;
+  }
+
+  .viewer-stage {
+    order: 1;
+  }
+
+  .weight-timeline-panel {
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    max-height: min(38vh, 220px);
+    overflow: auto;
+    padding: 8px;
+  }
+
+  .timeline-pose-row,
+  .timeline-position-row,
+  .timeline-track-row,
+  .timeline-global-row,
+  .bone-layer-header,
+  .bone-layer-curve-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .weight-editor-app .timeline-position-row .timeline-rot-field {
+    grid-column: auto;
+  }
+
+  .bone-layer-curve-panel {
+    margin-left: 0;
+  }
+
+  .timeline-key-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px), (max-height: 560px) {
+  .animation-editor-tools {
+    top: 8px;
+    left: 8px;
+  }
+
+  .weight-viewport-tools {
+    top: 8px;
+    right: 8px;
+    max-width: calc(100% - 16px);
+    max-height: 34vh;
+    overflow: auto;
+    padding: 6px;
+  }
+
+  .animation-editor-app .timeline-global-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .animation-editor-app .timeline-pose-row,
+  .animation-editor-app .timeline-position-row {
+    grid-template-columns: minmax(104px, 0.8fr) repeat(3, minmax(96px, 1fr));
+  }
+
+.animation-editor-app .timeline-track-row {
+  grid-template-columns: minmax(58px, auto) minmax(74px, auto) minmax(0, 1fr);
+}
+
+.animation-editor-app .timeline-sequence-row {
+  grid-template-columns: minmax(58px, auto) minmax(74px, auto) minmax(0, 1fr) minmax(112px, auto);
+}
+
+.animation-editor-app .timeline-key-actions {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+  .animation-editor-app .timeline-bone-field {
+    min-width: 0;
+  }
+
+  .animation-editor-app .timeline-target-field {
+    grid-template-columns: minmax(42px, max-content) minmax(0, 1fr);
+  }
+
+  .animation-editor-app .animation-timeline-panel button {
+    min-height: 28px;
+    padding: 0 6px;
+    font-size: 13px;
+  }
+}
