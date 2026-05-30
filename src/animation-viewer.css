@@ -73,6 +73,7 @@ input {
 }
 
 .viewer-header {
+  position: relative;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -81,7 +82,7 @@ input {
 
 .editor-control-panel .viewer-header {
   min-height: 78px;
-  padding-left: 36px;
+  padding-right: 36px;
 }
 
 .panel-collapse-toggle,
@@ -95,8 +96,8 @@ input {
 
 .panel-collapse-toggle {
   position: absolute;
-  top: 14px;
-  left: 14px;
+  top: 0;
+  right: 0;
 }
 
 .viewer-header-links {
@@ -168,6 +169,29 @@ button {
 
 .animation-side-section .import-options {
   grid-template-columns: minmax(0, 1fr);
+}
+
+.animation-side-section .animation-loop-options {
+  grid-template-columns: repeat(3, minmax(54px, max-content));
+  justify-content: start;
+  gap: 2px 8px;
+}
+
+.animation-side-section .animation-display-options {
+  grid-template-columns: repeat(3, minmax(54px, max-content));
+  justify-content: start;
+  gap: 2px 8px;
+}
+
+.animation-side-section .animation-loop-options label,
+.animation-side-section .animation-display-options label {
+  min-height: 20px;
+  gap: 5px;
+}
+
+.animation-side-section .travel-follow-option.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .animation-library-section {
@@ -501,6 +525,19 @@ input[type="color"] {
   grid-column: 1 / -1;
 }
 
+.rig-pose-clipboard-actions {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.rig-pose-clipboard-actions button {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 8px;
+}
+
 .ik-chain-settings {
   grid-column: 1 / -1;
   display: grid;
@@ -753,7 +790,7 @@ button.is-active {
 
 .weight-editor-app .editor-control-panel .viewer-header {
   min-height: 54px;
-  padding-left: 30px;
+  padding-right: 30px;
 }
 
 .weight-editor-app .viewer-kicker {
@@ -1005,8 +1042,8 @@ button.is-active {
   left: 18px;
   z-index: 4;
   display: grid;
-  gap: 7px;
-  padding: 9px 10px;
+  gap: 5px;
+  padding: 8px 9px;
   border: 1px solid rgba(244, 234, 214, 0.22);
   background: rgba(11, 15, 18, 0.96);
   box-shadow: none;
@@ -1015,17 +1052,22 @@ button.is-active {
 }
 
 .weight-timeline-toolbar {
-  display: flex;
+  display: grid;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  justify-content: start;
+  grid-template-columns: minmax(136px, 170px);
+  gap: 4px;
 }
 
 .weight-timeline-toolbar .timeline-toolbar-bone-field {
-  flex: 1 1 auto;
-  grid-template-columns: minmax(30px, max-content) minmax(140px, 1fr);
+  grid-template-columns: minmax(26px, max-content) minmax(82px, 1fr);
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  min-height: 22px;
+}
+
+.weight-timeline-toolbar select {
+  min-height: 22px;
 }
 
 .weight-editor-app .weight-timeline-panel button,
@@ -1163,13 +1205,13 @@ button.is-active {
 .timeline-layout-actions {
   display: grid;
   grid-template-columns: repeat(2, max-content);
-  gap: 6px;
+  gap: 3px;
 }
 
 .timeline-layout-actions button {
-  width: 28px;
-  min-width: 28px;
-  min-height: 28px;
+  width: 22px;
+  min-width: 22px;
+  min-height: 22px;
   padding: 0;
 }
 
@@ -1380,8 +1422,9 @@ button.is-active {
 }
 
 .weight-editor-app .timeline-pose-row {
-  grid-template-columns: minmax(48px, 56px) repeat(3, minmax(104px, 1fr)) minmax(48px, 54px) minmax(40px, 48px);
-  gap: 5px;
+  grid-template-columns: minmax(104px, 128px) minmax(0, 1fr) minmax(42px, 48px);
+  align-items: start;
+  gap: 6px;
 }
 
 .timeline-position-row {
@@ -1390,8 +1433,8 @@ button.is-active {
 }
 
 .weight-editor-app .timeline-position-row {
-  grid-template-columns: minmax(48px, 56px) repeat(3, minmax(104px, 1fr)) minmax(48px, 54px) minmax(40px, 48px);
-  gap: 5px;
+  grid-template-columns: minmax(172px, 220px) repeat(3, minmax(104px, 1fr)) minmax(40px, 48px);
+  gap: 6px;
 }
 
 .weight-editor-app .timeline-position-row .timeline-rot-field:nth-child(1) {
@@ -1404,6 +1447,15 @@ button.is-active {
 
 .weight-editor-app .timeline-position-row .timeline-rot-field:nth-child(3) {
   grid-column: 4;
+}
+
+.weight-editor-app .timeline-loop-action {
+  grid-column: auto;
+  align-self: stretch;
+  padding: 0 4px;
+  font-size: 10px;
+  line-height: 1;
+  white-space: normal;
 }
 
 .animation-editor-app .timeline-position-row {
@@ -1559,8 +1611,10 @@ button.is-active {
 }
 
 .weight-editor-app .timeline-rot-field {
-  grid-template-columns: minmax(28px, max-content) minmax(44px, 1fr) minmax(46px, 58px);
-  gap: 4px;
+  grid-template-columns: minmax(36px, max-content) minmax(38px, 1fr) minmax(42px, 52px);
+  align-items: center;
+  min-height: 24px;
+  gap: 3px;
 }
 
 .animation-editor-app .timeline-pose-row .timeline-rot-field,
@@ -1616,7 +1670,7 @@ button.is-active {
 }
 
 .weight-editor-app .timeline-value-input {
-  min-height: 24px;
+  min-height: 22px;
   font-size: 10px;
 }
 
@@ -1636,17 +1690,37 @@ button.is-active {
 
 .weight-editor-app .timeline-pose-row button {
   min-width: 0;
-  min-height: 28px;
+  min-height: 22px;
   padding: 0 5px;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.05;
+}
+
+.timeline-transform-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(96px, 1fr));
+  gap: 3px 6px;
+  align-self: start;
+  min-width: 0;
+}
+
+.timeline-main-stack {
+  display: grid;
+  align-self: start;
+  gap: 3px;
+  min-width: 0;
 }
 
 .timeline-pose-tools {
   display: grid;
-  align-self: end;
-  grid-template-columns: 1fr;
-  grid-template-rows: repeat(2, minmax(14px, 1fr));
+  align-self: stretch;
+  grid-template-rows: minmax(16px, auto) auto;
+  gap: 2px;
+}
+
+.timeline-bone-tool-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px;
 }
 
@@ -1657,24 +1731,86 @@ button.is-active {
 
 .weight-editor-app .timeline-pose-tools .timeline-bone-tool {
   align-self: stretch;
-  min-height: 14px;
-  padding: 0 4px;
-  font-size: 10px;
+  min-height: 16px;
+  height: 16px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.weight-editor-app .timeline-pose-tools .timeline-ik-settings {
+  grid-column: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
+.weight-editor-app .timeline-ik-settings .viewer-field {
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  min-height: 0;
+  gap: 1px;
+}
+
+.weight-editor-app .timeline-ik-settings .viewer-field.is-hidden {
+  display: none;
+}
+
+.weight-editor-app .timeline-ik-settings .viewer-field.is-disabled {
+  opacity: 0.48;
+}
+
+.weight-editor-app .timeline-ik-settings .viewer-field span {
+  font-size: 7px;
+  line-height: 1;
+}
+
+.weight-editor-app .timeline-ik-settings select,
+.weight-editor-app .timeline-ik-settings input[type="range"] {
+  min-height: 17px;
+}
+
+.weight-editor-app .timeline-ik-settings .viewer-range-row {
+  grid-template-columns: minmax(0, 1fr) minmax(28px, auto);
+  gap: 3px;
+}
+
+.weight-editor-app .timeline-ik-settings output {
+  min-width: 28px;
+  font-size: 9px;
 }
 
 .timeline-pose-actions {
   display: grid;
-  align-self: end;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  align-self: start;
+  grid-template-columns: repeat(2, minmax(22px, 1fr));
+  gap: 3px;
+}
+
+.timeline-pose-actions .timeline-layout-actions {
+  grid-column: 1 / -1;
+  justify-content: end;
 }
 
 .timeline-pose-actions button {
   min-width: 0;
   width: 100%;
-  min-height: 26px;
-  padding: 0 6px;
-  font-size: 12px;
+  min-height: 22px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+.timeline-pose-actions > button {
+  grid-column: 1 / -1;
+}
+
+.weight-editor-app .timeline-pose-actions > button {
+  grid-column: 1 / -1;
+}
+
+.weight-editor-app .timeline-pose-actions .timeline-loop-action {
+  min-height: 27px;
+  font-size: 9px;
 }
 
 .timeline-track {
@@ -2001,9 +2137,19 @@ button.is-active {
     right: 8px;
     bottom: 8px;
     left: 8px;
+    grid-template-columns: minmax(0, 1fr);
     max-height: min(38vh, 220px);
     overflow: auto;
     padding: 8px;
+  }
+
+  .animation-side-section .viewer-checks:not(.import-options) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .weight-timeline-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
   .timeline-pose-row,
@@ -2019,12 +2165,61 @@ button.is-active {
     grid-column: auto;
   }
 
+  .weight-editor-app .timeline-position-row .timeline-rot-field:nth-child(1),
+  .weight-editor-app .timeline-position-row .timeline-rot-field:nth-child(2),
+  .weight-editor-app .timeline-position-row .timeline-rot-field:nth-child(3) {
+    grid-column: auto;
+  }
+
+  .weight-editor-app .timeline-loop-action {
+    grid-column: auto;
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .timeline-transform-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .timeline-pose-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .bone-layer-curve-panel {
     margin-left: 0;
   }
 
   .timeline-key-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .weight-editor-app .timeline-track-row:not(.timeline-sequence-row) {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+  }
+
+  .weight-editor-app .timeline-pose-row {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+  }
+
+  .weight-editor-app .timeline-position-row {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+  }
+
+  .weight-editor-app .timeline-track-row:not(.timeline-sequence-row) .timeline-track,
+  .weight-editor-app .timeline-track-row:not(.timeline-sequence-row) #timeline-play-toggle,
+  .weight-editor-app .timeline-track-row:not(.timeline-sequence-row) .timeline-frame-readout,
+  .weight-editor-app .timeline-track-row:not(.timeline-sequence-row) .timeline-key-actions,
+  .weight-editor-app .timeline-track-row:not(.timeline-sequence-row) .timeline-hold-toggle {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .weight-editor-app .timeline-key-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
   }
 }
 

@@ -476,6 +476,9 @@ export function installWeightMethods(BirdWeightEditor, deps) {
         entry.index !== skinIndex.array[offset + slot]
         || Math.abs(entry.weight - skinWeight.array[offset + slot]) > 0.0001
       ));
+      if (changed) {
+        this.invalidateBoneDisplayCache?.();
+      }
       return { changed, reattached, blocked: false };
     },
 

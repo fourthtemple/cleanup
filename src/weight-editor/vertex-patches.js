@@ -451,6 +451,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
       }
       const includePoseKeyframes = !this.poseKeyframesGenerated;
       const poseKeyframes = includePoseKeyframes ? this.serializePoseKeyframes() : [];
+      const poseCurveHandles = includePoseKeyframes ? this.serializePoseCurveHandles?.() || [] : [];
       const patch = {
         version: 1,
         actor: this.actorTarget.id,
@@ -464,6 +465,9 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         assignments,
         poseKeyframes
       };
+      if (poseCurveHandles.length) {
+        patch.poseCurveHandles = poseCurveHandles;
+      }
       if (poseKeyframes.length) {
         const poseKeyframeAction = this.clipCleanupActionKey?.(this.activeClipEntry);
         if (poseKeyframeAction) {
@@ -790,6 +794,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
           applied += 1;
         }
         this.applySerializedPoseKeyframes(poseLayer.keyframes, { generated: poseLayer.generated });
+        this.applySerializedPoseCurveHandles?.(patch.poseCurveHandles || []);
         this.poseKeyframeMode = poseLayer.mode;
 
         for (const record of this.paintRecords) {
@@ -849,6 +854,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         skinIndex.array[offset + slot] = normalized[slot]?.index || 0;
         skinWeight.array[offset + slot] = normalized[slot]?.weight || 0;
       }
+      this.invalidateBoneDisplayCache?.();
     },
 
     applyPositionDeltaToVertex(record, vertexIndex, delta) {

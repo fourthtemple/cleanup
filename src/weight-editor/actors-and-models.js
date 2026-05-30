@@ -190,7 +190,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.timelineBlendActionSelect.value = disabled ? "" : this.blendActionId;
       }
       if (this.timelineBlendControl) {
-        this.timelineBlendControl.disabled = disabled || !this.blendActionId;
+        this.timelineBlendControl.disabled = this.actorTarget?.mode === "bird-flap";
       }
       if (this.timelinePlayBothButton) {
         this.timelinePlayBothButton.disabled = disabled || !this.blendActionId;
@@ -283,7 +283,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.syncTimelineControls();
         this.syncPoseControlsToCurrentBone();
         this.setStatus(autoKeyed
-          ? `Auto-keyed ${autoKeyed.label}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
+          ? this.autoKeyStatusText?.(autoKeyed, autoKeyed.label) || `Auto-keyed ${autoKeyed.label}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
           : `Editing ${entry.name || entry.id}`);
       } finally {
         if (hidePreviewDuringLoad) {
@@ -308,7 +308,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           this.renderActionOptions();
           this.syncTimelineControls();
           this.source.textContent = `Library: ${folderName}`;
-          this.setStatus(`Choose an animation and click Load FBX`);
+          this.setStatus(`Choose an animation and click Load`);
           return;
         }
       }
@@ -330,9 +330,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
 
     clearActorModel() {
       this.pausePlayback?.();
-      this.skeletonHelper?.parent?.remove(this.skeletonHelper);
-      this.skeletonHelper?.dispose?.();
-      this.skeletonHelper = null;
+      this.disposeSkeletonHelper?.();
       this.transformControls.detach();
       this.transformHelper.visible = false;
       this.selectionPivot.visible = false;
@@ -349,6 +347,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.sequenceElapsed = 0;
       this.sequenceRootAnchor = null;
       this.sequenceTargetRootStart = null;
+      this.invalidateRootMotionPreviewProfile?.();
       this.clipEntries = [];
       this.clipCleanupEdits.clear();
       this.lastClipSampleTime = null;
@@ -361,19 +360,23 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.groundGrid?.position.set(0, 0, 0);
       this.groundFloor?.position.set(0, -0.012, 0);
       this.model = null;
+      this.syncExportButtons?.();
       this.bindPose = [];
       this.bones.clear();
       this.paintRecords = [];
       this.manualPose.clear();
       this.poseKeyframes.clear();
+      this.poseClipboard = null;
       this.poseKeyframesGenerated = false;
       this.virtualBones = [];
       this.manualBoneChains = [];
       this.undoStack = [];
       this.redoStack = [];
       this.updateUndoButton?.();
+      this.syncPoseClipboardControls?.();
       this.boneLayerNames = [];
       this.bonePickerNames = [];
+      this.invalidateBoneDisplayCache?.();
       this.activeBoneName = "";
       this.selectedBoneChainRootName = "";
       this.markerVertexCount = 0;
@@ -417,6 +420,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           return;
         }
         this.model = asset.scene;
+        this.syncExportButtons?.();
         this.prepareModel(this.model, target.displayHeight * (target.defaultScale || 1));
         this.baseModelScale = this.model.scale.x || 1;
         this.actorScaleMultiplier = 1;
@@ -472,7 +476,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           ? "Weights: bird-weight-patch.json / Anim: bird-flap-params.json"
           : target.sourceLabel || target.modelUrl.replace("./assets/models/", "").replace(/\?.*$/, "");
         this.setStatus(autoKeyed
-          ? `Auto-keyed ${autoKeyed.label}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
+          ? this.autoKeyStatusText?.(autoKeyed, autoKeyed.label) || `Auto-keyed ${autoKeyed.label}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
           : "Ready");
       } catch (error) {
         console.error(error);
@@ -554,6 +558,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.activeClipAction = action;
       this.activeClipEntry = entry;
       this.lastClipSampleTime = null;
+      this.invalidateRootMotionPreviewProfile?.();
       this.syncClipCleanupControls();
     },
 
@@ -735,7 +740,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       const fileName = item.name || entry.name || "animation";
       this.source.textContent = `${target.label}: ${fileName}`;
       this.setStatus(autoKeyed
-        ? `Auto-keyed ${entry.name}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
+        ? this.autoKeyStatusText?.(autoKeyed, entry.name) || `Auto-keyed ${entry.name}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
         : `Opened ${entry.name} on ${target.label}`);
       return true;
     },
@@ -852,6 +857,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.renderCharacterOptions();
 
       this.model = imported.scene;
+      this.syncExportButtons?.();
       this.prepareModel(this.model, displayHeight);
       this.baseModelScale = this.model.scale.x || 1;
       this.actorScaleMultiplier = 1;
@@ -883,7 +889,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.updateBoneLabels();
       this.source.textContent = label;
       this.setStatus(autoKeyed
-        ? `Auto-keyed ${autoKeyed.label}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
+        ? this.autoKeyStatusText?.(autoKeyed, autoKeyed.label) || `Auto-keyed ${autoKeyed.label}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
         : this.activeClipEntry ? `Loaded ${label}` : `Loaded ${label} without animation clips`);
       return true;
     },
@@ -1645,6 +1651,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           rootBindPose.scale.setScalar(scale);
         }
       }
+      this.invalidateRootMotionPreviewProfile?.();
       this.syncScaleControls();
       this.updateSelectionMarkers();
       this.updateAllVertexMarkers();
@@ -1887,6 +1894,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.syncBoneEditorControls(this.activeBoneName);
       this.renderAddBoneChainMemberOptions?.();
       this.renderBoneChainOptions?.();
+      this.syncPoseClipboardControls?.();
       this.updateSelectionInfluences?.();
     }
   });

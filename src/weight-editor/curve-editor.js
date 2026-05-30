@@ -303,6 +303,8 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
         ctx.fillRect(x - 3, y - 3, 6, 6);
       }
 
+      this.drawCurveHandles?.(ctx, plot, config, boneName, channel);
+
       ctx.fillStyle = "rgba(244, 234, 214, 0.72)";
       ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
       ctx.fillText(config.max.toFixed(config.decimals), 4, plot.top + 4);
@@ -405,17 +407,32 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
       this.pausePlayback();
       this.curveValueWindowLock = this.captureCurveValueWindowLock();
       const point = this.pointerToCurvePoint(event);
+      const nearestHandle = this.nearestCurveHandleFromPointer?.(event);
+      if (nearestHandle) {
+        this.beginPoseControlUndo("Curve handle edit");
+        this.curveScrollLock = this.captureCurveScrollState();
+        this.curveDragging = { type: "handle", pointerId: event.pointerId, ...nearestHandle };
+        try {
+          this.curveCanvas.setPointerCapture?.(event.pointerId);
+        } catch (error) {
+          // Synthetic verifier events and some embedded browsers can reject capture for inactive pointer ids.
+        }
+        this.setCurveHandleFromPointer?.(this.curveDragging, event);
+        this.restoreCurveScrollState();
+        return;
+      }
       const nearest = this.nearestCurveKeyFromPointer(event);
       const frame = nearest?.frame ?? point.frame;
+      const adaptiveAbsolute = this.shouldConvertSolvedEditToAdaptive?.() === true;
       this.beginPoseControlUndo("Curve edit");
       this.curveScrollLock = this.captureCurveScrollState();
-      this.curveDragging = { frame, pointerId: event.pointerId };
+      this.curveDragging = { frame, pointerId: event.pointerId, adaptiveAbsolute };
       try {
         this.curveCanvas.setPointerCapture?.(event.pointerId);
       } catch (error) {
         // Synthetic verifier events and some embedded browsers can reject capture for inactive pointer ids.
       }
-      this.setCurveValueAtFrame(frame, point.value, { rebuild: false });
+      this.setCurveValueAtFrame(frame, point.value, { rebuild: false, adaptiveAbsolute });
       this.restoreCurveScrollState();
     },
 
@@ -425,9 +442,18 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
       }
       event.preventDefault();
       event.stopPropagation();
+      if (this.curveDragging.type === "handle") {
+        this.setCurveHandleFromPointer?.(this.curveDragging, event);
+        this.restoreCurveScrollState();
+        return;
+      }
       const point = this.pointerToCurvePoint(event);
       const sourceFrame = this.curveDragging.frame;
-      this.setCurveValueAtFrame(point.frame, point.value, { sourceFrame, rebuild: false });
+      this.setCurveValueAtFrame(point.frame, point.value, {
+        sourceFrame,
+        rebuild: false,
+        adaptiveAbsolute: this.curveDragging.adaptiveAbsolute === true
+      });
       this.curveDragging.frame = point.frame;
       this.restoreCurveScrollState();
     },
@@ -467,14 +493,21 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
       this.curveReadout.textContent = this.curveReadout.value;
     },
 
-    setCurveValueAtFrame(frame, value, { sourceFrame = null, rebuild = true } = {}) {
+    setCurveValueAtFrame(frame, value, { sourceFrame = null, rebuild = true, adaptiveAbsolute = false } = {}) {
       const boneName = this.curveBoneName();
       const channel = this.curveChannel();
       if (!boneName || !this.bones.has(boneName)) {
         return;
       }
-      this.markPoseKeyframesAuthored?.();
       const targetFrame = Math.max(0, Math.min(this.timelineFrames, Math.round(frame)));
+      const useAdaptiveEdit = this.canUseAdaptiveEditForCurrentLayer?.() === true;
+      const targetValue = adaptiveAbsolute && useAdaptiveEdit
+        ? this.adaptiveValueFromAbsoluteValue(targetFrame, boneName, channel, value)
+        : finitePoseValue(value);
+      if (useAdaptiveEdit) {
+        this.prepareAdaptivePoseLayerForEdit?.();
+      }
+      this.markPoseKeyframesAuthored?.();
       const framePose = this.poseKeyframes.get(targetFrame) || {};
       const sourceFramePose = sourceFrame !== null ? this.poseKeyframes.get(sourceFrame) : null;
       const sourceBonePose = sourceFramePose?.[boneName];
@@ -485,8 +518,9 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
           ...this.clonePose(sourceBonePose)
         }
         : this.clonePose(framePose[boneName] || this.poseLayerFallbackForFrame(targetFrame, boneName));
-      framePose[boneName][channel] = finitePoseValue(value);
+      framePose[boneName][channel] = targetValue;
       this.poseKeyframes.set(targetFrame, framePose);
+      this.clearCurveHandlesAroundPoint?.(boneName, channel, targetFrame, sourceFrame);
       if (this.actorTarget?.mode !== "bird-flap") {
         this.ensureAdditivePoseAnchors(boneName, targetFrame, [channel]);
       }
@@ -601,6 +635,7 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
         return false;
       }
       this.markPoseKeyframesAuthored?.();
+      this.deleteCurveHandlesForPoint?.(boneName, channel, targetFrame);
       delete bonePose[channel];
       if (!Object.keys(bonePose).length) {
         delete framePose[boneName];
@@ -645,6 +680,7 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
       }
       const values = new Map(frames.map((frame) => [frame, this.poseKeyframes.get(frame)[boneName][channel]]));
       this.markPoseKeyframesAuthored?.();
+      this.deleteCurveHandlesForChannel?.(boneName, channel);
       for (let index = 0; index < frames.length; index += 1) {
         const previous = frames[(index - 1 + frames.length) % frames.length];
         const current = frames[index];

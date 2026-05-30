@@ -287,6 +287,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.importAnimationFileButton?.addEventListener("click", () => {
         void this.loadSelectedAnimationLibraryFile?.();
       });
+      this.exportGlbButton?.addEventListener("click", () => {
+        void this.exportGlbAsset?.();
+      });
       this.importAnimationFileInput?.addEventListener("change", () => {
         const file = this.importAnimationFileInput.files?.[0];
         if (file) {
@@ -475,6 +478,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.syncPoseControls();
         this.updateBoneLayerList();
       });
+      this.copyPoseButton?.addEventListener("click", () => this.copyCurrentPoseToClipboard?.());
+      this.pastePoseButton?.addEventListener("click", () => this.withUndo(
+        "Paste pose",
+        () => this.pastePoseClipboardToCurrentFrame?.(),
+        { clearManualPose: true }
+      ));
       for (const input of [this.poseRotX, this.poseRotY, this.poseRotZ, this.posePosX, this.posePosY, this.posePosZ]) {
         input.addEventListener("pointerdown", () => {
           this.beginPoseControlUndo();
@@ -535,17 +544,31 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           this.endPoseControlUndo();
         });
       }
-      this.clearPoseButton.addEventListener("click", () => this.withUndo("Clear pose", () => this.clearCurrentPose()));
+      this.clearPoseButton?.addEventListener("click", () => this.withUndo("Clear pose", () => this.clearCurrentPose()));
       this.keyCurrentPoseButton.addEventListener("click", () => (
         this.withUndo("Key pose", () => this.keyCurrentPose(), { clearManualPose: true })
       ));
       this.useTimelineKeysToggle?.addEventListener("change", () => {
+        this.normalizeTimelineEditMode?.(this.useTimelineKeysToggle.checked ? "solved" : "adaptive");
         const enabled = this.useTimelineKeysToggle.checked;
         this.withUndo(
-          enabled ? "Use timeline keys" : "Use raw FBX clip",
+          enabled ? "Use timeline keys" : "Use adaptive edits",
           () => this.setTimelineKeysSourceEnabled(enabled),
           { clearManualPose: true }
         );
+      });
+      this.adaptiveEditToggle?.addEventListener("change", () => {
+        this.normalizeTimelineEditMode?.(this.adaptiveEditToggle.checked ? "adaptive" : "solved");
+        const useSolvedKeys = this.useTimelineKeysToggle?.checked !== false;
+        this.withUndo(
+          useSolvedKeys ? "Use timeline keys" : "Use adaptive edits",
+          () => this.setTimelineKeysSourceEnabled(useSolvedKeys),
+          { clearManualPose: true }
+        );
+      });
+      this.solvedKeyDetail?.addEventListener("input", () => this.updateRangeOutputs());
+      this.solvedKeyDetail?.addEventListener("change", () => {
+        void this.rebuildAutoKeyedTimelineFromDetail?.({ pushUndo: true });
       });
 
       this.playToggle.addEventListener("click", () => {
@@ -557,9 +580,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.restartClip.addEventListener("click", () => {
         this.stopSequencePreview({ applyPose: false, resetElapsed: true });
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
+        this.resetRootMotionPreview?.();
         this.progress = 0;
         this.timeScrub.value = "0";
         this.applyPose(this.progress);
+        this.refreshGroundReferenceForCurrentPose?.();
         this.syncPoseControlsToCurrentBone();
         this.setPlayback(true);
       });
@@ -572,9 +597,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.timeScrub.addEventListener("input", () => {
         this.stopSequencePreview({ applyPose: false, resetElapsed: true });
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
+        this.resetRootMotionPreview?.();
         this.progress = Number(this.timeScrub.value);
         this.syncTimelineControls();
         this.applyPose(this.progress);
+        this.refreshGroundReferenceForCurrentPose?.();
         this.syncPoseControlsToCurrentBone();
         this.updateBoneLayerValues({ force: true });
       });
@@ -582,10 +609,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.stopSequencePreview({ applyPose: false, resetElapsed: true });
         this.pausePlayback();
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
+        this.resetRootMotionPreview?.();
         this.progress = Number(this.timelineScrub.value) / this.timelineFrames;
         this.timeScrub.value = String(this.progress);
         this.syncTimelineControls();
         this.applyPose(this.progress);
+        this.refreshGroundReferenceForCurrentPose?.();
         this.syncPoseControlsToCurrentBone();
         this.updateBoneLayerValues({ force: true });
       });
@@ -614,9 +643,45 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           this.activeClipAction.setLoop(this.loopToggle.checked ? THREE.LoopRepeat : THREE.LoopOnce, this.loopToggle.checked ? Infinity : 1);
           this.activeClipAction.clampWhenFinished = !this.loopToggle.checked;
         }
+        if (!this.loopToggle.checked) {
+          this.resetRootMotionPreview?.();
+          this.applyPose(this.progress);
+          this.refreshGroundReferenceForCurrentPose?.();
+        }
+      });
+      this.travelLoopToggle?.addEventListener("change", () => {
+        const turningTravelOff = !this.travelLoopToggle.checked;
+        const shouldRefocusTravelCamera = turningTravelOff
+          && (this.rootMotionLoopCycles > 0 || Boolean(this.rootMotionCameraFollowPoint));
+        if (this.travelLoopToggle.checked && this.loopToggle && !this.loopToggle.checked) {
+          this.loopToggle.checked = true;
+          if (this.activeClipAction) {
+            this.activeClipAction.setLoop(THREE.LoopRepeat, Infinity);
+            this.activeClipAction.clampWhenFinished = false;
+          }
+        }
+        this.syncTravelFollowControls?.();
+        this.resetRootMotionPreview?.({ clearProfile: true });
+        this.applyPose(this.progress);
+        this.refreshGroundReferenceForCurrentPose?.();
+        const cameraRefocused = shouldRefocusTravelCamera && this.refocusCameraOnCurrentPose?.();
+        this.setStatus(this.travelLoopToggle.checked
+          ? "Travel loop preview: hips/root motion continues across loops"
+          : cameraRefocused
+            ? "Travel loop preview off; camera refocused"
+            : "Travel loop preview off");
+      });
+      this.travelFollowToggle?.addEventListener("change", () => {
+        this.rootMotionCameraFollowPoint = null;
+        this.setStatus(this.travelFollowToggle.checked ? "Travel camera follow on" : "Travel camera follow off");
       });
       this.prevKeyButton.addEventListener("click", () => this.goToAdjacentKey(-1));
       this.nextKeyButton.addEventListener("click", () => this.goToAdjacentKey(1));
+      this.loopToStartButton?.addEventListener("click", () => this.withUndo(
+        "Loop to start",
+        () => this.blendSelectedPoseBackToStart?.(),
+        { clearManualPose: true }
+      ));
       this.deleteKeyButton.addEventListener("click", () => this.withUndo("Delete key", () => this.deleteCurrentKey()));
       this.clearKeysButton.addEventListener("click", () => this.withUndo("Clear keys", () => this.clearKeyframes()));
       this.skeletonToggle.addEventListener("change", () => this.updateSkeletonHelper());
@@ -651,6 +716,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.resetVirtualBones();
         this.clearSelection();
         this.poseKeyframes.clear();
+        this.poseCurveHandles?.clear?.();
         this.manualPose.clear();
         this.poseKeyframeMode = "additive";
         this.poseKeyframesGenerated = false;
@@ -961,6 +1027,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         poseKeyframeMode: this.poseKeyframeMode,
         poseKeyframesGenerated: Boolean(this.poseKeyframesGenerated),
         poseKeyframes: this.serializePoseKeyframes?.() || [],
+        poseCurveHandles: this.serializePoseCurveHandles?.() || [],
         manualPose: options.clearManualPose
           ? []
           : [...this.manualPose.entries()].map(([name, pose]) => [name, { ...pose }])
@@ -1074,6 +1141,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.applyPatchObject?.(patch, { status: false });
       if (Array.isArray(state.poseKeyframes)) {
         this.applySerializedPoseKeyframes?.(state.poseKeyframes);
+        this.applySerializedPoseCurveHandles?.(state.poseCurveHandles || []);
         this.poseKeyframeMode = state.poseKeyframeMode === "replace" ? "replace" : "additive";
         this.poseKeyframesGenerated = Boolean(state.poseKeyframesGenerated);
       }
@@ -1461,6 +1529,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       if (this.cameraGizmoSpeedOutput && this.cameraGizmoSpeed) {
         this.cameraGizmoSpeedOutput.textContent = Number(this.cameraGizmoSpeed.value).toFixed(4);
+      }
+      if (this.solvedKeyDetailOutput && this.solvedKeyDetail) {
+        const detail = this.solvedKeyDetailValue?.() ?? (Number(this.solvedKeyDetail.value) || 0);
+        this.solvedKeyDetailOutput.textContent = detail >= 0.995 ? "Full" : `${Math.round(detail * 100)}%`;
       }
       if (this.cameraAmbientLightOutput && this.cameraAmbientLight) {
         this.cameraAmbientLightOutput.textContent = Number(this.cameraAmbientLight.value).toFixed(2);

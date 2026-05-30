@@ -1,6 +1,7 @@
 import * as THREE from "../node_modules/three/build/three.module.js";
 import { GLTFLoader } from "../node_modules/three/examples/jsm/loaders/GLTFLoader.js";
 import { FBXLoader } from "../node_modules/three/examples/jsm/loaders/FBXLoader.js";
+import { GLTFExporter } from "../node_modules/three/examples/jsm/exporters/GLTFExporter.js";
 import { OrbitControls } from "../node_modules/three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "../node_modules/three/examples/jsm/controls/TransformControls.js";
 import {
@@ -10,16 +11,21 @@ import {
   remainingClipStartOffsetSeconds
 } from "./animation/animation-clip-utils.js";
 import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
+import { installAssetExportMethods } from "./weight-editor/asset-export.js";
 import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js";
 import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js";
 import { installCurveEditorMethods } from "./weight-editor/curve-editor.js";
+import { installCurveHandleMethods } from "./weight-editor/curve-handles.js";
 import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js";
 import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js";
 import { installPaintToolMethods } from "./weight-editor/paint-tools.js";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js";
+import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js";
 import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js";
 import { installIkSolverMethods } from "./weight-editor/ik-solver.js";
+import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js";
+import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js";
 import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js";
@@ -121,6 +127,7 @@ class BirdWeightEditor {
     this.actionSelect = document.getElementById("weight-action-select");
     this.importAnimationFileButton = document.getElementById("import-animation-file-button");
     this.importAnimationFileInput = document.getElementById("import-animation-file");
+    this.exportGlbButton = document.getElementById("export-glb-button");
     this.animationLibraryFolderSelect = document.getElementById("animation-library-folder-select");
     this.animationLibraryFolderName = document.getElementById("animation-library-folder-name");
     this.createAnimationLibraryFolderButton = document.getElementById("create-animation-library-folder");
@@ -181,6 +188,8 @@ class BirdWeightEditor {
     this.redistributeChainWeightsButton = document.getElementById("redistribute-chain-weights");
     this.selectionInfluenceList = document.getElementById("selection-influence-list");
     this.poseBoneSelect = document.getElementById("pose-bone-select");
+    this.copyPoseButton = document.getElementById("copy-pose");
+    this.pastePoseButton = document.getElementById("paste-pose");
     this.poseRotX = document.getElementById("pose-rot-x");
     this.poseRotY = document.getElementById("pose-rot-y");
     this.poseRotZ = document.getElementById("pose-rot-z");
@@ -204,6 +213,7 @@ class BirdWeightEditor {
     this.frameReadout = document.getElementById("frame-readout");
     this.prevKeyButton = document.getElementById("prev-key");
     this.nextKeyButton = document.getElementById("next-key");
+    this.loopToStartButton = document.getElementById("loop-to-start");
     this.deleteKeyButton = document.getElementById("delete-key");
     this.clearKeysButton = document.getElementById("clear-keys");
     this.boneLayerList = document.getElementById("bone-layer-list");
@@ -214,6 +224,9 @@ class BirdWeightEditor {
     this.scaleControl = document.getElementById("weight-scale-control");
     this.scaleOutput = document.getElementById("weight-scale-output");
     this.loopToggle = document.getElementById("loop-toggle");
+    this.travelLoopToggle = document.getElementById("travel-loop-toggle");
+    this.travelFollowToggle = document.getElementById("travel-follow-toggle");
+    this.travelFollowOption = document.querySelector(".travel-follow-option");
     this.skeletonToggle = document.getElementById("skeleton-toggle");
     this.weightJson = document.getElementById("weight-json");
     this.savePatchButton = document.getElementById("save-patch");
@@ -234,6 +247,9 @@ class BirdWeightEditor {
     this.timelineHideToggle = document.getElementById("timeline-hide-toggle");
     this.timelineShowToggle = document.getElementById("timeline-show-toggle");
     this.useTimelineKeysToggle = document.getElementById("use-timeline-keys");
+    this.adaptiveEditToggle = document.getElementById("adaptive-edit-mode");
+    this.solvedKeyDetail = document.getElementById("solved-key-detail");
+    this.solvedKeyDetailOutput = document.getElementById("solved-key-detail-output");
     this.cameraGizmo = document.getElementById("camera-gizmo");
     this.cameraGizmoPad = document.getElementById("camera-gizmo-pad");
     this.cameraRollLeftButton = document.getElementById("camera-roll-left");
@@ -305,6 +321,8 @@ class BirdWeightEditor {
     this.textureGain = controlNumber(this.cameraTextureGain, 1);
     this.manualPose = new Map();
     this.poseKeyframes = new Map();
+    this.poseCurveHandles = new Map();
+    this.poseClipboard = null;
     this.poseKeyframeMode = "additive";
     this.poseKeyframesGenerated = false;
     this.timelineKeysSourceWasAutoGenerated = false;
@@ -336,6 +354,9 @@ class BirdWeightEditor {
     this.sequenceElapsed = 0;
     this.sequenceRootAnchor = null;
     this.sequenceTargetRootStart = null;
+    this.rootMotionLoopCycles = 0;
+    this.rootMotionLoopProfileCache = null;
+    this.rootMotionCameraFollowPoint = null;
     this.timelineReadoutLastUpdate = 0;
     this.timelineReadoutIntervalMs = 300;
     this.playbackReadoutLastUpdate = 0;
@@ -378,8 +399,11 @@ class BirdWeightEditor {
     void this.refreshAnimationLibrary?.({ silent: true });
     this.setSidePanelOpen(this.app?.classList.contains("is-side-panel-open"));
     this.renderActionOptions();
+    this.syncTravelFollowControls?.();
     this.syncTimelineControls();
     this.syncPatchJson();
+    this.syncPoseClipboardControls?.();
+    this.syncExportButtons?.();
     this.setStatus("Import a raw Mixamo FBX to begin");
     this.animate();
   }
@@ -388,6 +412,7 @@ class BirdWeightEditor {
 const BIRD_WEIGHT_EDITOR_DEPS = {
   THREE,
   FBXLoader,
+  GLTFExporter,
   OrbitControls,
   TransformControls,
   cloneClipWithStartDeleted,
@@ -415,6 +440,7 @@ const BIRD_WEIGHT_EDITOR_DEPS = {
 };
 
 installSceneAndControlMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installAssetExportMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installAnimationLibraryMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installActorAndModelMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installRigEditorMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
@@ -423,8 +449,12 @@ installPaintToolMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installWeightMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installVertexPatchMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installPoseCoreMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installPoseClipboardMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installPoseTimelineMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installCurveHandleMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installLoopBlendMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installSequencePlaybackMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installRootMotionPreviewMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installOverlayAndRenderMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installCurveEditorMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installAutoKeySolverMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);

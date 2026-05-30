@@ -1,3 +1,5 @@
+const DISPLAY_END_BONE_PATTERN = /(_end\b|end$|headtop_end|toe_end|hand(?:thumb|index|middle|ring|pinky)4\b)/i;
+
 export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
   const {
     THREE,
@@ -22,22 +24,139 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
     writeJsonFile
   } = deps;
   Object.assign(BirdWeightEditor.prototype, {
-    updateSkeletonHelper() {
-      if (this.skeletonHelper) {
-        this.scene.remove(this.skeletonHelper);
-        this.skeletonHelper.dispose?.();
-        this.skeletonHelper = null;
+    invalidateBoneDisplayCache() {
+      this.boneDisplayWeightedBoneNameCache = null;
+    },
+
+    boneDisplayWeightedBoneNames() {
+      if (this.boneDisplayWeightedBoneNameCache) {
+        return this.boneDisplayWeightedBoneNameCache;
       }
+      const weightedNames = new Set();
+      for (const record of this.paintRecords || []) {
+        const bones = record.object?.skeleton?.bones || [];
+        const skinIndex = record.geometry?.attributes?.skinIndex;
+        const skinWeight = record.geometry?.attributes?.skinWeight;
+        if (!bones.length || !skinIndex?.array || !skinWeight?.array) {
+          continue;
+        }
+        for (let offset = 0; offset < skinWeight.array.length; offset += 1) {
+          if (skinWeight.array[offset] <= 0.0001) {
+            continue;
+          }
+          const bone = bones[skinIndex.array[offset]];
+          if (bone?.name) {
+            weightedNames.add(bone.name);
+          }
+        }
+      }
+      this.boneDisplayWeightedBoneNameCache = weightedNames;
+      return weightedNames;
+    },
+
+    boneDisplayBoneHasWeightedDescendant(bone, weightedNames = this.boneDisplayWeightedBoneNames()) {
+      if (!bone?.children?.length) {
+        return false;
+      }
+      for (const child of bone.children) {
+        if (!child.isBone) {
+          continue;
+        }
+        if (weightedNames.has(child.name) || this.boneDisplayBoneHasWeightedDescendant(child, weightedNames)) {
+          return true;
+        }
+      }
+      return false;
+    },
+
+    boneDisplayBoneIsTerminalHelper(boneOrName) {
+      const bone = typeof boneOrName === "string" ? this.bones.get(boneOrName) : boneOrName;
+      const name = bone?.name || "";
+      if (!bone || !DISPLAY_END_BONE_PATTERN.test(String(name).toLowerCase())) {
+        return false;
+      }
+      const weightedNames = this.boneDisplayWeightedBoneNames();
+      return !weightedNames.has(name) && !this.boneDisplayBoneHasWeightedDescendant(bone, weightedNames);
+    },
+
+    boneDisplayBoneIsVisible(boneOrName) {
+      const bone = typeof boneOrName === "string" ? this.bones.get(boneOrName) : boneOrName;
+      return Boolean(bone) && !this.boneDisplayBoneIsTerminalHelper(bone);
+    },
+
+    boneDisplaySegmentIsVisible(parent, child) {
+      return Boolean(
+        parent?.isBone
+        && child?.isBone
+        && this.boneDisplayBoneIsVisible(parent)
+        && this.boneDisplayBoneIsVisible(child)
+      );
+    },
+
+    disposeSkeletonHelper() {
+      if (!this.skeletonHelper) {
+        return;
+      }
+      this.scene.remove(this.skeletonHelper);
+      this.skeletonHelper.geometry?.dispose?.();
+      this.skeletonHelper.material?.dispose?.();
+      this.skeletonHelper.dispose?.();
+      this.skeletonHelper = null;
+    },
+
+    updateSkeletonHelper() {
+      this.disposeSkeletonHelper();
       if (
         this.skeletonToggle.checked
         && this.model
         && !this.cleanPreview
         && (this.viewMode !== "rendered" || this.activeTool === "bone")
       ) {
-        this.skeletonHelper = new THREE.SkeletonHelper(this.model);
-        this.skeletonHelper.material.depthTest = false;
+        this.skeletonHelper = new THREE.LineSegments(
+          new THREE.BufferGeometry(),
+          new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0.72,
+            depthTest: false,
+            depthWrite: false
+          })
+        );
+        this.skeletonHelper.renderOrder = 27;
+        this.skeletonHelper.userData.filteredSkeletonHelper = true;
         this.scene.add(this.skeletonHelper);
+        this.updateFilteredSkeletonHelper();
       }
+    },
+
+    updateFilteredSkeletonHelper() {
+      if (!this.skeletonHelper?.userData?.filteredSkeletonHelper || !this.model) {
+        return;
+      }
+      this.model.updateMatrixWorld(true);
+      const positions = [];
+      const colors = [];
+      const parentColor = new THREE.Color(0x39ff7d);
+      const childColor = new THREE.Color(0x22b7ff);
+      for (const bone of this.bones.values()) {
+        if (!this.boneDisplaySegmentIsVisible(bone.parent, bone)) {
+          continue;
+        }
+        bone.parent.getWorldPosition(this.tempLocalA);
+        bone.getWorldPosition(this.tempWorld);
+        positions.push(
+          this.tempLocalA.x, this.tempLocalA.y, this.tempLocalA.z,
+          this.tempWorld.x, this.tempWorld.y, this.tempWorld.z
+        );
+        colors.push(
+          parentColor.r, parentColor.g, parentColor.b,
+          childColor.r, childColor.g, childColor.b
+        );
+      }
+      this.skeletonHelper.geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      this.skeletonHelper.geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+      this.skeletonHelper.geometry.computeBoundingSphere();
+      this.skeletonHelper.visible = positions.length > 0;
     },
 
     shouldShowBonePickerOverlay() {
@@ -64,7 +183,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
 
       for (const name of names) {
         const bone = this.bones.get(name);
-        if (!bone) {
+        if (!bone || !this.boneDisplayBoneIsVisible(bone)) {
           continue;
         }
         bone.getWorldPosition(this.tempWorld);
@@ -79,7 +198,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         }
         colors.push(color.r, color.g, color.b);
 
-        if (bone.parent?.isBone) {
+        if (this.boneDisplaySegmentIsVisible(bone.parent, bone)) {
           bone.parent.getWorldPosition(this.tempLocalA);
           linePositions.push(
             this.tempLocalA.x, this.tempLocalA.y, this.tempLocalA.z,
@@ -191,6 +310,9 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       let best = { name: "", distance: Infinity };
 
       for (const [name, bone] of this.bones.entries()) {
+        if (!this.boneDisplayBoneIsVisible(bone)) {
+          continue;
+        }
         const point = this.screenPointForBone(bone, rect);
         if (!point) {
           continue;
@@ -203,7 +325,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
 
       if (best.distance > 22) {
         for (const [name, bone] of this.bones.entries()) {
-          if (!bone.parent?.isBone) {
+          if (!this.boneDisplaySegmentIsVisible(bone.parent, bone)) {
             continue;
           }
           const start = this.screenPointForBone(bone.parent, rect);
@@ -289,8 +411,8 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         addJoint(to);
       };
 
-      const childBones = bone.children.filter((child) => child.isBone);
-      if (bone.parent?.isBone) {
+      const childBones = bone.children.filter((child) => this.boneDisplaySegmentIsVisible(bone, child));
+      if (this.boneDisplaySegmentIsVisible(bone.parent, bone)) {
         const parentPosition = new THREE.Vector3();
         bone.parent.getWorldPosition(parentPosition);
         addSegment(parentPosition, center);
@@ -334,7 +456,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
 
       for (const name of names) {
         const bone = this.bones.get(name);
-        if (!bone) {
+        if (!bone || !this.boneDisplayBoneIsVisible(bone)) {
           continue;
         }
         bone.getWorldPosition(this.tempWorld);
@@ -508,13 +630,17 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         }
       } else if (this.playing && !this.draggingScrub) {
         const speed = Number(this.speedControl.value) * this.actionSpeedMultiplier();
-        this.progress += (dt * speed) / this.currentActionDuration();
+        const nextProgress = this.progress + (dt * speed) / this.currentActionDuration();
         if (this.loopToggle.checked) {
-          this.progress %= 1;
+          this.progress = this.rootMotionPreviewEnabled?.() === true
+            ? this.advanceRootMotionLoopPreview(nextProgress)
+            : nextProgress % 1;
         } else {
-          this.progress = Math.min(this.progress, 1);
+          this.resetRootMotionPreview?.();
+          this.progress = Math.min(nextProgress, 1);
         }
         this.applyPose(this.progress);
+        this.applyRootMotionLoopPreview?.();
         this.syncPlaybackReadouts({ now, throttle: true });
       }
       const timelineIsLive = this.playing || this.sequencePlaying || this.draggingScrub || this.curveDragging;
@@ -524,6 +650,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       if (this.viewMode === "edit") {
         this.updateAllVertexMarkers();
       }
+      this.updateFilteredSkeletonHelper();
       this.updateSelectedBoneHighlight();
       this.updateBonePickerOverlay();
       if (timelineIsLive) {

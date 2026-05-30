@@ -28,12 +28,23 @@
             <select id="weight-action-select"></select>
           </label>
           <div class="viewer-actions import-actions">
-            <button id="import-animation-file-button" type="button">Load FBX</button>
+            <button id="import-animation-file-button" type="button">Load</button>
           </div>
-          <input id="import-animation-file" type="file" accept=".fbx" hidden />
+          <input id="import-animation-file" type="file" accept=".fbx,.glb,.gltf" hidden />
+          <div class="viewer-actions export-actions">
+            <button id="export-glb-button" type="button" disabled>Export GLB</button>
+          </div>
           <div class="viewer-checks import-options">
-            <label><input id="use-timeline-keys" type="checkbox" checked /> Use solved keys</label>
+            <label><input id="use-timeline-keys" name="edit-source-mode" type="radio" value="solved" /> Use solved keys</label>
+            <label><input id="adaptive-edit-mode" name="edit-source-mode" type="radio" value="adaptive" checked /> Adaptive edits</label>
           </div>
+          <label class="viewer-field">
+            <span>Key Detail</span>
+            <div class="viewer-range-row">
+              <input id="solved-key-detail" type="range" min="0" max="1" step="0.05" value="0.2" />
+              <output id="solved-key-detail-output">20%</output>
+            </div>
+          </label>
           <label class="viewer-field timeline-blend-action-field">
             <span>Blend To</span>
             <select id="timeline-blend-action-select"></select>
@@ -67,8 +78,12 @@
               <output id="weight-scale-output">1.00x</output>
             </div>
           </label>
-          <div class="viewer-checks">
+          <div class="viewer-checks animation-loop-options">
             <label><input id="loop-toggle" type="checkbox" checked /> Loop</label>
+            <label><input id="travel-loop-toggle" type="checkbox" /> Travel</label>
+            <label class="travel-follow-option is-hidden"><input id="travel-follow-toggle" type="checkbox" checked /> Follow</label>
+          </div>
+          <div class="viewer-checks animation-display-options">
             <label><input id="skeleton-toggle" type="checkbox" /> Bones</label>
             <label><input id="bone-label-toggle" type="checkbox" /> Labels</label>
           </div>
@@ -110,18 +125,6 @@
             <button id="rig-panel-toggle" type="button" aria-expanded="true">-</button>
           </div>
           <div id="rig-panel-body" class="rig-panel-body">
-            <label class="viewer-field">
-              <span>Find bone</span>
-              <input id="rig-bone-search" type="search" placeholder="Tail, eye, hand..." autocomplete="off" />
-            </label>
-            <div id="rig-bone-groups" class="rig-bone-groups" role="group" aria-label="Bone groups">
-              <button type="button" data-rig-bone-group="all" aria-pressed="true">All</button>
-              <button type="button" data-rig-bone-group="body">Body</button>
-              <button type="button" data-rig-bone-group="arms">Arms</button>
-              <button type="button" data-rig-bone-group="legs">Legs</button>
-              <button type="button" data-rig-bone-group="tail">Tail</button>
-              <button type="button" data-rig-bone-group="face">Face</button>
-            </div>
             <div class="rig-bone-create" aria-label="Custom bone editor">
               <label class="viewer-field rig-bone-wide">
                 <span>Parent</span>
@@ -164,26 +167,12 @@
                 <span>Chain bones</span>
                 <select id="add-bone-chain-members" multiple size="5"></select>
               </label>
-              <button id="add-bone-chain" class="rig-bone-chain-action" type="button">Add Chain</button>
-              <div class="ik-chain-settings" aria-label="IK chain settings">
-                <label class="viewer-field">
-                  <span>IK solver</span>
-                  <select id="ik-solver-mode">
-                    <option value="ccd">CCD</option>
-                    <option value="smooth">Smooth</option>
-                  </select>
-                </label>
-                <label class="viewer-field">
-                  <span>Counter rot</span>
-                  <div class="viewer-range-row">
-                    <input id="ik-counter-rotation" type="range" min="-1" max="1" step="0.05" value="0" />
-                    <output id="ik-counter-rotation-output">0.00</output>
-                  </div>
-                </label>
+              <div class="rig-pose-clipboard-actions" aria-label="Chain pose clipboard">
+                <button id="copy-pose" type="button" title="Copy selected bone or chain pose at the current frame">Copy</button>
+                <button id="paste-pose" type="button" title="Paste copied pose to the current frame" disabled>Paste</button>
               </div>
+              <button id="add-bone-chain" class="rig-bone-chain-action" type="button">Add Chain</button>
             </div>
-            <div id="rig-bone-list" class="rig-bone-list" aria-label="Rig bones"></div>
-            <p class="rig-bone-note">Selecting a bone here targets both weighting and pose controls.</p>
           </div>
         </section>
 
@@ -365,55 +354,77 @@
           </div>
         </div>
         <div class="weight-timeline-panel" aria-label="Keyframe posing timeline">
-          <div class="weight-timeline-toolbar">
-            <label class="timeline-bone-field timeline-toolbar-bone-field">
-              <span>Bone</span>
-              <select id="pose-bone-select"></select>
-            </label>
-            <div class="timeline-layout-actions">
-              <button id="timeline-compact-toggle" type="button" aria-label="Expand timeline" title="Expand timeline" aria-pressed="true">+</button>
-              <button id="timeline-hide-toggle" type="button" aria-label="Hide timeline" title="Hide timeline">-</button>
-            </div>
-          </div>
           <div class="timeline-pose-row">
             <div class="timeline-pose-tools">
-              <button id="bone-gizmo" class="timeline-bone-tool" type="button" title="Move selected bone with the FK gizmo">FK</button>
-              <button id="ik-gizmo" class="timeline-bone-tool" type="button" title="Move selected chain with inverse kinematics">IK</button>
+              <div class="timeline-bone-tool-actions">
+                <button id="bone-gizmo" class="timeline-bone-tool" type="button" title="Move selected bone with the FK gizmo">FK</button>
+                <button id="ik-gizmo" class="timeline-bone-tool" type="button" title="Move selected chain with inverse kinematics">IK</button>
+              </div>
+              <div class="ik-chain-settings timeline-ik-settings" aria-label="IK chain settings">
+                <label class="viewer-field">
+                  <span>IK solver</span>
+                  <select id="ik-solver-mode">
+                    <option value="ccd">CCD</option>
+                    <option value="smooth">Smooth</option>
+                  </select>
+                </label>
+                <label class="viewer-field ik-counter-rotation-field">
+                  <span title="Counter rotation">Counter</span>
+                  <div class="viewer-range-row">
+                    <input id="ik-counter-rotation" type="range" min="-1" max="1" step="0.05" value="0" />
+                    <output id="ik-counter-rotation-output">0.00</output>
+                  </div>
+                </label>
+              </div>
             </div>
-            <label class="timeline-rot-field">
-              <span>Rot X</span>
-              <input id="pose-rot-x" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
-              <input id="pose-rot-x-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
-            </label>
-            <label class="timeline-rot-field">
-              <span>Rot Y</span>
-              <input id="pose-rot-y" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
-              <input id="pose-rot-y-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
-            </label>
-            <label class="timeline-rot-field">
-              <span>Rot Z</span>
-              <input id="pose-rot-z" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
-              <input id="pose-rot-z-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
-            </label>
-            <button id="clear-pose" type="button" title="Clear selected bone pose">Clear Pose</button>
-            <button id="key-current-pose" type="button" title="Key selected bone pose">Key</button>
-          </div>
-          <div class="timeline-position-row">
-            <label class="timeline-rot-field">
-              <span>Move X</span>
-              <input id="pose-pos-x" type="range" min="-30" max="30" step="0.005" value="0" />
-              <input id="pose-pos-x-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
-            </label>
-            <label class="timeline-rot-field">
-              <span>Move Y</span>
-              <input id="pose-pos-y" type="range" min="-30" max="30" step="0.005" value="0" />
-              <input id="pose-pos-y-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
-            </label>
-            <label class="timeline-rot-field">
-              <span>Move Z</span>
-              <input id="pose-pos-z" type="range" min="-30" max="30" step="0.005" value="0" />
-              <input id="pose-pos-z-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
-            </label>
+            <div class="timeline-main-stack">
+              <div class="weight-timeline-toolbar">
+                <label class="timeline-bone-field timeline-toolbar-bone-field">
+                  <span>Bone</span>
+                  <select id="pose-bone-select"></select>
+                </label>
+              </div>
+              <div class="timeline-transform-controls">
+                <label class="timeline-rot-field">
+                  <span>Rot X</span>
+                  <input id="pose-rot-x" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
+                  <input id="pose-rot-x-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
+                </label>
+                <label class="timeline-rot-field">
+                  <span>Rot Y</span>
+                  <input id="pose-rot-y" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
+                  <input id="pose-rot-y-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
+                </label>
+                <label class="timeline-rot-field">
+                  <span>Rot Z</span>
+                  <input id="pose-rot-z" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
+                  <input id="pose-rot-z-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
+                </label>
+                <label class="timeline-rot-field">
+                  <span>Move X</span>
+                  <input id="pose-pos-x" type="range" min="-30" max="30" step="0.005" value="0" />
+                  <input id="pose-pos-x-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
+                </label>
+                <label class="timeline-rot-field">
+                  <span>Move Y</span>
+                  <input id="pose-pos-y" type="range" min="-30" max="30" step="0.005" value="0" />
+                  <input id="pose-pos-y-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
+                </label>
+                <label class="timeline-rot-field">
+                  <span>Move Z</span>
+                  <input id="pose-pos-z" type="range" min="-30" max="30" step="0.005" value="0" />
+                  <input id="pose-pos-z-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
+                </label>
+              </div>
+            </div>
+            <div class="timeline-pose-actions">
+              <div class="timeline-layout-actions">
+                <button id="timeline-compact-toggle" type="button" aria-label="Expand timeline" title="Expand timeline" aria-pressed="true">+</button>
+                <button id="timeline-hide-toggle" type="button" aria-label="Hide timeline" title="Hide timeline">-</button>
+              </div>
+              <button id="key-current-pose" type="button" title="Key selected bone pose">Key</button>
+              <button id="loop-to-start" class="timeline-loop-action" type="button" title="Blend selected bone or chain back to frame 0 at the end">Blend Loop</button>
+            </div>
           </div>
           <div class="timeline-track-row">
             <button id="timeline-play-toggle" type="button">Play</button>
