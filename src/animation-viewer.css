@@ -25,6 +25,10 @@ body {
   font-family: "Avenir Next", Avenir, "Trebuchet MS", sans-serif;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 button,
 select,
 input {
@@ -66,10 +70,25 @@ input {
   gap: 12px;
   min-height: 0;
   padding: 18px;
-  overflow: auto;
+  overflow: hidden;
   border-right: 1px solid var(--panel-line);
   background: var(--panel);
   box-shadow: none;
+}
+
+.viewer-panel-scroll {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.viewer-panel-footer {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 12px;
 }
 
 .viewer-header {
@@ -374,6 +393,14 @@ input[type="color"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.viewer-subheading {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .viewer-segments {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -412,6 +439,187 @@ input[type="color"] {
 
 .cleanup-actions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.clone-paint-actions {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.clone-paint-actions button {
+  padding: 0 5px;
+  font-size: 11px;
+}
+
+.texture-paint-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.75fr) minmax(0, 1fr);
+  gap: 5px;
+}
+
+.selection-tool-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.edit-tool-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.edit-tool-actions [data-view-mode="edit"] {
+  grid-column: span 2;
+}
+
+.texture-paint-actions button {
+  min-height: 28px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+
+.texture-paint-color {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.texture-paint-color input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 2px;
+}
+
+.clone-paint-status {
+  min-height: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.clone-paint-preview-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.clone-paint-preview-row figure {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+}
+
+.clone-paint-preview-row figure[hidden] {
+  display: none;
+}
+
+.clone-paint-preview-row canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid rgba(244, 234, 214, 0.16);
+  background: rgba(0, 0, 0, 0.28);
+  image-rendering: pixelated;
+}
+
+.clone-paint-preview-row figcaption {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.clone-paint-json-output {
+  width: 100%;
+  min-height: 72px;
+  max-height: 120px;
+  resize: vertical;
+  border: 1px solid rgba(244, 234, 214, 0.16);
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.lasso-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.lasso-overlay-path {
+  fill: rgba(122, 247, 255, 0.1);
+  stroke: rgba(122, 247, 255, 0.95);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.texture-brush-cursor {
+  position: absolute;
+  z-index: 18;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(244, 234, 214, 0.96);
+  border-radius: 999px;
+  background: rgba(122, 247, 255, 0.045);
+  box-shadow:
+    0 0 0 1px rgba(16, 21, 26, 0.92),
+    0 0 8px rgba(122, 247, 255, 0.28);
+  pointer-events: none;
+}
+
+.texture-brush-cursor::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: rgba(244, 234, 214, 0.98);
+  box-shadow: 0 0 0 1px rgba(16, 21, 26, 0.8);
+  transform: translate(-50%, -50%);
+}
+
+.texture-brush-cursor.is-clone {
+  border-color: rgba(255, 211, 110, 0.96);
+  background: rgba(255, 211, 110, 0.045);
+  box-shadow:
+    0 0 0 1px rgba(16, 21, 26, 0.92),
+    0 0 8px rgba(255, 211, 110, 0.3);
+}
+
+.texture-brush-cursor.is-selection {
+  border-color: rgba(223, 180, 93, 0.98);
+  background: rgba(223, 180, 93, 0.055);
+  box-shadow:
+    0 0 0 1px rgba(16, 21, 26, 0.92),
+    0 0 8px rgba(223, 180, 93, 0.24);
+}
+
+.texture-brush-cursor.is-selection::after {
+  background: rgba(223, 180, 93, 0.98);
+}
+
+.texture-brush-cursor.is-selection.is-deselect {
+  border-color: rgba(238, 118, 100, 0.98);
+  background: rgba(238, 118, 100, 0.055);
+  box-shadow:
+    0 0 0 1px rgba(16, 21, 26, 0.92),
+    0 0 8px rgba(238, 118, 100, 0.24);
+}
+
+.texture-brush-cursor.is-selection.is-deselect::after {
+  background: rgba(238, 118, 100, 0.98);
 }
 
 .selection-influence-panel {
@@ -727,6 +935,22 @@ button.is-active {
   height: 100%;
 }
 
+.weight-editor-app.is-clone-stamp #viewer-canvas,
+#viewer-canvas.is-clone-stamp {
+  cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2232%22%20height%3D%2232%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20d%3D%22M12%203h8l1%209H11z%22%20fill%3D%22%23f4ead6%22%20stroke%3D%22%2310151a%22%20stroke-width%3D%222%22/%3E%3Cpath%20d%3D%22M8%2013h16v7H8z%22%20fill%3D%22%23dfb45d%22%20stroke%3D%22%2310151a%22%20stroke-width%3D%222%22/%3E%3Cpath%20d%3D%22M6%2022h20v5H6z%22%20fill%3D%22%23f4ead6%22%20stroke%3D%22%2310151a%22%20stroke-width%3D%222%22/%3E%3Cpath%20d%3D%22M5%2029h22%22%20stroke%3D%22%23dfb45d%22%20stroke-width%3D%222%22/%3E%3C/svg%3E") 16 25, copy;
+}
+
+.weight-editor-app.is-texture-eyedropper #viewer-canvas,
+#viewer-canvas.is-texture-eyedropper {
+  cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2232%22%20height%3D%2232%22%20viewBox%3D%220%200%2032%2032%22%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2210%22%20fill%3D%22none%22%20stroke%3D%22%2310151a%22%20stroke-width%3D%223%22/%3E%3Cpath%20d%3D%22M16%203v8M16%2021v8M3%2016h8M21%2016h8%22%20fill%3D%22none%22%20stroke%3D%22%2310151a%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22/%3E%3Ccircle%20cx%3D%2216%22%20cy%3D%2216%22%20r%3D%2210%22%20fill%3D%22none%22%20stroke%3D%22%23f4ead6%22%20stroke-width%3D%221%22/%3E%3Cpath%20d%3D%22M16%203v8M16%2021v8M3%2016h8M21%2016h8%22%20fill%3D%22none%22%20stroke%3D%22%23f4ead6%22%20stroke-width%3D%221%22%20stroke-linecap%3D%22round%22/%3E%3C/svg%3E") 16 16, crosshair;
+}
+
+.clone-paint-actions #clone-paint-tool.is-active {
+  border-color: rgba(105, 179, 138, 0.95);
+  background: rgba(105, 179, 138, 0.24);
+  color: #f4ead6;
+}
+
 .editor-controls {
   display: grid;
   gap: 9px;
@@ -778,6 +1002,11 @@ button.is-active {
   gap: 8px;
   padding: 12px;
   font-size: 12px;
+}
+
+.weight-editor-app .viewer-panel-scroll,
+.weight-editor-app .viewer-panel-footer {
+  gap: 8px;
 }
 
 .weight-editor-app.is-side-panel-open {
@@ -860,6 +1089,23 @@ button.is-active {
   font-size: 12px;
 }
 
+.weight-editor-app .viewer-panel button,
+.weight-editor-app .viewer-panel select,
+.weight-editor-app .viewer-panel input,
+.weight-editor-app .viewer-panel output {
+  min-width: 0;
+}
+
+.weight-editor-app .viewer-panel button,
+.weight-editor-app .viewer-panel select {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.weight-editor-app .viewer-panel input[type="range"] {
+  min-width: 0;
+}
+
 .weight-editor-app .rig-bone-create select[multiple] {
   min-height: 76px;
   padding: 5px 7px;
@@ -900,17 +1146,17 @@ button.is-active {
 
 .weight-viewport-tools {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 10px;
+  right: 10px;
   z-index: 5;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 6px;
-  max-width: min(560px, calc(100% - 28px));
-  padding: 6px;
+  gap: 4px;
+  max-width: min(390px, calc(100% - 20px));
+  padding: 4px;
   border: 1px solid rgba(244, 234, 214, 0.24);
-  background: rgba(11, 15, 18, 0.94);
+  background: rgba(11, 15, 18, 0.86);
   box-shadow: none;
   contain: layout paint style;
 }
@@ -919,7 +1165,7 @@ button.is-active {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 5px;
+  gap: 4px;
 }
 
 .viewport-mode-group button {
@@ -928,9 +1174,9 @@ button.is-active {
 
 .weight-viewport-tools button {
   min-width: 42px;
-  min-height: 28px;
-  padding: 0 8px;
-  font-size: 12px;
+  min-height: 24px;
+  padding: 0 6px;
+  font-size: 11px;
 }
 
 .weight-viewport-tools .viewport-edit-only {
@@ -1099,6 +1345,19 @@ button.is-active {
   display: inline-flex;
 }
 
+.timeline-show-toggle {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  z-index: 5;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 32px;
+  padding: 0 8px;
+  line-height: 1;
+}
+
 .animation-editor-app:not(.is-bird-target) .bird-only-section {
   display: none;
 }
@@ -1128,10 +1387,6 @@ button.is-active {
   min-width: 28px;
   min-height: 32px;
   padding: 0 8px;
-}
-
-.animation-editor-tools .timeline-show-toggle {
-  min-width: 74px;
 }
 
 .timeline-pose-row,
@@ -2141,6 +2396,11 @@ button.is-active {
     max-height: min(38vh, 220px);
     overflow: auto;
     padding: 8px;
+  }
+
+  .timeline-show-toggle {
+    left: 8px;
+    bottom: 8px;
   }
 
   .animation-side-section .viewer-checks:not(.import-options) {

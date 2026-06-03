@@ -412,7 +412,41 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
       this.patchCount.textContent = `${modified} ${modified === 1 ? "vertex" : "vertices"}`;
       this.keyCount.textContent = `${keyCount} ${keyCount === 1 ? "key" : "keys"}`;
       this.syncTimelineSourceControl?.();
+      this.syncClonePaintControls?.();
       this.updateSelectionInfluences();
+    },
+
+    texturePaintMaterialsForRecord(record) {
+      return Array.isArray(record?.object?.material)
+        ? record.object.material
+        : [record?.object?.material].filter(Boolean);
+    },
+
+    serializeTexturePaints() {
+      const textures = [];
+      for (const record of this.paintRecords || []) {
+        const materials = this.texturePaintMaterialsForRecord(record);
+        for (let materialIndex = 0; materialIndex < materials.length; materialIndex += 1) {
+          const material = materials[materialIndex];
+          const canvas = material?.userData?.clonePaintCanvas;
+          if (!canvas || typeof canvas.toDataURL !== "function") {
+            continue;
+          }
+          try {
+            textures.push({
+              mesh: record.object.name || "SkinnedMesh",
+              materialIndex,
+              materialName: material.name || "",
+              width: canvas.width,
+              height: canvas.height,
+              image: canvas.toDataURL("image/png")
+            });
+          } catch (error) {
+            console.warn("Could not serialize edited texture", error);
+          }
+        }
+      }
+      return textures;
     },
 
     buildPatch() {
@@ -484,6 +518,10 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
       const clipCleanup = this.serializeClipCleanupEdits?.() || [];
       if (clipCleanup.length) {
         patch.clipCleanup = clipCleanup;
+      }
+      const texturePaints = this.serializeTexturePaints();
+      if (texturePaints.length) {
+        patch.texturePaints = texturePaints;
       }
       return patch;
     },
@@ -713,7 +751,63 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
       return [Number(dx.toFixed(5)), Number(dy.toFixed(5)), Number(dz.toFixed(5))];
     },
 
-    applyPatchObject(patch, { status = true, errorStatus = "Could not apply weight patch" } = {}) {
+    loadTexturePatchImage(src) {
+      return new Promise((resolve, reject) => {
+        if (!src || typeof Image === "undefined") {
+          reject(new Error("Missing texture image"));
+          return;
+        }
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error("Could not load texture image"));
+        image.src = src;
+      });
+    },
+
+    texturePaintMaterialForPatch(entry) {
+      const record = this.paintRecords.find((item) => item.object.name === entry.mesh) || this.paintRecords[0];
+      if (!record) {
+        return null;
+      }
+      const materials = this.texturePaintMaterialsForRecord(record);
+      const materialIndex = Number.isInteger(entry.materialIndex) ? entry.materialIndex : -1;
+      return materials[materialIndex]
+        || materials.find((material) => entry.materialName && material?.name === entry.materialName)
+        || materials[0]
+        || null;
+    },
+
+    async applySerializedTexturePaints(entries = []) {
+      if (!Array.isArray(entries) || !entries.length || typeof document === "undefined") {
+        return 0;
+      }
+      let applied = 0;
+      for (const entry of entries) {
+        const material = this.texturePaintMaterialForPatch(entry);
+        const editable = this.editableClonePaintTexture?.(material);
+        if (!editable?.canvas || !editable?.context || !entry?.image) {
+          continue;
+        }
+        try {
+          const image = await this.loadTexturePatchImage(entry.image);
+          editable.context.clearRect(0, 0, editable.canvas.width, editable.canvas.height);
+          editable.context.drawImage(image, 0, 0, editable.canvas.width, editable.canvas.height);
+          editable.texture.needsUpdate = true;
+          if (material) {
+            material.needsUpdate = true;
+          }
+          applied += 1;
+        } catch (error) {
+          console.warn("Could not apply edited texture", error);
+        }
+      }
+      if (applied > 0) {
+        this.setPatchJsonFromPatch?.(this.buildPatch());
+      }
+      return applied;
+    },
+
+    applyPatchObject(patch, { status = true, errorStatus = "Could not apply weight patch", applyPose = true } = {}) {
       try {
         if (!patch || !Array.isArray(patch.assignments)) {
           throw new Error("Patch JSON must include assignments");
@@ -796,6 +890,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         this.applySerializedPoseKeyframes(poseLayer.keyframes, { generated: poseLayer.generated });
         this.applySerializedPoseCurveHandles?.(patch.poseCurveHandles || []);
         this.poseKeyframeMode = poseLayer.mode;
+        const texturePaints = Array.isArray(patch.texturePaints) ? patch.texturePaints : [];
 
         for (const record of this.paintRecords) {
           record.geometry.attributes.position.needsUpdate = true;
@@ -809,7 +904,10 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         if (clipCleanupChanged && this.activeClipEntry?.clip && this.actorTarget?.mode !== "bird-flap") {
           void this.playClipEntry(this.activeClipEntry);
         }
-        this.applyPose(this.progress);
+        if (applyPose) {
+          this.lastClipSampleTime = null;
+          this.applyPose(this.progress);
+        }
         this.refreshRigControls(this.activeBoneName);
         this.syncPoseControls();
         this.setPatchJsonFromPatch(this.buildPatch());
@@ -817,6 +915,13 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
           this.setStatus(poseLayer.migrated && poseLayer.removedSourceEntries
             ? `Applied ${applied} weight patch vertices; ignored ${poseLayer.removedSourceEntries} generated source pose keys`
             : `Applied ${applied} weight patch vertices`);
+        }
+        if (texturePaints.length && typeof this.applySerializedTexturePaints === "function") {
+          void this.applySerializedTexturePaints(texturePaints).then((textureCount) => {
+            if (status && textureCount > 0) {
+              this.setStatus(`Applied ${applied} weight patch vertices and ${textureCount} edited ${textureCount === 1 ? "texture" : "textures"}`);
+            }
+          });
         }
         return true;
       } catch (error) {

@@ -44,13 +44,19 @@ export function installSequencePlaybackMethods(BirdWeightEditor, deps) {
       this.activeClipAction.paused = false;
       this.activeClipAction.setEffectiveWeight(1);
       this.activeClipAction.play();
-      if (Math.abs((this.lastClipSampleTime ?? Number.POSITIVE_INFINITY) - clipTime) < 0.000001) {
+      const mixerTime = Number.isFinite(this.mixer.time) ? this.mixer.time : Number.POSITIVE_INFINITY;
+      if (
+        this.forceNextClipSample
+        || Math.abs((this.lastClipSampleTime ?? Number.POSITIVE_INFINITY) - clipTime) < 0.000001
+        || Math.abs(mixerTime - clipTime) < 0.000001
+      ) {
         const nudgeTime = clipTime > 0.001
           ? clipTime - 0.001
           : Math.min(Math.max(0, duration - 0.001), clipTime + 0.001);
         this.mixer.setTime(nudgeTime);
       }
       this.mixer.setTime(clipTime);
+      this.forceNextClipSample = false;
       this.lastClipSampleTime = clipTime;
     },
 

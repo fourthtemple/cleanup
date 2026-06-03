@@ -3,19 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mixamo Cleanup Tool</title>
-    <link rel="stylesheet" href="./src/animation-viewer.css" />
+    <title>Telekinetikitty Cleanup</title>
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=safari-panel-width-20260602c" />
   </head>
   <body>
     <main class="viewer-app editor-app weight-editor-app is-side-panel-open is-timeline-compact">
       <aside class="viewer-panel editor-control-panel" aria-label="Bird weight editor controls">
-        <header class="viewer-header">
-          <button id="side-panel-toggle" class="panel-collapse-toggle" type="button" aria-label="Hide panel" title="Hide panel" aria-pressed="true">-</button>
-          <div>
-            <p class="viewer-kicker">Open Source</p>
-            <h1>Mixamo Cleanup</h1>
-          </div>
-        </header>
+        <div class="viewer-panel-scroll">
+          <header class="viewer-header">
+            <button id="side-panel-toggle" class="panel-collapse-toggle" type="button" aria-label="Hide panel" title="Hide panel" aria-pressed="true">-</button>
+            <div>
+              <h1>Telekinetikitty Cleanup</h1>
+            </div>
+          </header>
 
         <section class="viewer-section animation-side-section weight-animation-section">
           <span class="viewer-label">Animation</span>
@@ -27,11 +27,8 @@
             <span>Animation</span>
             <select id="weight-action-select"></select>
           </label>
-          <div class="viewer-actions import-actions">
-            <button id="import-animation-file-button" type="button">Load</button>
-          </div>
-          <input id="import-animation-file" type="file" accept=".fbx,.glb,.gltf" hidden />
           <div class="viewer-actions export-actions">
+            <button id="export-fbx-button" type="button" disabled>Export FBX</button>
             <button id="export-glb-button" type="button" disabled>Export GLB</button>
           </div>
           <div class="viewer-checks import-options">
@@ -50,13 +47,9 @@
             <select id="timeline-blend-action-select"></select>
           </label>
           <div class="viewer-actions">
-            <button id="play-toggle" type="button">Play</button>
-            <button id="restart-clip" type="button">Restart</button>
+            <button id="transfer-cleanup-to-blend" type="button" disabled title="Copy the current cleanup to the selected Blend To animation">Transfer Cleanup</button>
           </div>
-          <label class="viewer-field">
-            <span>Time</span>
-            <input id="time-scrub" type="range" min="0" max="1" step="0.001" value="0" />
-          </label>
+          <input id="time-scrub" type="hidden" value="0" />
           <label class="viewer-field">
             <span>End Blend</span>
             <div class="viewer-range-row">
@@ -89,34 +82,91 @@
           </div>
         </section>
 
-        <section class="viewer-section">
-          <span class="viewer-label">Paint</span>
+        <section class="viewer-section select-tool-panel">
+          <span class="viewer-label">Select</span>
+          <div class="viewer-grid-actions selection-tool-actions" role="group" aria-label="Selection tools">
+            <button id="tool-pen" class="is-active" type="button" data-tool="paint" title="Paint selection">Pen</button>
+            <button id="tool-neighbor" type="button" data-tool="neighbor" title="Select connected vertices from the hovered vertex">Neighbor</button>
+            <button id="tool-deselect" type="button" data-tool="deselect" title="Remove painted selection only">Deselect</button>
+          </div>
           <label class="viewer-field">
-            <span>Brush radius</span>
-            <input id="brush-radius" type="range" min="0.004" max="0.18" step="0.002" value="0.035" />
+            <span>Selection radius</span>
+            <div class="viewer-range-row">
+              <input id="brush-radius" type="range" min="0.004" max="0.18" step="0.002" value="0.035" />
+              <output id="brush-radius-output">0.035</output>
+            </div>
           </label>
           <div class="viewer-checks">
             <label><input id="through-selection-toggle" type="checkbox" /> Through</label>
           </div>
-          <label class="viewer-field">
-            <span>Push/Pull step</span>
-            <div class="viewer-range-row">
-              <input id="sculpt-strength" type="range" min="0.0002" max="0.012" step="0.0002" value="0.002" />
-              <output id="sculpt-strength-output">0.002</output>
-            </div>
-          </label>
-          <label class="viewer-field">
-            <span>Move scale</span>
-            <div class="viewer-range-row">
-              <input id="move-sensitivity" type="range" min="0.05" max="1" step="0.05" value="0.25" />
-              <output id="move-sensitivity-output">0.25</output>
-            </div>
-          </label>
           <div class="viewer-actions">
             <button id="clear-selection" type="button">Clear Selection</button>
             <button id="clear-all-selection" type="button">Reset All</button>
           </div>
           <button id="invert-selection" type="button">Invert Selection</button>
+        </section>
+
+        <section class="viewer-section airbrush-tool-panel">
+          <span class="viewer-label">Airbrush</span>
+          <div class="viewer-grid-actions clone-paint-actions" aria-label="Clone paint source and destination" hidden>
+            <button id="clone-paint-source" type="button">Sample</button>
+            <button id="clone-paint-target" type="button" disabled hidden>Region</button>
+            <button id="clone-paint-tool" type="button" data-tool="clone" disabled>Clone</button>
+            <button id="clone-paint-clear" type="button" disabled>Clear</button>
+            <button id="clone-paint-copy-json" type="button" disabled>Copy JSON</button>
+          </div>
+          <div class="texture-paint-actions">
+            <label class="texture-paint-color">
+              <span>Color</span>
+              <input id="texture-paint-color" type="color" value="#c06f4f" />
+            </label>
+            <button id="texture-pick-color-tool" type="button" data-tool="eyedropper" title="Pick texture color">Pick</button>
+            <button id="texture-airbrush-tool" type="button" data-tool="airbrush">Airbrush</button>
+          </div>
+          <label class="viewer-field">
+            <span>Airbrush radius</span>
+            <div class="viewer-range-row">
+              <input id="texture-brush-radius" type="range" min="0.004" max="0.18" step="0.002" value="0.035" />
+              <output id="texture-brush-radius-output">8px</output>
+            </div>
+          </label>
+          <label class="viewer-field">
+            <span>Brush opacity</span>
+            <div class="viewer-range-row">
+              <input id="texture-brush-opacity" type="range" min="0.04" max="1" step="0.02" value="0.42" />
+              <output id="texture-brush-opacity-output">42%</output>
+            </div>
+          </label>
+          <label class="viewer-field">
+            <span>Subsurface scatter</span>
+            <div class="viewer-range-row">
+              <input id="texture-brush-scatter" type="range" min="0" max="1" step="0.02" value="0.35" />
+              <output id="texture-brush-scatter-output">35%</output>
+            </div>
+          </label>
+          <div id="clone-paint-status" class="clone-paint-status" hidden>Clone: no sample</div>
+          <div class="clone-paint-preview-row" aria-label="Clone texture previews" hidden>
+            <figure>
+              <canvas id="clone-source-preview" width="96" height="96"></canvas>
+              <figcaption>Sample</figcaption>
+            </figure>
+            <figure hidden>
+              <canvas id="clone-region-preview" width="96" height="96"></canvas>
+              <figcaption>Region</figcaption>
+            </figure>
+          </div>
+          <textarea id="clone-paint-json-output" class="clone-paint-json-output" readonly hidden spellcheck="false"></textarea>
+        </section>
+
+        <section class="viewer-section edit-tool-panel">
+          <span class="viewer-label">3D Edit</span>
+          <div class="viewer-grid-actions edit-tool-actions" role="group" aria-label="3D edit tools">
+            <button type="button" data-view-mode="edit" title="3D vertex edit mode">3D Edit</button>
+            <button id="tool-erase" type="button" data-tool="erase" title="Erase selected vertices in 3D Edit; erase weight and vertex edits in other modes">Erase</button>
+            <button id="tool-move" type="button" data-tool="move" title="Move selected vertices with a 3D gizmo">Move</button>
+            <button id="tool-pull" type="button" data-tool="pull" title="Pull vertices out">Pull</button>
+            <button id="tool-push" type="button" data-tool="push" title="Push vertices in">Push</button>
+          </div>
         </section>
 
         <section class="viewer-section rig-bone-panel">
@@ -215,6 +265,24 @@
           </div>
         </section>
 
+        <section class="viewer-section vertex-weighting-panel">
+          <span class="viewer-label">Vertex Weighting</span>
+          <label class="viewer-field">
+            <span>Push/Pull step</span>
+            <div class="viewer-range-row">
+              <input id="sculpt-strength" type="range" min="0.0002" max="0.012" step="0.0002" value="0.002" />
+              <output id="sculpt-strength-output">0.002</output>
+            </div>
+          </label>
+          <label class="viewer-field">
+            <span>Move scale</span>
+            <div class="viewer-range-row">
+              <input id="move-sensitivity" type="range" min="0.05" max="1" step="0.05" value="0.25" />
+              <output id="move-sensitivity-output">0.25</output>
+            </div>
+          </label>
+        </section>
+
         <section class="viewer-section">
           <span class="viewer-label">Camera</span>
           <div class="viewer-grid-actions camera-view-actions" role="group" aria-label="Camera views">
@@ -229,13 +297,6 @@
             <button id="camera-roll-reset" type="button" title="Reset camera roll upright">Upright</button>
             <button id="camera-roll-right" type="button" title="Roll camera clockwise 90 degrees">Roll +90</button>
           </div>
-          <label class="viewer-field">
-            <span>Gizmo Speed</span>
-            <div class="viewer-range-row">
-              <input id="camera-gizmo-speed" type="range" min="0.0005" max="0.02" step="0.0001" value="0.0052" />
-              <output id="camera-gizmo-speed-output">0.0052</output>
-            </div>
-          </label>
           <label class="viewer-field camera-color-field">
             <span>Background</span>
             <input id="camera-background-color" type="color" value="#11171c" />
@@ -297,53 +358,56 @@
           <div id="animation-library-list" class="animation-library-list" aria-label="Animation library files"></div>
         </section>
 
-        <section class="viewer-section viewer-meta" aria-live="polite">
-          <dl>
-            <div>
-              <dt>Selected</dt>
-              <dd id="selection-count">0 vertices</dd>
+        <div class="viewer-panel-footer">
+          <section class="viewer-section orbit-view-section">
+            <span class="viewer-label">Saved View</span>
+            <div class="viewer-grid-actions orbit-view-actions" role="group" aria-label="Saved orbit camera view">
+              <button id="save-orbit-view" type="button" title="Save current orbit camera view">Save View</button>
+              <button id="restore-orbit-view" type="button" title="Restore saved orbit camera view">Restore View</button>
             </div>
-            <div>
-              <dt>Patch</dt>
-              <dd id="patch-count">0 vertices</dd>
-            </div>
-            <div>
-              <dt>Keys</dt>
-              <dd id="key-count">0 keys</dd>
-            </div>
-            <div>
-              <dt>Model</dt>
-              <dd id="clip-source">Loading</dd>
-            </div>
-          </dl>
-          <p id="viewer-status">Loading model</p>
-        </section>
+          </section>
+
+          <section class="viewer-section viewer-meta" aria-live="polite">
+            <dl>
+              <div>
+                <dt>Selected</dt>
+                <dd id="selection-count">0 vertices</dd>
+              </div>
+              <div>
+                <dt>Patch</dt>
+                <dd id="patch-count">0 vertices</dd>
+              </div>
+              <div>
+                <dt>Keys</dt>
+                <dd id="key-count">0 keys</dd>
+              </div>
+              <div>
+                <dt>Model</dt>
+                <dd id="clip-source">Loading</dd>
+              </div>
+            </dl>
+            <p id="viewer-status">Loading model</p>
+          </section>
+        </div>
+        </div>
       </aside>
 
       <section class="viewer-stage" aria-label="3D weight editor">
         <div class="animation-editor-tools" aria-label="Editor layout controls">
           <button id="side-panel-show-toggle" class="panel-show-toggle" type="button" aria-label="Show panel" title="Show panel" hidden>+</button>
-          <button id="timeline-show-toggle" class="timeline-show-toggle" type="button" hidden>Timeline</button>
         </div>
+        <button id="timeline-show-toggle" class="timeline-show-toggle" type="button" aria-label="Show timeline" title="Show timeline" hidden>+</button>
         <div class="weight-viewport-tools" aria-label="Viewport tools">
           <div class="viewport-tool-group" role="group" aria-label="Edit tools">
             <button id="undo-edit" type="button" title="Undo last cleanup edit">Undo</button>
             <button id="redo-edit" type="button" title="Redo last cleanup edit">Redo</button>
-            <button id="tool-pen" class="is-active" type="button" data-tool="paint" title="Paint selection">Pen</button>
-            <button id="tool-neighbor" type="button" data-tool="neighbor" title="Select connected vertices from the hovered vertex">Neighbor</button>
-            <button id="tool-deselect" type="button" data-tool="deselect" title="Remove painted selection only">Deselect</button>
-            <button id="tool-erase" type="button" data-tool="erase" title="Erase selected vertices in 3D Edit; erase weight and vertex edits in other modes">Erase</button>
             <button id="tool-orbit" type="button" data-tool="orbit" title="Orbit camera">Orbit</button>
-            <button id="tool-move" class="viewport-edit-only" type="button" data-tool="move" title="Move selected vertices with a 3D gizmo">Move</button>
-            <button id="tool-pull" class="viewport-edit-only" type="button" data-tool="pull" title="Pull vertices out">Pull</button>
-            <button id="tool-push" class="viewport-edit-only" type="button" data-tool="push" title="Push vertices in">Push</button>
           </div>
           <div class="viewport-tool-group viewport-mode-group" role="group" aria-label="Viewport modes">
             <button class="is-active" type="button" data-view-mode="rendered" title="Textured rendered mode">Rendered</button>
             <button type="button" data-view-mode="mesh" title="Wire mesh mode">Mesh</button>
-            <button type="button" data-view-mode="edit" title="3D vertex edit mode">3D Edit</button>
+            <button type="button" data-view-mode="both" title="Rendered model with wire mesh overlay">Both</button>
             <button id="clean-preview" type="button" title="Hide selections, bones, and edit controls without clearing them">Clean Preview</button>
-            <button id="mirror-mode" type="button" title="Mirror left and right wing pose keys">Mirror</button>
           </div>
         </div>
         <div id="camera-gizmo" class="camera-gizmo" aria-label="Camera gizmo">
@@ -458,6 +522,10 @@
         </div>
         <div id="bone-labels" class="bone-labels" aria-hidden="true"></div>
         <canvas id="viewer-canvas"></canvas>
+        <svg id="lasso-overlay" class="lasso-overlay" aria-hidden="true" hidden>
+          <path id="lasso-overlay-path" class="lasso-overlay-path"></path>
+        </svg>
+        <div id="texture-brush-cursor" class="texture-brush-cursor" aria-hidden="true" hidden></div>
       </section>
     </main>
     <script type="importmap">
@@ -468,6 +536,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/bird-weight-editor.js"></script>
+    <script type="module" src="./src/bird-weight-editor.js?v=safari-picker-webgl-20260602b"></script>
   </body>
 </html>

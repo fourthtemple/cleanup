@@ -1,3 +1,5 @@
+import { exportMixamoCleanupFbx } from "../../node_modules/fbx-exporter/src/index.js";
+
 export function installAssetExportMethods(BirdWeightEditor, deps) {
   const { THREE, GLTFExporter } = deps;
 
@@ -23,7 +25,10 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       return new Blob([result], { type: mimeType });
     }
     if (ArrayBuffer.isView(result)) {
-      return new Blob([result.buffer], { type: mimeType });
+      const bytes = result.byteOffset === 0 && result.byteLength === result.buffer.byteLength
+        ? result.buffer
+        : result.buffer.slice(result.byteOffset, result.byteOffset + result.byteLength);
+      return new Blob([bytes], { type: mimeType });
     }
     return new Blob([String(result || "")], { type: mimeType });
   }
@@ -33,6 +38,9 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       const enabled = Boolean(this.model);
       if (this.exportGlbButton) {
         this.exportGlbButton.disabled = !enabled;
+      }
+      if (this.exportFbxButton) {
+        this.exportFbxButton.disabled = !enabled;
       }
     },
 
@@ -77,6 +85,12 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
         return info.sampleDuration;
       }
       return Math.max(0.001, finiteNumber(this.currentActionDuration?.(), 3));
+    },
+
+    exportFrameRate() {
+      const duration = this.exportAnimationDurationSeconds();
+      const frameCount = this.exportTimelineFrameCount();
+      return Math.max(1, Math.round(frameCount / Math.max(0.001, duration)));
     },
 
     exportAnimatedObjects() {
@@ -232,6 +246,51 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       } catch (error) {
         console.warn("Could not export GLB", error);
         this.setStatus(error?.name === "AbortError" ? "GLB export cancelled" : "Could not export GLB");
+        return false;
+      } finally {
+        this.restoreExportEditorState(state);
+      }
+    },
+
+    async exportFbxAsset() {
+      if (!this.model) {
+        this.setStatus("Load a model before exporting");
+        return false;
+      }
+      const state = this.captureExportEditorState();
+      try {
+        this.setStatus("Baking FBX export");
+        this.setPlayback?.(false);
+        this.resetRootMotionPreview?.({ clearProfile: true });
+        const bakedClip = this.bakeCurrentAnimationClipForExport();
+        this.progress = 0;
+        this.applyPose(0);
+        this.model.updateMatrixWorld(true);
+
+        const warnings = [];
+        const bytes = exportMixamoCleanupFbx({
+          object3D: this.model,
+          animations: bakedClip ? [bakedClip] : [],
+          frameRate: this.exportFrameRate()
+        }, {
+          embedTextures: true,
+          textureTransformMode: "blender",
+          bakeAnimations: true,
+          warnings,
+          onWarning: (warning) => console.warn("FBX export warning", warning)
+        });
+
+        const fileName = `${this.exportFileBaseName()}.fbx`;
+        const blob = blobFromExportResult(bytes, "application/octet-stream");
+        const mode = await this.downloadExportBlob(blob, fileName, "FBX", {
+          "application/octet-stream": [".fbx"]
+        });
+        const warningText = warnings.length ? ` with ${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : "";
+        this.setStatus(`${mode === "file" ? "Saved" : "Downloaded"} ${fileName}${warningText}`);
+        return true;
+      } catch (error) {
+        console.warn("Could not export FBX", error);
+        this.setStatus(error?.name === "AbortError" ? "FBX export cancelled" : "Could not export FBX");
         return false;
       } finally {
         this.restoreExportEditorState(state);

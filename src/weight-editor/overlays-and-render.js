@@ -382,6 +382,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         !this.model
         || !this.activeBoneName
         || this.cleanPreview
+        || this.cloneSpotlightActive
         || (this.viewMode === "rendered" && this.activeTool !== "bone")
       ) {
         this.selectedBoneLine.visible = false;
@@ -442,6 +443,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         !this.boneLabelToggle.checked
         || !this.model
         || this.cleanPreview
+        || this.cloneSpotlightActive
         || (this.viewMode === "rendered" && this.activeTool !== "bone")
       ) {
         this.boneLabels.replaceChildren();
@@ -626,6 +628,9 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
           if (this.timelinePlayBothButton) {
             this.timelinePlayBothButton.textContent = "Play Sequence";
           }
+          if (this.playToggle) {
+            this.playToggle.textContent = "Play";
+          }
           this.syncSequenceControls({ force: true });
         }
       } else if (this.playing && !this.draggingScrub) {
@@ -653,6 +658,8 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       this.updateFilteredSkeletonHelper();
       this.updateSelectedBoneHighlight();
       this.updateBonePickerOverlay();
+      this.updateMeshWireOverlays?.();
+      this.updateCloneSpotlightTransforms?.();
       if (timelineIsLive) {
         this.updateBoneLayerValues({ now, throttle: true, playback: this.playing || this.sequencePlaying });
       }

@@ -116,21 +116,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       if (!this.actionSelect) {
         return;
       }
-      const libraryFolderName = this.selectedLibraryCharacterFolderName?.()
-        || this.actorTarget?.libraryFolder
-        || this.actorTarget?.animationLibraryFolder
-        || "";
-      const libraryFolder = libraryFolderName
-        ? this.animationLibraryFolders?.find((folder) => folder.name === libraryFolderName)
-        : null;
-      const libraryFiles = libraryFolder?.files?.filter((file) => file.available !== false) || [];
-      const actionEntries = libraryFiles.length
-        ? libraryFiles.map((file) => ({
-          id: animationActionIdFromFileName(file.name || file.path),
-          name: animationActionIdFromFileName(file.name || file.path) || animationLabelFromFileName(file.name || file.path),
-          available: file.available !== false
-        }))
-        : this.clipEntries;
+      const actionEntries = this.availableActionEntries();
       const options = actionEntries.map((entry) => {
         const option = document.createElement("option");
         option.value = entry.id || entry.name;
@@ -165,16 +151,67 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.syncClipCleanupControls();
     },
 
+    animationLibraryActionEntries() {
+      const libraryFolderName = this.selectedLibraryCharacterFolderName?.()
+        || this.actorTarget?.libraryFolder
+        || this.actorTarget?.animationLibraryFolder
+        || "";
+      const libraryFolder = libraryFolderName
+        ? this.animationLibraryFolders?.find((folder) => folder.name === libraryFolderName)
+        : null;
+      const libraryFiles = libraryFolder?.files?.filter((file) => file.available !== false) || [];
+      if (!libraryFiles.length || typeof this.animationLibraryClipEntryForItem !== "function") {
+        return [];
+      }
+      return libraryFiles.map((file) => {
+        const entry = this.animationLibraryClipEntryForItem({
+          ...file,
+          folder: file.folder || libraryFolderName
+        });
+        const existing = this.clipEntries.find((clip) => (
+          (entry.id && (clip.id || clip.name) === entry.id)
+          || (entry.libraryKey && clip.libraryKey === entry.libraryKey)
+          || (entry.libraryPath && clip.libraryPath === entry.libraryPath)
+        ));
+        return existing || entry;
+      });
+    },
+
+    availableActionEntries() {
+      const libraryEntries = this.animationLibraryActionEntries();
+      return libraryEntries.length ? libraryEntries : this.clipEntries;
+    },
+
+    availableBlendEntries() {
+      const activeId = this.activeClipEntry?.id || this.activeClipEntry?.name || "";
+      return this.availableActionEntries().filter((entry) => (
+        entry.available !== false
+        && (entry.id || entry.name)
+        && (entry.id || entry.name) !== activeId
+      ));
+    },
+
+    findAvailableActionEntry(actionId) {
+      if (!actionId) {
+        return null;
+      }
+      return this.availableActionEntries().find((clip) => (
+        (clip.id || clip.name) === actionId
+        && clip.available !== false
+      )) || null;
+    },
+
     sanitizeBlendSelection() {
       const activeId = this.activeClipEntry?.id || this.activeClipEntry?.name || "";
-      if (this.actorTarget?.mode === "bird-flap" || this.clipEntries.length < 2 || !this.blendActionId || this.blendActionId === activeId) {
+      const blendEntries = this.availableBlendEntries();
+      if (this.actorTarget?.mode === "bird-flap" || !blendEntries.length || !this.blendActionId || this.blendActionId === activeId) {
         this.blendActionId = "";
         this.blendClipEntry = null;
         this.blendClipAction?.stop();
         this.blendClipAction = null;
         return;
       }
-      const entry = this.clipEntries.find((clip) => (clip.id || clip.name) === this.blendActionId && clip.available !== false);
+      const entry = this.findAvailableActionEntry(this.blendActionId);
       if (!entry) {
         this.blendActionId = "";
         this.blendClipEntry = null;
@@ -184,7 +221,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
     },
 
     syncBlendControls() {
-      const disabled = this.actorTarget?.mode === "bird-flap" || this.clipEntries.length < 2;
+      const disabled = this.actorTarget?.mode === "bird-flap" || !this.availableBlendEntries().length;
       if (this.timelineBlendActionSelect) {
         this.timelineBlendActionSelect.disabled = disabled;
         this.timelineBlendActionSelect.value = disabled ? "" : this.blendActionId;
@@ -194,6 +231,9 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       }
       if (this.timelinePlayBothButton) {
         this.timelinePlayBothButton.disabled = disabled || !this.blendActionId;
+      }
+      if (this.transferCleanupToBlendButton) {
+        this.transferCleanupToBlendButton.disabled = disabled || !this.blendActionId;
       }
       this.app?.classList.toggle("has-blend-target", !disabled && Boolean(this.blendActionId));
       this.updateBlendOutput();
@@ -213,7 +253,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
     async selectBlendAction(actionId) {
       this.blendActionId = actionId || "";
       this.sanitizeBlendSelection();
-      const entry = this.clipEntries.find((clip) => (clip.id || clip.name) === this.blendActionId && clip.available !== false);
+      const entry = this.findAvailableActionEntry(this.blendActionId);
       this.blendClipEntry = entry || null;
       this.blendClipAction?.stop();
       this.blendClipAction = null;
@@ -292,7 +332,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       }
     },
 
-    async selectActor(actorId) {
+    async selectActor(actorId, options = {}) {
+      const autoLoadLibrary = options.autoLoadLibrary !== false;
       if (String(actorId || "").startsWith("library:")) {
         const folderName = String(actorId).slice("library:".length);
         const nextTarget = this.animationLibraryTargetForFolder(folderName);
@@ -308,7 +349,14 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           this.renderActionOptions();
           this.syncTimelineControls();
           this.source.textContent = `Library: ${folderName}`;
-          this.setStatus(`Choose an animation and click Load`);
+          if (autoLoadLibrary) {
+            const loaded = await this.loadSelectedAnimationLibraryFile?.();
+            if (!loaded) {
+              this.setStatus("Choose an animation folder and import an FBX at the bottom first");
+            }
+          } else {
+            this.setStatus("Choose an animation");
+          }
           return;
         }
       }
@@ -330,6 +378,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
 
     clearActorModel() {
       this.pausePlayback?.();
+      this.clearClonePaintState?.({ silent: true });
+      this.disposeMeshWireOverlays?.();
       this.disposeSkeletonHelper?.();
       this.transformControls.detach();
       this.transformHelper.visible = false;
@@ -468,6 +518,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.applyPose(0);
         this.updateSkeletonHelper();
         this.modelRoot.visible = true;
+        this.restoreSavedOrbitView?.({ status: false });
         this.syncTimelineControls();
         this.updateTimelineKeyMarkers();
         this.updateBoneLabels();
@@ -478,6 +529,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.setStatus(autoKeyed
           ? this.autoKeyStatusText?.(autoKeyed, autoKeyed.label) || `Auto-keyed ${autoKeyed.label}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
           : "Ready");
+        await this.maybeReplayClonePaintFromUrl?.();
       } catch (error) {
         console.error(error);
         this.modelRoot.visible = Boolean(this.model);
@@ -702,7 +754,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       const previousActionId = this.activeClipEntry?.id || this.activeClipEntry?.name || "";
       this.animationLibrarySelectedFolder = item.folder || target.animationLibraryFolder || this.animationLibrarySelectedFolder;
       if (this.actorTarget?.id !== target.id || !this.model) {
-        await this.selectActor(target.id);
+        await this.selectActor(target.id, { autoLoadLibrary: false });
       }
       this.animationLibrarySelectedFolder = item.folder || target.animationLibraryFolder || this.animationLibrarySelectedFolder;
       this.renderAnimationLibrary?.();
@@ -891,6 +943,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.setStatus(autoKeyed
         ? this.autoKeyStatusText?.(autoKeyed, autoKeyed.label) || `Auto-keyed ${autoKeyed.label}: ${autoKeyed.curveKeyCount} curve keys, ${autoKeyed.frames.length} frames, ${autoKeyed.boneNames.length} bones`
         : this.activeClipEntry ? `Loaded ${label}` : `Loaded ${label} without animation clips`);
+      await this.maybeReplayClonePaintFromUrl?.();
       return true;
     },
 
@@ -1320,6 +1373,84 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       }
     },
 
+    transferCleanupPatchForEntry(entry = this.blendClipEntry) {
+      const patch = this.syncPatchJson();
+      const transferPatch = JSON.parse(JSON.stringify(patch));
+      delete transferPatch.poseKeyframes;
+      delete transferPatch.poseCurveHandles;
+      delete transferPatch.poseKeyframeMode;
+      delete transferPatch.poseKeyframeAction;
+      delete transferPatch.poseKeyframeSource;
+      transferPatch.transfer = {
+        fromAction: this.activeClipEntry?.id || this.activeClipEntry?.name || "",
+        toAction: entry?.id || entry?.name || "",
+        copiedAt: new Date().toISOString()
+      };
+      return transferPatch;
+    },
+
+    animationLibraryCleanupSaveTargetForEntry(entry) {
+      if (!entry) {
+        return { folder: "", fileName: "" };
+      }
+      if (entry.libraryFolder && entry.libraryCleanupFile) {
+        return {
+          folder: entry.libraryFolder,
+          fileName: entry.libraryCleanupFile
+        };
+      }
+      const folder = entry.libraryFolder
+        || this.selectedAnimationLibraryFolderName?.()
+        || this.actorTarget?.libraryFolder
+        || this.actorTarget?.animationLibraryFolder
+        || "";
+      const folderRecord = this.animationLibraryFolders.find((item) => item.name === folder);
+      const entryId = entry.id || entry.name || "";
+      const matchedFile = folderRecord?.files?.find((file) => (
+        (file.actionId && file.actionId === entryId)
+        || (entry.libraryPath && file.path === entry.libraryPath)
+        || (entry.url && file.url === entry.url)
+        || (entry.libraryKey && (file.key === entry.libraryKey || file.path === entry.libraryKey))
+      ));
+      return {
+        folder,
+        fileName: matchedFile?.cleanupFile
+          || entry.libraryCleanupFile
+          || this.animationLibraryCleanupFileNameFromLabel(entry.name || entry.id || matchedFile?.name || "blend-target")
+      };
+    },
+
+    async transferCleanupToBlendAction() {
+      if (!this.blendActionId || !this.blendClipEntry) {
+        this.setStatus("Choose a Blend To animation first");
+        return false;
+      }
+      const target = this.animationLibraryCleanupSaveTargetForEntry(this.blendClipEntry);
+      if (!target.folder || !target.fileName) {
+        this.setStatus("Blend To animation is not in a writable project folder");
+        return false;
+      }
+      try {
+        const patch = this.transferCleanupPatchForEntry(this.blendClipEntry);
+        const text = this.serializePatchText?.(patch) || `${JSON.stringify(patch, null, 2)}\n`;
+        const saved = await writeAnimationLibraryCleanupFile(target.folder, target.fileName, text);
+        if (!saved) {
+          this.setStatus("Could not transfer cleanup to Blend To animation");
+          return false;
+        }
+        this.blendClipEntry.libraryFolder = target.folder;
+        this.blendClipEntry.libraryCleanupFile = target.fileName;
+        await this.refreshAnimationLibrary?.({ silent: true });
+        this.renderActionOptions();
+        this.setStatus(`Transferred cleanup to ${this.blendClipEntry.name || this.blendClipEntry.id}`);
+        return true;
+      } catch (error) {
+        console.warn("Could not transfer cleanup to blend target", error);
+        this.setStatus("Could not transfer cleanup to Blend To animation");
+        return false;
+      }
+    },
+
     async savePatchFile({ saveAs = false, saveAsName = "" } = {}) {
       const patch = this.syncPatchJson();
       try {
@@ -1686,6 +1817,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       material.depthWrite = true;
       this.prepareMaterialTextures(material);
       material.userData.editorBaseColor = material.color.clone();
+      material.userData.editorBaseOpacity = material.opacity;
+      material.userData.editorWasTransparent = material.transparent;
       this.applyTextureGainToMaterial?.(material);
       material.needsUpdate = true;
       return material;
@@ -1837,7 +1970,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           mirrorCenterX: (Math.min(...xValues) + Math.max(...xValues)) / 2,
           mirrorVertexCache: new Map(),
           seamVertexMap,
-          vertexNeighbors: this.buildVertexNeighborMap(geometry)
+          vertexNeighbors: this.buildVertexNeighborMap(geometry),
+          wireOverlay: this.createMeshWireOverlay?.(object, geometry) || null
         };
         this.paintRecords.push(record);
         this.updateRecordColors(record);

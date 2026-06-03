@@ -21,6 +21,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     finitePoseValue,
     writeJsonFile
   } = deps;
+  const ORBIT_VIEW_STORAGE_KEY = "mixamo-cleanup-editor:orbit-view:v1";
+
+  function finiteVectorArray(value, length = 3) {
+    return Array.isArray(value)
+      && value.length === length
+      && value.every((entry) => Number.isFinite(Number(entry)));
+  }
+
   Object.assign(BirdWeightEditor.prototype, {
     createScene() {
       this.renderer = new THREE.WebGLRenderer({
@@ -191,6 +199,19 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.vertexMarkers.visible = false;
       this.scene.add(this.vertexMarkers);
 
+      this.meshWireOverlayMaterial = new THREE.MeshBasicMaterial({
+        color: 0x80d8ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.42,
+        depthTest: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -1,
+        polygonOffsetUnits: -1
+      });
+      this.meshWireOverlays = [];
+
       this.neighborHoverGeometry = new THREE.BufferGeometry();
       this.neighborHoverMarker = new THREE.Points(
         this.neighborHoverGeometry,
@@ -208,6 +229,23 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.neighborHoverMarker.renderOrder = 34;
       this.neighborHoverMarker.visible = false;
       this.scene.add(this.neighborHoverMarker);
+
+      this.cloneSpotlightSourceMaterial = new THREE.MeshBasicMaterial({
+        color: 0x7af7ff,
+        transparent: true,
+        opacity: 0.72,
+        side: THREE.DoubleSide,
+        depthTest: false,
+        depthWrite: false
+      });
+      this.cloneSpotlightRegionMaterial = new THREE.MeshBasicMaterial({
+        color: 0xffd36e,
+        transparent: true,
+        opacity: 0.78,
+        side: THREE.DoubleSide,
+        depthTest: false,
+        depthWrite: false
+      });
 
       this.selectionPivot = new THREE.Object3D();
       this.selectionPivot.visible = false;
@@ -273,32 +311,117 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       window.addEventListener("resize", () => this.resize());
     },
 
+    currentOrbitViewSetting() {
+      if (!this.camera || !this.controls) {
+        return null;
+      }
+      return {
+        version: 1,
+        actorId: this.actorTarget?.id || "",
+        actionId: this.activeClipEntry?.id || this.activeClipEntry?.name || "",
+        cameraPosition: this.camera.position.toArray(),
+        cameraUp: this.camera.up.toArray(),
+        target: this.controls.target.toArray(),
+        zoom: this.camera.zoom,
+        fov: this.camera.fov
+      };
+    },
+
+    savedOrbitViewSetting() {
+      if (typeof window === "undefined") {
+        return null;
+      }
+      try {
+        const text = window.localStorage?.getItem(ORBIT_VIEW_STORAGE_KEY);
+        return text ? JSON.parse(text) : null;
+      } catch {
+        return null;
+      }
+    },
+
+    updateOrbitViewControls() {
+      if (this.restoreOrbitViewButton) {
+        this.restoreOrbitViewButton.disabled = !this.savedOrbitViewSetting();
+      }
+    },
+
+    saveOrbitViewSetting() {
+      const view = this.currentOrbitViewSetting();
+      if (!view || typeof window === "undefined") {
+        this.setStatus("No orbit view to save");
+        return false;
+      }
+      try {
+        window.localStorage?.setItem(ORBIT_VIEW_STORAGE_KEY, JSON.stringify(view));
+        this.updateOrbitViewControls();
+        this.setStatus("Saved orbit view");
+        return true;
+      } catch {
+        this.setStatus("Could not save orbit view");
+        return false;
+      }
+    },
+
+    applyOrbitViewSetting(view = this.savedOrbitViewSetting(), options = {}) {
+      if (
+        !view
+        || !this.camera
+        || !this.controls
+        || !finiteVectorArray(view.cameraPosition)
+        || !finiteVectorArray(view.cameraUp)
+        || !finiteVectorArray(view.target)
+      ) {
+        if (options.status !== false) {
+          this.setStatus("No saved orbit view");
+        }
+        return false;
+      }
+      this.camera.position.fromArray(view.cameraPosition.map(Number));
+      this.camera.up.fromArray(view.cameraUp.map(Number)).normalize();
+      this.controls.target.fromArray(view.target.map(Number));
+      if (Number.isFinite(Number(view.zoom))) {
+        this.camera.zoom = Number(view.zoom);
+      }
+      if (Number.isFinite(Number(view.fov))) {
+        this.camera.fov = Number(view.fov);
+      }
+      this.camera.lookAt(this.controls.target);
+      this.camera.updateProjectionMatrix();
+      this.controls.update();
+      this.updateCameraRelativeLights();
+      if (options.status !== false) {
+        this.setStatus("Restored orbit view");
+      }
+      return true;
+    },
+
+    restoreSavedOrbitView(options = {}) {
+      return this.applyOrbitViewSetting(this.savedOrbitViewSetting(), options);
+    },
+
     bindControls() {
       this.characterSelect?.addEventListener("change", () => {
         void this.selectActor(this.characterSelect.value);
       });
       this.actionSelect?.addEventListener("change", () => {
         if (this.selectedLibraryCharacterFolderName?.()) {
-          this.setStatus(`Ready to load ${this.actionSelect.value || "animation"}`);
+          void this.loadSelectedAnimationLibraryFile?.();
           return;
         }
         void this.selectClipAction(this.actionSelect.value);
       });
-      this.importAnimationFileButton?.addEventListener("click", () => {
-        void this.loadSelectedAnimationLibraryFile?.();
+      this.exportFbxButton?.addEventListener("click", () => {
+        void this.exportFbxAsset?.();
       });
       this.exportGlbButton?.addEventListener("click", () => {
         void this.exportGlbAsset?.();
       });
-      this.importAnimationFileInput?.addEventListener("change", () => {
-        const file = this.importAnimationFileInput.files?.[0];
-        if (file) {
-          void this.loadImportedAnimationFile(file);
-        }
-      });
       this.bindAnimationLibraryControls?.();
       this.timelineBlendActionSelect?.addEventListener("change", () => {
         void this.selectBlendAction(this.timelineBlendActionSelect.value);
+      });
+      this.transferCleanupToBlendButton?.addEventListener("click", () => {
+        void this.transferCleanupToBlendAction?.();
       });
       this.rigPanelToggle?.addEventListener("click", () => this.setRigPanelOpen(this.rigPanel?.classList.contains("is-collapsed")));
       this.rigBoneSearch?.addEventListener("input", () => {
@@ -382,10 +505,16 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         button.addEventListener("click", () => this.setViewMode(button.dataset.viewMode));
       });
       this.cleanPreviewButton.addEventListener("click", () => this.setCleanPreview(!this.cleanPreview));
-      this.mirrorModeButton.addEventListener("click", () => this.setMirrorMode(!this.mirrorMode));
+      this.mirrorModeButton?.addEventListener("click", () => this.setMirrorMode(!this.mirrorMode));
+      this.saveOrbitViewButton?.addEventListener("click", () => this.saveOrbitViewSetting());
+      this.restoreOrbitViewButton?.addEventListener("click", () => this.restoreSavedOrbitView());
+      this.updateOrbitViewControls();
       this.setViewMode("rendered", { silent: true });
 
       this.toolButtons.forEach((button) => {
+        if (button.dataset.tool === "clone") {
+          return;
+        }
         button.addEventListener("click", () => this.setTool(button.dataset.tool));
       });
       this.setTool("paint");
@@ -410,15 +539,18 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
       this.canvas.addEventListener("pointerdown", (event) => this.onPointerDown(event));
       this.canvas.addEventListener("pointermove", (event) => this.onPointerMove(event));
+      this.canvas.addEventListener("mousedown", (event) => this.onCanvasClick?.(event));
+      this.canvas.addEventListener("click", (event) => this.onCanvasClick?.(event));
+      this.canvas.addEventListener("pointerleave", () => this.hideTextureBrushCursor?.());
       window.addEventListener("pointerup", () => {
         this.draggingPoseControl = false;
         this.endPoseControlUndo();
         this.onPointerUp();
       });
 
-      this.clearSelectionButton.addEventListener("click", () => this.withUndo("Clear selection", () => this.clearSelection()));
+      this.clearSelectionButton.addEventListener("click", () => this.withSelectionUndo?.("Clear selection", () => this.clearSelection()));
       this.clearAllSelectionButton.addEventListener("click", () => this.withUndo("Reset all", () => this.resetWeights()));
-      this.invertSelectionButton.addEventListener("click", () => this.withUndo("Invert selection", () => this.invertSelection()));
+      this.invertSelectionButton.addEventListener("click", () => this.withSelectionUndo?.("Invert selection", () => this.invertSelection()));
       this.applyWeightButton.addEventListener("click", () => {
         this.withUndo("Set weight", () => this.assignSelectionToBone(this.boneSelect.value, Number(this.weightValue.value)));
       });
@@ -450,11 +582,40 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.withUndo("Adjust influence", () => this.adjustSelectionInfluenceFromControl(slider.dataset.adjustInfluence, Number(slider.value)));
       });
       this.updateRangeOutputs();
+      this.brushRadius?.addEventListener("input", () => {
+        this.updateRangeOutputs();
+        this.updateBrushCursorForLastPointer?.();
+      });
       this.throughSelectionToggle?.addEventListener("change", () => {
         this.setStatus(this.throughSelectionToggle.checked ? "Through selection on" : "Through selection off");
+        this.updateBrushCursorForLastPointer?.();
       });
       this.sculptStrength.addEventListener("input", () => this.updateRangeOutputs());
       this.moveSensitivity.addEventListener("input", () => this.updateRangeOutputs());
+      this.textureBrushRadius?.addEventListener("input", () => {
+        this.updateRangeOutputs();
+        this.updateBrushCursorForLastPointer?.();
+      });
+      this.textureBrushOpacity?.addEventListener("input", () => this.updateRangeOutputs());
+      this.textureBrushScatter?.addEventListener("input", () => this.updateRangeOutputs());
+      this.clonePaintSourceButton?.addEventListener("click", () => {
+        this.captureClonePaintSource?.();
+      });
+      this.clonePaintTargetButton?.addEventListener("click", () => {
+        this.captureClonePaintTarget?.();
+      });
+      this.clonePaintToolButton?.addEventListener("click", () => {
+        this.activateClonePaintTool?.();
+      });
+      this.clonePaintClearButton?.addEventListener("click", () => {
+        this.clearClonePaintState?.();
+      });
+      this.clonePaintCopyJsonButton?.addEventListener("click", () => {
+        void this.copyClonePaintReplayJson?.();
+      });
+      this.textureFillRegionButton?.addEventListener("click", () => {
+        this.paintTextureRegion?.();
+      });
       this.weightValue.addEventListener("input", () => this.updateRangeOutputs());
       this.speedControl?.addEventListener("input", () => this.updateRangeOutputs());
       this.scaleControl?.addEventListener("input", () => {
@@ -571,30 +732,32 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         void this.rebuildAutoKeyedTimelineFromDetail?.({ pushUndo: true });
       });
 
-      this.playToggle.addEventListener("click", () => {
-        this.setPlayback(!this.playing);
+      this.playToggle?.addEventListener("click", () => {
+        void this.toggleBlendAwarePlayback();
       });
       this.timelinePlayToggle.addEventListener("click", () => {
-        this.setPlayback(!this.playing);
+        void this.toggleBlendAwarePlayback();
       });
-      this.restartClip.addEventListener("click", () => {
+      this.restartClip?.addEventListener("click", () => {
         this.stopSequencePreview({ applyPose: false, resetElapsed: true });
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
         this.resetRootMotionPreview?.();
         this.progress = 0;
-        this.timeScrub.value = "0";
+        if (this.timeScrub) {
+          this.timeScrub.value = "0";
+        }
         this.applyPose(this.progress);
         this.refreshGroundReferenceForCurrentPose?.();
         this.syncPoseControlsToCurrentBone();
         this.setPlayback(true);
       });
-      this.timeScrub.addEventListener("pointerdown", () => {
+      this.timeScrub?.addEventListener("pointerdown", () => {
         this.draggingScrub = true;
       });
-      this.timeScrub.addEventListener("pointerup", () => {
+      this.timeScrub?.addEventListener("pointerup", () => {
         this.draggingScrub = false;
       });
-      this.timeScrub.addEventListener("input", () => {
+      this.timeScrub?.addEventListener("input", () => {
         this.stopSequencePreview({ applyPose: false, resetElapsed: true });
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
         this.resetRootMotionPreview?.();
@@ -611,7 +774,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
         this.resetRootMotionPreview?.();
         this.progress = Number(this.timelineScrub.value) / this.timelineFrames;
-        this.timeScrub.value = String(this.progress);
+        if (this.timeScrub) {
+          this.timeScrub.value = String(this.progress);
+        }
         this.syncTimelineControls();
         this.applyPose(this.progress);
         this.refreshGroundReferenceForCurrentPose?.();
@@ -849,6 +1014,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return;
       }
       material.color.copy(baseColor).multiplyScalar(this.textureGain ?? 1);
+      if (this.cloneSpotlightActive) {
+        material.color.copy(baseColor).multiplyScalar(0.16);
+        material.opacity = 0.28;
+        material.transparent = true;
+        material.depthWrite = false;
+      }
       material.needsUpdate = true;
     },
 
@@ -947,7 +1118,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     cameraGizmoSpeedValue() {
       const value = Number(this.cameraGizmoSpeed?.value);
-      return Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0.0005, 0.02) : 0.0052;
+      return Number.isFinite(value) ? THREE.MathUtils.clamp(value, 0.0005, 0.02) : 0.02;
     },
 
     rotateCameraAxisByPixels(axisName, dx, dy) {
@@ -1079,7 +1250,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       this.undoStack.push(state);
       if (this.undoStack.length > this.maxUndoSteps) {
-        this.undoStack.shift();
+        this.disposeFastHistoryState?.(this.undoStack.shift());
       }
       if (!options.preserveRedo) {
         this.redoStack = [];
@@ -1106,16 +1277,61 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     updateUndoButton() {
+      const busy = Boolean(this.historyRestoreBusy);
       if (this.undoButton) {
-        this.undoButton.disabled = !this.undoStack.length;
+        this.undoButton.disabled = busy || !this.undoStack.length;
       }
       if (this.redoButton) {
-        this.redoButton.disabled = !this.redoStack?.length;
+        this.redoButton.disabled = busy || !this.redoStack?.length;
       }
+    },
+
+    scheduleHistoryFrame(callback) {
+      const requestFrame = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : (handler) => setTimeout(handler, 0);
+      requestFrame(callback);
+    },
+
+    finishHistoryRestore() {
+      this.scheduleHistoryFrame(() => {
+        const queuedStep = this.pendingHistoryStep;
+        this.pendingHistoryStep = null;
+        this.historyRestoreBusy = false;
+        this.updateUndoButton();
+        if (queuedStep) {
+          this.runHistoryStep(queuedStep);
+        }
+      });
+    },
+
+    runHistoryStep(direction) {
+      if (this.historyRestoreBusy) {
+        this.pendingHistoryStep = direction;
+        this.setStatus(direction === "redo" ? "Redo queued" : "Undo queued");
+        return false;
+      }
+      this.historyRestoreBusy = true;
+      this.pendingHistoryStep = null;
+      this.updateUndoButton();
+      this.setStatus(direction === "redo" ? "Redoing..." : "Undoing...");
+      this.scheduleHistoryFrame(() => {
+        try {
+          if (direction === "redo") {
+            this.performRedoLastEdit();
+          } else {
+            this.performUndoLastEdit();
+          }
+        } finally {
+          this.finishHistoryRestore();
+        }
+      });
+      return true;
     },
 
     refreshRestoredPose() {
       this.lastClipSampleTime = null;
+      this.forceNextClipSample = true;
       this.applyPose(this.progress);
       this.model?.updateMatrixWorld(true);
       for (const record of this.paintRecords || []) {
@@ -1138,7 +1354,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       const patch = state.patch || JSON.parse(state.patchText);
       this.setPatchJsonFromPatch?.(patch);
-      this.applyPatchObject?.(patch, { status: false });
+      this.lastClipSampleTime = null;
+      this.applyPatchObject?.(patch, { status: false, applyPose: false });
       if (Array.isArray(state.poseKeyframes)) {
         this.applySerializedPoseKeyframes?.(state.poseKeyframes);
         this.applySerializedPoseCurveHandles?.(state.poseCurveHandles || []);
@@ -1195,11 +1412,25 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     undoLastEdit() {
+      if (!this.historyRestoreBusy && this.isFastHistoryState(this.undoStack[this.undoStack.length - 1])) {
+        return this.performUndoLastEdit();
+      }
+      return this.runHistoryStep("undo");
+    },
+
+    performUndoLastEdit() {
       const state = this.undoStack.pop();
       if (!state) {
         this.updateUndoButton();
         this.setStatus("Nothing to undo");
         return false;
+      }
+      if (this.isFastHistoryState(state)) {
+        this.redoStack.push(state);
+        if (this.redoStack.length > this.maxUndoSteps) {
+          this.disposeFastHistoryState?.(this.redoStack.shift());
+        }
+        return this.applyFastHistoryState(state, "undo", "Undid");
       }
       const current = this.captureUndoState(state.label, { includeClip: Boolean(state.includeClip || state.clipState) });
       if (current) {
@@ -1212,11 +1443,25 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     redoLastEdit() {
+      if (!this.historyRestoreBusy && this.isFastHistoryState(this.redoStack?.[this.redoStack.length - 1])) {
+        return this.performRedoLastEdit();
+      }
+      return this.runHistoryStep("redo");
+    },
+
+    performRedoLastEdit() {
       const state = this.redoStack?.pop();
       if (!state) {
         this.updateUndoButton();
         this.setStatus("Nothing to redo");
         return false;
+      }
+      if (this.isFastHistoryState(state)) {
+        this.undoStack.push(state);
+        if (this.undoStack.length > this.maxUndoSteps) {
+          this.disposeFastHistoryState?.(this.undoStack.shift());
+        }
+        return this.applyFastHistoryState(state, "redo", "Redid");
       }
       const current = this.captureUndoState(state.label, { includeClip: Boolean(state.includeClip || state.clipState) });
       if (current) {
@@ -1229,18 +1474,78 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     clearRedoStack() {
+      for (const state of this.redoStack || []) {
+        this.disposeFastHistoryState?.(state);
+      }
       this.redoStack = [];
       this.updateUndoButton();
       return true;
     },
 
+    isFastHistoryState(state) {
+      return state?.kind === "selection" || state?.kind === "texture-paint";
+    },
+
+    disposeFastHistoryState(state) {
+      if (state?.kind === "texture-paint") {
+        for (const entry of state.entries || []) {
+          this.disposeTexturePaintSnapshotEntry?.(entry);
+        }
+      }
+    },
+
+    applyFastHistoryState(state, direction, statusPrefix) {
+      if (state?.kind === "selection") {
+        const snapshot = direction === "redo" ? state.after : state.before;
+        if (!Array.isArray(snapshot)) {
+          return false;
+        }
+        this.restoreSelectionSnapshot?.(snapshot);
+      } else if (state?.kind === "texture-paint") {
+        this.restoreTexturePaintSnapshot?.(state.entries, direction === "redo" ? "after" : "before");
+      } else {
+        return false;
+      }
+      this.updateUndoButton();
+      this.setStatus(`${statusPrefix} ${state.label}`);
+      return true;
+    },
+
     setTool(tool) {
+      if (tool !== "neighbor") {
+        this.neighborStroke = null;
+        if (this.neighborHoverMarker) {
+          this.neighborHoverMarker.visible = false;
+        }
+      }
+      if (tool !== "lasso") {
+        this.lassoStroke = null;
+        this.hideLassoOverlay?.();
+      }
+      if (tool !== "clone") {
+        this.canvas?.classList.remove("is-clone-stamp");
+      }
+      if (tool !== "eyedropper") {
+        this.canvas?.classList.remove("is-texture-eyedropper");
+      }
+      if (tool !== "clone" && tool !== "airbrush" && !this.usesSelectionBrushCursor?.(tool)) {
+        this.hideTextureBrushCursor?.();
+      }
       if (tool !== "bone") {
         this.preparePoseGizmoModeSwitch?.("");
         this.setBonePlacementPending?.(false);
       }
       this.activeTool = tool;
       this.controls.enabled = tool === "orbit" || tool === "bone";
+      this.app?.classList.toggle("is-clone-stamp", tool === "clone");
+      this.canvas?.classList.toggle("is-clone-stamp", tool === "clone");
+      this.app?.classList.toggle("is-texture-eyedropper", tool === "eyedropper");
+      this.canvas?.classList.toggle("is-texture-eyedropper", tool === "eyedropper");
+      if (this.selectionMarkers) {
+        this.selectionMarkers.visible = tool === "clone" || this.cloneSpotlightActive
+          ? false
+          : !this.cleanPreview && this.markerVertexCount > 0;
+      }
       if (EDIT_ONLY_TOOLS.has(tool)) {
         this.pausePlayback();
         this.setViewMode("edit", { silent: true });
@@ -1263,17 +1568,24 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.updateBoneMoveGizmo?.();
       this.updateIkMoveGizmo?.();
       this.updateNeighborHover?.();
+      this.syncClonePaintControls?.();
       let usedEraseSelectionCommand = false;
       if (tool === "erase" && this.viewMode === "edit" && this.hasSelection()) {
         usedEraseSelectionCommand = this.withUndo("Clean vertices", () => this.cleanSelectedVertices?.()) > 0;
       }
       const labels = {
         paint: "Pen tool",
+        lasso: "Lasso: draw around vertices to select the region",
         neighbor: "Neighbor pen: selects connected vertices from the hovered vertex",
         deselect: "Deselect tool: removes painted selection only",
         erase: this.viewMode === "edit" ? "Erase tool: cleans selected vertices from the mesh" : "Erase tool: removes weight and vertex edits",
         move: this.hasSelection() ? "Move selected vertices" : "Move tool needs a painted vertex selection",
         bone: "Bone gizmo tool",
+        clone: this.clonePaintSource?.count && this.clonePaintTargets?.size
+          ? "Clone paint: brush over the captured region"
+          : "Clone paint needs Source and Region captures",
+        eyedropper: "Pick texture color from the model",
+        airbrush: "Airbrush texture color onto the model",
         pull: "Pull sculpt tool",
         push: "Push sculpt tool",
         orbit: "Orbit camera: left drag rotates, wheel zooms, right drag pans"
@@ -1284,6 +1596,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     setViewMode(mode, options = {}) {
+      if (this.activeTool === "clone" && mode === "edit") {
+        mode = "both";
+      }
       this.viewMode = mode;
       this.app?.classList.toggle("is-3d-edit-mode", mode === "edit");
       if (mode !== "edit" && EDIT_ONLY_TOOLS.has(this.activeTool)) {
@@ -1310,7 +1625,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
       this.updateSelectionMarkerStyle();
       if (this.selectionMarkers) {
-        this.selectionMarkers.visible = !this.cleanPreview && this.markerVertexCount > 0;
+        this.selectionMarkers.visible = this.activeTool === "clone" || this.cloneSpotlightActive
+          ? false
+          : !this.cleanPreview && this.markerVertexCount > 0;
       }
 
       if (this.vertexMarkers) {
@@ -1330,11 +1647,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.updateSelectedBoneHighlight();
       this.updateBonePickerOverlay();
       this.updateBoneLabels();
+      this.syncClonePaintControls?.();
+      this.updateMeshWireOverlays?.();
 
       if (!options.silent) {
         const labels = {
           rendered: "Rendered preview mode",
           mesh: "Mesh mode",
+          both: "Rendered + mesh mode",
           edit: "3D edit mode"
         };
         this.setStatus(labels[mode] || "Ready");
@@ -1369,6 +1689,58 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return Array.isArray(material) ? material.filter(Boolean) : [material];
     },
 
+    createMeshWireOverlay(object, geometry) {
+      if (!this.scene || !geometry) {
+        return null;
+      }
+      const material = this.meshWireOverlayMaterial || new THREE.MeshBasicMaterial({
+        color: 0x80d8ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false
+      });
+      const overlay = object.isSkinnedMesh && object.skeleton
+        ? new THREE.SkinnedMesh(geometry, material)
+        : new THREE.Mesh(geometry, material);
+      overlay.name = `${object.name || "mesh"} wire overlay`;
+      overlay.frustumCulled = false;
+      overlay.renderOrder = 16;
+      overlay.visible = false;
+      overlay.userData.mixamoCleanupHelper = "wire-overlay";
+      if (overlay.isSkinnedMesh) {
+        overlay.bindMode = object.bindMode;
+        overlay.bind(object.skeleton, object.bindMatrix);
+      }
+      this.scene.add(overlay);
+      this.meshWireOverlays.push(overlay);
+      return overlay;
+    },
+
+    disposeMeshWireOverlays() {
+      for (const overlay of this.meshWireOverlays || []) {
+        overlay.parent?.remove(overlay);
+      }
+      this.meshWireOverlays = [];
+    },
+
+    updateMeshWireOverlays() {
+      const visible = !this.cleanPreview && this.viewMode === "both" && !this.cloneSpotlightActive;
+      for (const record of this.paintRecords || []) {
+        const overlay = record.wireOverlay;
+        if (!overlay) {
+          continue;
+        }
+        overlay.visible = visible;
+        if (!visible) {
+          continue;
+        }
+        record.object.updateMatrixWorld(true);
+        record.object.matrixWorld.decompose(overlay.position, overlay.quaternion, overlay.scale);
+        overlay.updateMatrixWorld(true);
+      }
+    },
+
     setCleanPreview(enabled) {
       this.cleanPreview = enabled;
       this.cleanPreviewButton.classList.toggle("is-active", enabled);
@@ -1387,8 +1759,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     setMirrorMode(enabled) {
       this.mirrorMode = enabled;
-      this.mirrorModeButton.classList.toggle("is-active", enabled);
-      this.mirrorModeButton.setAttribute("aria-pressed", String(enabled));
+      this.mirrorModeButton?.classList.toggle("is-active", enabled);
+      this.mirrorModeButton?.setAttribute("aria-pressed", String(enabled));
       if (enabled) {
         this.updateManualPoseFromControls({ silent: true });
         this.mirrorCurrentSelection();
@@ -1408,8 +1780,24 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       this.playing = playing;
       const label = playing ? "Pause" : "Play";
-      this.playToggle.textContent = label;
-      this.timelinePlayToggle.textContent = label;
+      if (this.playToggle) {
+        this.playToggle.textContent = label;
+      }
+      if (this.timelinePlayToggle) {
+        this.timelinePlayToggle.textContent = label;
+      }
+    },
+
+    async toggleBlendAwarePlayback() {
+      if (this.blendActionId && this.actorTarget?.mode !== "bird-flap") {
+        if (this.sequencePlaying || this.timelinePlayBothButton?.textContent === "Stop Sequence") {
+          this.stopSequencePreview({ applyPose: true, resetElapsed: true });
+          return;
+        }
+        await this.playBothSequence();
+        return;
+      }
+      this.setPlayback(!this.playing);
     },
 
     stopSequencePreview({ applyPose = false, resetElapsed = false } = {}) {
@@ -1425,6 +1813,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.sequenceTargetRootStart = null;
       if (this.timelinePlayBothButton) {
         this.timelinePlayBothButton.textContent = "Play Sequence";
+      }
+      if (!this.playing && this.playToggle) {
+        this.playToggle.textContent = "Play";
       }
       this.syncSequenceControls();
       if (applyPose) {
@@ -1452,6 +1843,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.sequenceTargetRootStart = null;
       if (this.timelinePlayBothButton) {
         this.timelinePlayBothButton.textContent = "Stop Sequence";
+      }
+      if (this.playToggle) {
+        this.playToggle.textContent = "Pause";
       }
       this.syncSequenceControls();
       this.setStatus(`Playing sequence: ${this.activeClipEntry.name || this.activeClipEntry.id} -> ${this.blendClipEntry.name || this.blendClipEntry.id}`);
@@ -1494,6 +1888,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       this.app.classList.toggle("is-timeline-hidden", hidden);
       this.timelineShowToggle.hidden = !hidden;
+      this.timelineShowToggle.textContent = "+";
+      this.timelineShowToggle.setAttribute("aria-label", "Show timeline");
+      this.timelineShowToggle.title = "Show timeline";
       this.timelineHideToggle.textContent = "-";
       this.timelineHideToggle.setAttribute("aria-label", "Hide timeline");
       this.timelineHideToggle.title = "Hide timeline";
@@ -1518,11 +1915,26 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     updateRangeOutputs() {
+      if (this.brushRadiusOutput && this.brushRadius) {
+        this.brushRadiusOutput.textContent = Number(this.brushRadius.value).toFixed(3);
+      }
       if (this.sculptStrengthOutput) {
         this.sculptStrengthOutput.textContent = Number(this.sculptStrength.value).toFixed(4);
       }
       if (this.moveSensitivityOutput) {
         this.moveSensitivityOutput.textContent = Number(this.moveSensitivity.value).toFixed(2);
+      }
+      if (this.textureBrushRadiusOutput && this.textureBrushRadius) {
+        const pixels = typeof this.textureBrushRadiusScreenPixels === "function"
+          ? this.textureBrushRadiusScreenPixels()
+          : Math.max(1, Number(this.textureBrushRadius.value || 0.035) * 220);
+        this.textureBrushRadiusOutput.textContent = `${Math.round(pixels)}px`;
+      }
+      if (this.textureBrushOpacityOutput && this.textureBrushOpacity) {
+        this.textureBrushOpacityOutput.textContent = `${Math.round(Number(this.textureBrushOpacity.value) * 100)}%`;
+      }
+      if (this.textureBrushScatterOutput && this.textureBrushScatter) {
+        this.textureBrushScatterOutput.textContent = `${Math.round(Number(this.textureBrushScatter.value) * 100)}%`;
       }
       if (this.weightValueOutput) {
         this.weightValueOutput.textContent = Number(this.weightValue.value).toFixed(2);

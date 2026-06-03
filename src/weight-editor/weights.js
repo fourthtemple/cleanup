@@ -661,6 +661,7 @@ export function installWeightMethods(BirdWeightEditor, deps) {
         this.preserveImportedNormals(record);
         this.updateRecordColors(record);
       }
+      this.clearClonePaintState?.({ silent: true });
       this.syncPatchJson();
       this.updateSelectionMarkers();
       this.updateMoveGizmo();
@@ -773,7 +774,7 @@ export function installWeightMethods(BirdWeightEditor, deps) {
       this.markerGeometry.computeBoundingSphere();
       this.markerVertexCount = positions.length / 3;
       this.updateSelectionMarkerStyle?.();
-      this.selectionMarkers.visible = !this.cleanPreview && this.markerVertexCount > 0;
+      this.selectionMarkers.visible = !this.cleanPreview && !this.cloneSpotlightActive && this.markerVertexCount > 0;
     },
 
     updateAllVertexMarkers() {
