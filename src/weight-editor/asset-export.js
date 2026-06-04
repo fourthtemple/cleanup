@@ -1,4 +1,4 @@
-import { exportMixamoCleanupFbx } from "@fourthtemple/fbx-exporter";
+import { exportCharacterFbx } from "@fourthtemple/fbx-exporter";
 
 export function installAssetExportMethods(BirdWeightEditor, deps) {
   const { THREE, GLTFExporter, SkeletonUtils } = deps;
@@ -711,7 +711,7 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
     async bakeFbxExportBytes() {
       return this.withPreparedAssetExport("fbx", async (prepared) => {
         const warnings = [];
-        const bytes = exportMixamoCleanupFbx(prepared, {
+        const bytes = exportCharacterFbx(prepared, {
           embedTextures: true,
           textureTransformMode: "blender",
           bakeAnimations: false,

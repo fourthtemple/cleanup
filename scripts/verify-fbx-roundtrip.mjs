@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
-import { exportMixamoCleanupFbx, fromThreeObject, normalizeFbxScene } from "@fourthtemple/fbx-exporter";
+import { exportCharacterFbx, fromThreeObject, normalizeFbxScene } from "@fourthtemple/fbx-exporter";
 import {
   createStaticMeshFbxDocument,
   writeStaticMeshFbx
@@ -614,7 +614,7 @@ if (variant === "plain") {
 } else {
   throw new Error(`Unknown --variant=${variant}`);
 }
-const exportBytes = exportMixamoCleanupFbx({
+const exportBytes = exportCharacterFbx({
   object3D: sourceScene,
   animations: [sourceClip],
   frameRate
