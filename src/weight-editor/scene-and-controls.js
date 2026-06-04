@@ -537,6 +537,36 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.ikCounterRotation?.addEventListener("change", () => {
         this.withUndo("IK settings", () => this.updateSelectedIkSettingsFromControls?.());
       });
+      this.jointConstraintEnabled?.addEventListener("change", () => {
+        this.withUndo("Joint constraint", () => this.updateSelectedJointConstraintFromControls?.());
+      });
+      for (const input of [
+        this.jointConstraintXMin,
+        this.jointConstraintXMax,
+        this.jointConstraintYMin,
+        this.jointConstraintYMax,
+        this.jointConstraintZMin,
+        this.jointConstraintZMax
+      ].filter(Boolean)) {
+        input.addEventListener("change", () => {
+          this.withUndo("Joint constraint", () => this.updateSelectedJointConstraintFromControls?.());
+        });
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            input.blur();
+          }
+        });
+      }
+      this.jointConstraintClearButton?.addEventListener("click", () => {
+        this.withUndo("Clear joint constraint", () => this.clearSelectedJointConstraint?.());
+      });
+      this.jointConstraintSaveTemplateButton?.addEventListener("click", () => this.saveCurrentJointConstraintTemplate?.());
+      this.jointConstraintApplyTemplateButton?.addEventListener("click", () => {
+        this.withUndo("Apply joint constraints", () => this.applySelectedJointConstraintTemplate?.());
+      });
+      this.jointConstraintDeleteTemplateButton?.addEventListener("click", () => this.deleteSelectedJointConstraintTemplate?.());
+      this.refreshJointConstraintTemplateSelect?.();
+      this.syncJointConstraintControls?.();
 
       this.viewModeButtons.forEach((button) => {
         button.addEventListener("click", () => this.setViewMode(button.dataset.viewMode));
@@ -683,6 +713,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         });
         this.selectSingleBoneChainMember?.(this.poseBoneSelect.value);
         this.syncPoseControls();
+        this.syncJointConstraintControls?.();
         this.updateBoneLayerList();
       });
       for (const input of [this.poseRotX, this.poseRotY, this.poseRotZ, this.posePosX, this.posePosY, this.posePosZ]) {

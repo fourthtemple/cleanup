@@ -125,6 +125,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
           ik: chain.ik ? { ...chain.ik } : null
         })),
         ikChainSettings: [...(this.ikChainSettings?.entries?.() || [])].map(([key, settings]) => [key, { ...settings }]),
+        jointConstraints: this.serializeJointConstraints?.() || [],
         activeBoneName: this.activeBoneName || "",
         selectedBoneChainRootName: this.selectedBoneChainRootName || "",
         rigEditor: this.captureRigEditorUndoState?.() || null
@@ -161,6 +162,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
           rotation: bone.rotation
         }, { sync: false, select: false });
       }
+      this.applySerializedJointConstraints?.(snapshot.jointConstraints || []);
       this.applyBoneChains?.(snapshot.manualBoneChains || []);
       for (const [key, settings] of snapshot.ikChainSettings || []) {
         this.ikChainSettings?.set?.(key, this.normalizeIkChainSettings?.(settings) || { ...settings });
@@ -1469,6 +1471,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.updateBonePickerOverlay();
       this.renderAddBoneParentOptions();
       this.syncBoneEditorControls(name);
+      this.syncJointConstraintControls?.();
       this.renderBoneChainOptions();
       if (!preserveBoneChainMemberSelection) {
         this.renderAddBoneChainMemberOptions();
@@ -1478,6 +1481,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.updateBoneMoveGizmo();
       this.updateIkMoveGizmo?.();
       this.updateSelectionInfluences();
+      this.syncJointConstraintControls?.();
     }
   });
 }

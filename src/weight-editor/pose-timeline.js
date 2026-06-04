@@ -242,9 +242,13 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
         this.syncTimelineControls();
       }
       const pose = this.readPoseControls();
-      const isZeroPose = Math.abs(pose.x) + Math.abs(pose.y) + Math.abs(pose.z)
-        + Math.abs(pose.px) + Math.abs(pose.py) + Math.abs(pose.pz) < 0.0001;
-      for (const [name, nextPose] of this.mirroredBoneEntries(boneName, pose)) {
+      const constrainedPose = this.clampPoseWithJointConstraint?.(boneName, pose) || pose;
+      if (constrainedPose !== pose) {
+        this.setPoseControlsFromPose(constrainedPose, boneName);
+      }
+      const isZeroPose = Math.abs(constrainedPose.x) + Math.abs(constrainedPose.y) + Math.abs(constrainedPose.z)
+        + Math.abs(constrainedPose.px) + Math.abs(constrainedPose.py) + Math.abs(constrainedPose.pz) < 0.0001;
+      for (const [name, nextPose] of this.mirroredBoneEntries(boneName, constrainedPose)) {
         if (isZeroPose) {
           this.manualPose.delete(name);
         } else {

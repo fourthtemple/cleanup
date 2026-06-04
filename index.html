@@ -4,7 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Telekinetikitty Cleanup</title>
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=split-viewport-toolbar-20260604a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=joint-constraints-package-20260604a" />
+    <script type="importmap">
+      {
+        "imports": {
+          "@fourthtemple/fbx-exporter": "./node_modules/@fourthtemple/fbx-exporter/src/index.js",
+          "@fourthtemple/fbx-exporter/document/static": "./node_modules/@fourthtemple/fbx-exporter/src/document/static-document.js"
+        }
+      }
+    </script>
   </head>
   <body>
     <main class="viewer-app editor-app weight-editor-app is-side-panel-open is-timeline-compact">
@@ -228,6 +236,41 @@
                 <select id="add-bone-chain-members" multiple size="5"></select>
               </label>
               <button id="add-bone-chain" class="rig-bone-chain-action" type="button">Add Chain</button>
+              <div class="joint-constraint-panel" aria-label="Joint constraint editor">
+                <div class="rig-subsection-heading">
+                  <span>Joint Constraints</span>
+                  <label>
+                    <input id="joint-constraint-enabled" type="checkbox" />
+                    On
+                  </label>
+                </div>
+                <div class="joint-constraint-grid" aria-label="Rotation limits in degrees">
+                  <span></span>
+                  <span>Min</span>
+                  <span>Max</span>
+                  <span>X</span>
+                  <input id="joint-constraint-x-min" type="number" min="-360" max="360" step="1" value="-180" />
+                  <input id="joint-constraint-x-max" type="number" min="-360" max="360" step="1" value="180" />
+                  <span>Y</span>
+                  <input id="joint-constraint-y-min" type="number" min="-360" max="360" step="1" value="-180" />
+                  <input id="joint-constraint-y-max" type="number" min="-360" max="360" step="1" value="180" />
+                  <span>Z</span>
+                  <input id="joint-constraint-z-min" type="number" min="-360" max="360" step="1" value="-180" />
+                  <input id="joint-constraint-z-max" type="number" min="-360" max="360" step="1" value="180" />
+                </div>
+                <div class="viewer-grid-actions joint-constraint-actions">
+                  <button id="joint-constraint-clear" type="button">Clear</button>
+                </div>
+                <div class="joint-constraint-template-row">
+                  <input id="joint-constraint-template-name" type="text" placeholder="Template name" autocomplete="off" />
+                  <button id="joint-constraint-save-template" type="button">Save Template</button>
+                </div>
+                <div class="joint-constraint-template-row">
+                  <select id="joint-constraint-template-select"></select>
+                  <button id="joint-constraint-apply-template" type="button">Apply</button>
+                  <button id="joint-constraint-delete-template" type="button">Delete</button>
+                </div>
+              </div>
             </div>
           </div>
         </section>

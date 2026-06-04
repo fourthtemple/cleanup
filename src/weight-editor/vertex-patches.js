@@ -500,6 +500,10 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         assignments,
         poseKeyframes
       };
+      const jointConstraints = this.serializeJointConstraints?.() || [];
+      if (jointConstraints.length) {
+        patch.jointConstraints = jointConstraints;
+      }
       if (poseCurveHandles.length) {
         patch.poseCurveHandles = poseCurveHandles;
       }
@@ -833,6 +837,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
 
         this.applyRigBones(patch.rigBones || []);
         this.applyBoneChains?.(patch.boneChains || []);
+        this.applySerializedJointConstraints?.(patch.jointConstraints || []);
         const customBoneNames = new Set(this.virtualBones.map((bone) => bone.name));
         const clipCleanupChanged = this.applySerializedClipCleanupEdits?.(patch.clipCleanup || []) || false;
         const poseLayer = this.normalizedPatchPoseLayer(patch, customBoneNames);
@@ -924,6 +929,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         }
         this.refreshRigControls(this.activeBoneName);
         this.syncPoseControls();
+        this.syncJointConstraintControls?.();
         this.setPatchJsonFromPatch(this.buildPatch());
         if (status) {
           this.setStatus(poseLayer.migrated && poseLayer.removedSourceEntries

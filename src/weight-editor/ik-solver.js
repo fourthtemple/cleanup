@@ -383,7 +383,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       const solvedPose = this.ikPoseMapFromSolvedTransforms(chainNames, solvedTransforms);
       this.manualPose = cloneManualPoseMap(drag.manualPoseBefore);
       for (const [name, pose] of solvedPose.entries()) {
-        this.manualPose.set(name, pose);
+        this.manualPose.set(name, this.clampPoseWithJointConstraint?.(name, pose) || pose);
       }
 
       this.applyPose(this.progress);

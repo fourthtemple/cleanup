@@ -1,4 +1,4 @@
-import { exportMixamoCleanupFbx } from "../../node_modules/fbx-exporter/src/index.js";
+import { exportMixamoCleanupFbx } from "@fourthtemple/fbx-exporter";
 
 export function installAssetExportMethods(BirdWeightEditor, deps) {
   const { THREE, GLTFExporter, SkeletonUtils } = deps;

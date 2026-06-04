@@ -3,11 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
-import { exportMixamoCleanupFbx, fromThreeObject, normalizeFbxScene } from "../node_modules/fbx-exporter/src/index.js";
+import { exportMixamoCleanupFbx, fromThreeObject, normalizeFbxScene } from "@fourthtemple/fbx-exporter";
 import {
   createStaticMeshFbxDocument,
   writeStaticMeshFbx
-} from "../node_modules/fbx-exporter/src/document/static-document.js";
+} from "@fourthtemple/fbx-exporter/document/static";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
