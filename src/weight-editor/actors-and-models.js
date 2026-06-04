@@ -510,7 +510,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           if (autoLoadLibrary) {
             const loaded = await this.loadSelectedAnimationLibraryFile?.();
             if (!loaded) {
-              this.setStatus("Choose an animation folder and import an FBX at the bottom first");
+              this.setStatus("Choose an animation folder and import an FBX or GLB at the bottom first");
             }
           } else {
             this.setStatus("Choose an animation");

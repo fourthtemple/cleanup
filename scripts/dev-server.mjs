@@ -7,11 +7,13 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const port = Number(process.env.PORT || 4174);
 const animationLibraryRoot = resolve(root, "assets/models/animation-library");
-const animationFileExtensions = new Set([".fbx"]);
+const animationFileExtensions = new Set([".fbx", ".glb", ".gltf"]);
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
   ".fbx": "application/octet-stream",
+  ".glb": "model/gltf-binary",
+  ".gltf": "model/gltf+json; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".ico": "image/x-icon",
   ".js": "text/javascript; charset=utf-8",
@@ -125,7 +127,7 @@ async function uploadAnimationLibraryFile(request, response) {
   const folderName = sanitizeLibraryFolderName(payload.folder);
   const fileName = sanitizeAnimationFileName(payload.fileName);
   if (!folderName || !fileName) {
-    sendJson(response, 400, { error: "Folder and FBX file name are required" });
+    sendJson(response, 400, { error: "Folder and animation file name are required" });
     return;
   }
 
@@ -170,7 +172,7 @@ async function deleteAnimationLibraryFile(request, response) {
   const folderName = sanitizeLibraryFolderName(payload.folder);
   const fileName = sanitizeAnimationFileName(payload.fileName || payload.name);
   if (!folderName || !fileName) {
-    sendJson(response, 400, { error: "Folder and FBX file name are required" });
+    sendJson(response, 400, { error: "Folder and animation file name are required" });
     return;
   }
 
@@ -265,7 +267,7 @@ function animationLibraryFileDescriptor(folderName, fileName) {
   return {
     key: relativePath,
     name: fileName,
-    extension: "fbx",
+    extension: extname(fileName).slice(1).toLowerCase() || "anim",
     folder: folderName,
     path: relativePath,
     url: `./${relativePath}`,
@@ -301,7 +303,7 @@ function sanitizeLibraryFolderName(value) {
 function sanitizeAnimationFileName(value) {
   const raw = String(value || "").trim();
   const extension = extname(raw).toLowerCase();
-  if (extension !== ".fbx") {
+  if (!animationFileExtensions.has(extension)) {
     return "";
   }
   const base = raw
@@ -312,7 +314,7 @@ function sanitizeAnimationFileName(value) {
     .replace(/^[.-]+|[.-]+$/g, "")
     .slice(0, 120)
     .toLowerCase();
-  return base ? `${base}.fbx` : "animation.fbx";
+  return base ? `${base}${extension}` : `animation${extension}`;
 }
 
 function sanitizeLibraryJsonFileName(value) {

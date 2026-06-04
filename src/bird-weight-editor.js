@@ -2,6 +2,7 @@ import * as THREE from "../node_modules/three/build/three.module.js";
 import { GLTFLoader } from "../node_modules/three/examples/jsm/loaders/GLTFLoader.js";
 import { FBXLoader } from "../node_modules/three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFExporter } from "../node_modules/three/examples/jsm/exporters/GLTFExporter.js";
+import * as SkeletonUtils from "../node_modules/three/examples/jsm/utils/SkeletonUtils.js";
 import { OrbitControls } from "../node_modules/three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "../node_modules/three/examples/jsm/controls/TransformControls.js";
 import {
@@ -450,6 +451,7 @@ const BIRD_WEIGHT_EDITOR_DEPS = {
   THREE,
   FBXLoader,
   GLTFExporter,
+  SkeletonUtils,
   OrbitControls,
   TransformControls,
   cloneClipWithStartDeleted,

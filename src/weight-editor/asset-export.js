@@ -1,7 +1,7 @@
 import { exportMixamoCleanupFbx } from "../../node_modules/fbx-exporter/src/index.js";
 
 export function installAssetExportMethods(BirdWeightEditor, deps) {
-  const { THREE, GLTFExporter } = deps;
+  const { THREE, GLTFExporter, SkeletonUtils } = deps;
   const EXPORT_TEXTURE_FIELDS = [
     "map",
     "alphaMap",
@@ -521,6 +521,34 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       }
     },
 
+    cloneObjectForAssetExport() {
+      if (!this.model) {
+        return null;
+      }
+      const clone = typeof SkeletonUtils?.clone === "function"
+        ? SkeletonUtils.clone(this.model)
+        : this.model.clone(true);
+      clone.traverse?.((object) => {
+        if (!object.material) {
+          return;
+        }
+        const cloneMaterial = (material) => {
+          const cloned = material.clone();
+          for (const field of EXPORT_TEXTURE_FIELDS) {
+            if (material[field]?.clone) {
+              cloned[field] = material[field].clone();
+            }
+          }
+          return cloned;
+        };
+        object.material = Array.isArray(object.material)
+          ? object.material.map(cloneMaterial)
+          : cloneMaterial(object.material);
+      });
+      clone.updateMatrixWorld(true);
+      return clone;
+    },
+
     canReuseSourceClipForExport() {
       return this.actorTarget?.mode !== "bird-flap"
         && Boolean(this.activeClipEntry?.clip)
@@ -659,13 +687,16 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
           fbxRotationMetadataState = this.captureFbxRotationMetadataState();
         }
         const bakedClip = this.animationClipForExport({
-          forceBake: false
+          forceBake: false,
+          trackNameForObject: (object) => object.name || object.uuid
         });
         this.resetPose();
         this.lastClipSampleTime = null;
         this.model.updateMatrixWorld(true);
+        const exportObject = this.cloneObjectForAssetExport();
+        this.restoreExportEditorState(state);
         return await callback({
-          object3D: this.model,
+          object3D: exportObject || this.model,
           animations: bakedClip ? [bakedClip] : [],
           frameRate: this.exportFrameRate()
         });

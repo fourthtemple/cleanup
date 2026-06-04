@@ -412,7 +412,7 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
     async loadSelectedAnimationLibraryFile() {
       const item = this.selectedAnimationLibraryFile();
       if (!item) {
-        this.setStatus("Choose an animation folder and import an FBX at the bottom first");
+        this.setStatus("Choose an animation folder and import an FBX or GLB at the bottom first");
         return false;
       }
       const loaded = await this.loadAnimationLibraryAsset(item);
