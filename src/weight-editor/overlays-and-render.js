@@ -107,10 +107,9 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
     updateSkeletonHelper() {
       this.disposeSkeletonHelper();
       if (
-        this.skeletonToggle.checked
+        Boolean(this.showBonesLayer)
         && this.model
         && !this.cleanPreview
-        && (this.viewMode !== "rendered" || this.activeTool === "bone")
       ) {
         this.skeletonHelper = new THREE.LineSegments(
           new THREE.BufferGeometry(),
@@ -179,6 +178,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       const linePositions = [];
       const names = [...this.bones.keys()].sort((a, b) => this.boneDisplayName(a).localeCompare(this.boneDisplayName(b)));
       const virtualNames = new Set(this.virtualBones.map((bone) => bone.name));
+      const selectedChainNames = new Set(this.visibleSelectedBoneChainNames?.() || this.selectedBoneChainNames?.() || []);
       const color = new THREE.Color();
 
       for (const name of names) {
@@ -191,6 +191,8 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
 
         if (name === this.activeBoneName) {
           color.set(0xffd36e);
+        } else if (selectedChainNames.has(name)) {
+          color.set(0xffe7a3);
         } else if (virtualNames.has(name)) {
           color.set(0xf06fa8);
         } else {
@@ -215,6 +217,33 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       this.bonePickerLineGeometry.computeBoundingSphere();
       this.bonePickerJoints.visible = positions.length > 0;
       this.bonePickerLines.visible = linePositions.length > 0;
+    },
+
+    visibleSelectedBoneChainNames() {
+      const selectedMemberNames = Array.from(this.addBoneChainMembersSelect?.selectedOptions || [])
+        .map((option) => option.value)
+        .filter((name) => this.bones.has(name));
+      if (selectedMemberNames.length >= 2) {
+        return this.orderedBoneChainSelection?.(selectedMemberNames) || selectedMemberNames;
+      }
+      const chainNames = this.selectedBoneChainNames?.() || [];
+      if (chainNames.length < 2) {
+        return chainNames;
+      }
+      const rootName = chainNames[0];
+      const preferredEnd = this.ikEndBoneName && chainNames.includes(this.ikEndBoneName)
+        ? this.ikEndBoneName
+        : chainNames[chainNames.length - 1];
+      const path = [];
+      let bone = this.bones.get(preferredEnd);
+      while (bone?.isBone) {
+        path.unshift(bone.name);
+        if (bone.name === rootName) {
+          return path.filter((name, index, all) => all.indexOf(name) === index && this.bones.has(name));
+        }
+        bone = bone.parent;
+      }
+      return chainNames.filter((name, index, all) => all.indexOf(name) === index && this.bones.has(name));
     },
 
     screenPointForBone(bone, rect) {
@@ -355,7 +384,36 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         if (this.pendingBonePlacement) {
           return this.finishBonePlacement(best.name);
         }
-        this.setActiveBone(best.name);
+        const selectedChain = this.selectedBoneChainNames?.() || [];
+        const visibleChain = this.visibleSelectedBoneChainNames?.() || selectedChain;
+        const keepSelectedChain = this.selectedBoneChainRootName
+          && visibleChain.includes(best.name);
+        this.setActiveBone(best.name, {
+          selectedBoneChainRootName: keepSelectedChain ? this.selectedBoneChainRootName : ""
+        });
+        if (this.ikTargetGizmoArmed && visibleChain.includes(best.name)) {
+          this.ikEndBoneName = best.name;
+          const chainNames = this.ikChainNames?.() || [];
+          this.updateIkTargetFromChain?.(chainNames);
+          this.updateIkMoveGizmo?.();
+          this.updateSelectedBoneHighlight?.();
+          this.updateBonePickerOverlay?.();
+          this.setStatus(`IK end set to ${this.boneDisplayName(best.name)}`);
+          return true;
+        }
+        if (this.boneMoveGizmoArmed) {
+          this.updateBoneMoveGizmo?.();
+          this.updateSelectedBoneHighlight?.();
+          this.updateBonePickerOverlay?.();
+          this.setStatus(`FK target set to ${this.boneDisplayName(best.name)}`);
+          return true;
+        }
+        if (keepSelectedChain) {
+          this.updateSelectedBoneHighlight?.();
+          this.updateBonePickerOverlay?.();
+          this.setStatus(`${this.boneDisplayName(best.name)} selected in chain`);
+          return true;
+        }
         this.setStatus(`${this.boneDisplayName(best.name)} selected as parent`);
         return true;
       }
@@ -383,7 +441,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         || !this.activeBoneName
         || this.cleanPreview
         || this.cloneSpotlightActive
-        || (this.viewMode === "rendered" && this.activeTool !== "bone")
+        || !(this.showBonesLayer || this.showSelectionLayer !== false)
       ) {
         this.selectedBoneLine.visible = false;
         this.selectedBoneJoints.visible = false;
@@ -412,16 +470,33 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         addJoint(to);
       };
 
-      const childBones = bone.children.filter((child) => this.boneDisplaySegmentIsVisible(bone, child));
-      if (this.boneDisplaySegmentIsVisible(bone.parent, bone)) {
-        const parentPosition = new THREE.Vector3();
-        bone.parent.getWorldPosition(parentPosition);
-        addSegment(parentPosition, center);
-      }
-      for (const child of childBones) {
-        const childPosition = new THREE.Vector3();
-        child.getWorldPosition(childPosition);
-        addSegment(center, childPosition);
+      const chainNames = this.visibleSelectedBoneChainNames?.() || [];
+      if (chainNames.length >= 2) {
+        for (let index = 1; index < chainNames.length; index += 1) {
+          const parent = this.bones.get(chainNames[index - 1]);
+          const child = this.bones.get(chainNames[index]);
+          if (!this.boneDisplaySegmentIsVisible(parent, child)) {
+            continue;
+          }
+          const parentPosition = new THREE.Vector3();
+          const childPosition = new THREE.Vector3();
+          parent.getWorldPosition(parentPosition);
+          child.getWorldPosition(childPosition);
+          addSegment(parentPosition, childPosition);
+        }
+        addJoint(center);
+      } else {
+        const childBones = bone.children.filter((child) => this.boneDisplaySegmentIsVisible(bone, child));
+        if (this.boneDisplaySegmentIsVisible(bone.parent, bone)) {
+          const parentPosition = new THREE.Vector3();
+          bone.parent.getWorldPosition(parentPosition);
+          addSegment(parentPosition, center);
+        }
+        for (const child of childBones) {
+          const childPosition = new THREE.Vector3();
+          child.getWorldPosition(childPosition);
+          addSegment(center, childPosition);
+        }
       }
       if (!positions.length) {
         addJoint(center);
@@ -440,11 +515,11 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         return;
       }
       if (
-        !this.boneLabelToggle.checked
+        this.boneLabelToggle?.checked === false
         || !this.model
         || this.cleanPreview
         || this.cloneSpotlightActive
-        || (this.viewMode === "rendered" && this.activeTool !== "bone")
+        || !this.showBonesLayer
       ) {
         this.boneLabels.replaceChildren();
         return;
@@ -666,7 +741,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       if (this.activeTool === "move" && !this.moveDrag) {
         this.updateMoveGizmo();
       }
-      if (this.boneLabelToggle.checked) {
+      if (this.showBonesLayer) {
         this.updateBoneLabels();
       }
       this.controls.update();

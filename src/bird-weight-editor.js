@@ -124,9 +124,14 @@ class BirdWeightEditor {
     this.canvas = document.getElementById("viewer-canvas");
     this.toolButtons = Array.from(document.querySelectorAll("[data-tool]"));
     this.viewModeButtons = Array.from(document.querySelectorAll("[data-view-mode]"));
+    this.viewportLayerButtons = Array.from(document.querySelectorAll("[data-viewport-layer]"));
+    this.viewportRenderedToggle = document.getElementById("viewport-rendered-toggle");
+    this.viewportMeshToggle = document.getElementById("viewport-mesh-toggle");
+    this.viewportSelectionToggle = document.getElementById("viewport-selection-toggle");
     this.undoButton = document.getElementById("undo-edit");
     this.redoButton = document.getElementById("redo-edit");
     this.cleanPreviewButton = document.getElementById("clean-preview");
+    this.gizmoOnlyPreviewButton = document.getElementById("gizmo-only-preview");
     this.mirrorModeButton = document.getElementById("mirror-mode");
     this.saveOrbitViewButton = document.getElementById("save-orbit-view");
     this.restoreOrbitViewButton = document.getElementById("restore-orbit-view");
@@ -209,17 +214,11 @@ class BirdWeightEditor {
     this.invertSelectionButton = document.getElementById("invert-selection");
     this.boneSelect = document.getElementById("bone-select");
     this.boneChainSelect = document.getElementById("bone-chain-select");
-    this.weightValue = document.getElementById("weight-value");
-    this.weightValueOutput = document.getElementById("weight-value-output");
-    this.applyWeightButton = document.getElementById("apply-weight");
-    this.commitWeightButton = document.getElementById("commit-weight");
     this.removeWeightButton = document.getElementById("remove-weight");
     this.resetWeightsButton = document.getElementById("reset-weights");
     this.redistributeChainWeightsButton = document.getElementById("redistribute-chain-weights");
     this.selectionInfluenceList = document.getElementById("selection-influence-list");
     this.poseBoneSelect = document.getElementById("pose-bone-select");
-    this.copyPoseButton = document.getElementById("copy-pose");
-    this.pastePoseButton = document.getElementById("paste-pose");
     this.poseRotX = document.getElementById("pose-rot-x");
     this.poseRotY = document.getElementById("pose-rot-y");
     this.poseRotZ = document.getElementById("pose-rot-z");
@@ -341,7 +340,12 @@ class BirdWeightEditor {
     this.rigBoneGroup = "all";
     this.rigBoneSearchText = "";
     this.viewMode = "rendered";
+    this.showRenderedLayer = true;
+    this.showMeshLayer = false;
+    this.showSelectionLayer = true;
+    this.showBonesLayer = false;
     this.cleanPreview = false;
+    this.gizmoOnlyPreview = false;
     this.mirrorMode = false;
     this.backgroundColor = this.cameraBackgroundColor?.value || "#11171c";
     const controlNumber = (control, fallback) => {
@@ -529,6 +533,16 @@ async function writeJsonFile(fileName, text, description) {
 }
 
 async function writeAnimationLibraryCleanupFile(folder, fileName, text) {
+  const browserStorage = window.telekinetikittyAnimationLibraryStorage;
+  if (browserStorage) {
+    try {
+      await browserStorage.saveCleanup({ folder, fileName, content: text });
+      return true;
+    } catch (error) {
+      console.warn("Could not save browser cleanup file", error);
+      return false;
+    }
+  }
   try {
     const response = await fetch("/api/animation-library/cleanup", {
       method: "POST",

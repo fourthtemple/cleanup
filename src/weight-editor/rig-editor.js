@@ -107,6 +107,78 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.setBonePlacementPending(Boolean(state.pendingBonePlacement));
     },
 
+    captureRigHistorySnapshot() {
+      if (!this.model || !this.bones?.size) {
+        return null;
+      }
+      return {
+        virtualBones: (this.virtualBones || []).map((bone) => ({
+          name: bone.name,
+          parent: bone.parent,
+          position: [...(bone.position || [])],
+          rotation: [...(bone.rotation || [])]
+        })),
+        manualBoneChains: (this.manualBoneChains || []).map((chain) => ({
+          id: chain.id,
+          name: chain.name,
+          bones: [...(chain.bones || [])],
+          ik: chain.ik ? { ...chain.ik } : null
+        })),
+        ikChainSettings: [...(this.ikChainSettings?.entries?.() || [])].map(([key, settings]) => [key, { ...settings }]),
+        activeBoneName: this.activeBoneName || "",
+        selectedBoneChainRootName: this.selectedBoneChainRootName || "",
+        rigEditor: this.captureRigEditorUndoState?.() || null
+      };
+    },
+
+    rigHistorySnapshotsMatch(before, after) {
+      return JSON.stringify(before || null) === JSON.stringify(after || null);
+    },
+
+    restoreRigHistorySnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== "object") {
+        return false;
+      }
+      this.boneMoveGizmoArmed = false;
+      this.ikTargetGizmoArmed = false;
+      const currentNames = new Set((this.virtualBones || []).map((bone) => bone.name));
+      for (const name of currentNames) {
+        const bone = this.bones.get(name);
+        bone?.parent?.remove(bone);
+        this.bones.delete(name);
+        this.manualPose?.delete?.(name);
+      }
+      this.bindPose = (this.bindPose || []).filter((entry) => !currentNames.has(entry.object?.name));
+      this.virtualBones = [];
+      this.manualBoneChains = [];
+      this.ikChainSettings?.clear?.();
+
+      for (const bone of snapshot.virtualBones || []) {
+        this.addVirtualBone({
+          name: bone.name,
+          parent: bone.parent,
+          position: bone.position,
+          rotation: bone.rotation
+        }, { sync: false, select: false });
+      }
+      this.applyBoneChains?.(snapshot.manualBoneChains || []);
+      for (const [key, settings] of snapshot.ikChainSettings || []) {
+        this.ikChainSettings?.set?.(key, this.normalizeIkChainSettings?.(settings) || { ...settings });
+      }
+      this.selectedBoneChainRootName = snapshot.selectedBoneChainRootName || "";
+      const activeName = this.bones.has(snapshot.activeBoneName)
+        ? snapshot.activeBoneName
+        : this.findDefaultBone([...this.bones.keys()]);
+      this.rebuildSkinnedSkeletons();
+      this.applyPose(this.progress);
+      this.refreshRigControls(activeName);
+      this.restoreRigEditorUndoState?.(snapshot.rigEditor);
+      this.refreshRigOverlays();
+      this.syncPatchJson();
+      this.updateSelectionInfluences?.();
+      return true;
+    },
+
     customBoneRecord(name = this.activeBoneName) {
       return this.virtualBones.find((bone) => bone.name === name) || null;
     },
@@ -197,10 +269,27 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       const chain = this.upsertManualBoneChain(selectedNames);
       this.selectedBoneChainRootName = chain.id;
       this.syncPatchJson();
-      this.refreshRigControls(selectedNames[0]);
+      this.refreshRigControls(selectedNames[0], { selectedBoneChainRootName: chain.id });
       this.refreshRigOverlays();
       this.setStatus(`Added ${selectedNames.length}-bone chain ${this.boneDisplayName(selectedNames[0])} -> ${this.boneDisplayName(selectedNames[selectedNames.length - 1])}`);
       return selectedNames;
+    },
+
+    selectedBoneChainMemberNamesFromControl() {
+      return this.orderedBoneChainSelection?.(
+        Array.from(this.addBoneChainMembersSelect?.selectedOptions || [])
+          .map((option) => option.value)
+          .filter((name) => this.bones.has(name))
+      ) || [];
+    },
+
+    updateRedistributeChainButtonState() {
+      if (!this.redistributeChainWeightsButton) {
+        return;
+      }
+      const hasSelectedChain = Boolean(this.selectedBoneChainRootName && this.selectedBoneChainNames?.(this.selectedBoneChainRootName)?.length >= 2);
+      const hasSelectedMembers = this.selectedBoneChainMemberNamesFromControl().length >= 2;
+      this.redistributeChainWeightsButton.disabled = !(hasSelectedChain || hasSelectedMembers);
     },
 
     orderedBoneChainSelection(names) {
@@ -254,6 +343,50 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       return chain;
     },
 
+    ensureBoneChainForDistribution() {
+      const selectedRoot = this.boneChainSelect?.value || this.selectedBoneChainRootName || "";
+      if (selectedRoot && this.selectedBoneChainNames?.(selectedRoot)?.length >= 2) {
+        return selectedRoot;
+      }
+      const chainRoot = this.ensureSelectedBoneChain({ status: false });
+      if (!chainRoot || this.selectedBoneChainNames?.(chainRoot)?.length < 2) {
+        this.setStatus("Select at least two chain bones first");
+        return "";
+      }
+      return chainRoot;
+    },
+
+    ensureSelectedBoneChain(options = {}) {
+      const selectedNames = this.selectedBoneChainMemberNamesFromControl();
+      if (selectedNames.length < 2) {
+        return this.selectedBoneChainRootName || "";
+      }
+      const existingRoot = this.selectedBoneChainRootName || this.boneChainSelect?.value || "";
+      const existingNames = existingRoot ? this.selectedBoneChainNames?.(existingRoot) || [] : [];
+      const alreadyMatches = existingNames.length === selectedNames.length
+        && existingNames.every((name, index) => name === selectedNames[index]);
+      if (alreadyMatches) {
+        return existingRoot;
+      }
+      const chain = this.upsertManualBoneChain(selectedNames);
+      this.selectedBoneChainRootName = chain.id;
+      this.chainBoneSelectionMode = "chain";
+      this.ikEndBoneName = "";
+      if (this.boneChainSelect) {
+        this.boneChainSelect.value = chain.id;
+      }
+      this.syncPatchJson();
+      this.renderBoneChainOptions?.(chain.id);
+      this.renderAddBoneChainMemberOptions?.(selectedNames);
+      this.updateRigBoneList?.();
+      this.updateIkSettingsControls?.();
+      this.updateRedistributeChainButtonState?.();
+      if (options.status !== false) {
+        this.setStatus(`Added ${selectedNames.length}-bone chain ${this.boneDisplayName(selectedNames[0])} -> ${this.boneDisplayName(selectedNames[selectedNames.length - 1])}`);
+      }
+      return chain.id;
+    },
+
     applyBoneChains(chains) {
       this.manualBoneChains = [];
       if (!Array.isArray(chains)) {
@@ -278,7 +411,11 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.updateIkSettingsControls?.();
     },
 
-    renderAddBoneChainMemberOptions(selectedNames = this.selectedBoneChainNames?.() || []) {
+    renderAddBoneChainMemberOptions(selectedNames = (
+      this.selectedBoneChainRootName
+        ? this.selectedBoneChainNames?.(this.selectedBoneChainRootName) || []
+        : this.chainBoneSelectionMode === "none" ? [] : this.activeBoneName ? [this.activeBoneName] : []
+    )) {
       if (!this.addBoneChainMembersSelect) {
         return;
       }
@@ -291,6 +428,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         option.selected = selected.has(name);
         return option;
       }));
+      this.updateRedistributeChainButtonState?.();
     },
 
     customBoneChildNames(parentName) {
@@ -383,10 +521,14 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         return;
       }
 
-      const requestedRoot = this.customBoneRootName(selectedName) || selectedName || this.customBoneRootName(this.activeBoneName);
-      const current = chains.some((chain) => chain.root === requestedRoot) ? requestedRoot : chains[0].root;
+      const explicitClear = selectedName === "";
+      const requestedRoot = explicitClear ? "" : this.customBoneRootName(selectedName) || selectedName || this.customBoneRootName(this.activeBoneName);
+      const current = chains.some((chain) => chain.root === requestedRoot) ? requestedRoot : "";
       this.selectedBoneChainRootName = current;
-      this.boneChainSelect.replaceChildren(...chains.map((chain) => {
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = "Bone chain";
+      this.boneChainSelect.replaceChildren(placeholder, ...chains.map((chain) => {
         const option = document.createElement("option");
         option.value = chain.root;
         option.textContent = `${chain.label || this.boneDisplayName(chain.root)} (${chain.names.length} ${chain.names.length === 1 ? "bone" : "bones"})`;
@@ -395,7 +537,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.boneChainSelect.disabled = false;
       this.boneChainSelect.value = current;
       if (this.redistributeChainWeightsButton) {
-        this.redistributeChainWeightsButton.disabled = false;
+        this.updateRedistributeChainButtonState();
       }
       this.updateIkSettingsControls?.();
     },
@@ -409,15 +551,85 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         return [];
       }
       this.selectedBoneChainRootName = root;
+      this.chainBoneSelectionMode = "chain";
+      this.ikEndBoneName = "";
       if (this.boneChainSelect) {
         this.boneChainSelect.value = root;
       }
-      this.setActiveBone(names[0]);
+      this.setActiveBone(names[0], { selectedBoneChainRootName: root });
       this.selectedBoneChainRootName = root;
+      if (this.boneChainSelect) {
+        this.boneChainSelect.value = root;
+      }
       this.renderAddBoneChainMemberOptions(names);
       this.updateRigBoneList();
       this.updateIkSettingsControls?.();
       this.setStatus(`Selected ${this.boneDisplayName(names[0])} chain (${names.length} ${names.length === 1 ? "bone" : "bones"})`);
+      return names;
+    },
+
+    clearSelectedBoneChainState() {
+      this.selectedBoneChainRootName = "";
+      this.chainBoneSelectionMode = "none";
+      this.ikEndBoneName = "";
+      if (this.boneChainSelect) {
+        this.boneChainSelect.value = "";
+      }
+      this.updateIkSettingsControls?.();
+      this.updateRedistributeChainButtonState?.();
+    },
+
+    selectSingleBoneChainMember(name = this.activeBoneName) {
+      const boneName = this.canonicalMirrorBone(name);
+      if (!this.addBoneChainMembersSelect || !this.bones.has(boneName)) {
+        return false;
+      }
+      this.clearSelectedBoneChainState();
+      this.chainBoneSelectionMode = "single";
+      let matched = false;
+      for (const option of Array.from(this.addBoneChainMembersSelect.options || [])) {
+        option.selected = option.value === boneName;
+        matched = matched || option.selected;
+      }
+      this.updateRedistributeChainButtonState?.();
+      this.updateSelectedBoneHighlight?.();
+      this.updateBonePickerOverlay?.();
+      this.updateRigBoneList?.();
+      return matched;
+    },
+
+    syncSelectedBoneChainFromMemberSelect() {
+      const names = this.orderedBoneChainSelection?.(
+        Array.from(this.addBoneChainMembersSelect?.selectedOptions || [])
+          .map((option) => option.value)
+          .filter((name) => this.bones.has(name))
+      ) || [];
+      if (names.length === 1) {
+        this.clearSelectedBoneChainState();
+        this.chainBoneSelectionMode = "single";
+        this.setActiveBone(names[0], {
+          suppressBoneChainAutoSelect: true,
+          preserveBoneChainMemberSelection: true
+        });
+      } else if (names.length < 2) {
+        this.clearSelectedBoneChainState();
+      } else {
+        const existing = this.customBoneChains().find((chain) => (
+          chain.names.length === names.length
+          && chain.names.every((name, index) => name === names[index])
+        ));
+        this.selectedBoneChainRootName = existing?.root || "";
+        this.chainBoneSelectionMode = "chain";
+        this.ikEndBoneName = "";
+        if (this.boneChainSelect) {
+          this.boneChainSelect.value = existing?.root || "";
+        }
+        this.updateIkSettingsControls?.();
+      }
+      this.updateRedistributeChainButtonState?.();
+      this.updateSelectedBoneHighlight?.();
+      this.updateBonePickerOverlay?.();
+      this.updateRigBoneList?.();
       return names;
     },
 
@@ -444,12 +656,11 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.pausePlayback();
       this.setSidePanelOpen(true);
       this.setRigPanelOpen(true);
-      this.setTool("bone");
+      this.setTool("bone", { preserveViewportLayers: true });
       this.setViewMode("mesh", { silent: true });
-      if (this.skeletonToggle) {
-        this.skeletonToggle.checked = true;
-        this.updateSkeletonHelper();
-      }
+      this.showBonesLayer = true;
+      this.syncViewportLayerButtons?.();
+      this.updateSkeletonHelper();
       this.updateBonePickerOverlay();
       this.setStatus("Create ready: click a joint to start, then click the model to extend the chain");
       return true;
@@ -475,7 +686,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         transform.position = this.cleanTransformValues(local.toArray());
         this.setBoneEditorTransform(transform.position, transform.rotation);
       }
-      this.pushUndoState?.("Create bone");
+      const undoBefore = this.captureRigHistorySnapshot?.();
       const added = this.addVirtualBone({
         name,
         parent: parent.name,
@@ -486,6 +697,10 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         this.setStatus("Could not add bone");
         return false;
       }
+      this.pushRigUndoState?.("Create bone", {
+        before: undoBefore,
+        after: this.captureRigHistorySnapshot?.()
+      });
       if (keepPlacing) {
         this.renderAddBoneParentOptions(name);
         if (this.addBoneParentSelect) {
@@ -562,6 +777,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       ) {
         this.boneMoveGizmoArmed = false;
         this.updateBoneMoveGizmo();
+        this.updateGizmoOnlyPreviewButton?.();
         this.setStatus("Bone gizmo off");
         return false;
       }
@@ -573,6 +789,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       if (this.customBoneRecord(this.activeBoneName) && !this.updateActiveVirtualBoneFromControls()) {
         return false;
       }
+      this.ensureSelectedBoneChain?.({ status: false });
       return this.showActiveBoneMoveGizmo();
     },
 
@@ -588,12 +805,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.pausePlayback();
       this.setSidePanelOpen(true);
       this.setRigPanelOpen(true);
-      this.setTool("bone");
-      this.setViewMode("mesh", { silent: true });
-      if (this.skeletonToggle) {
-        this.skeletonToggle.checked = true;
-        this.updateSkeletonHelper();
-      }
+      this.setTool("bone", { preserveViewportLayers: true });
       this.boneMoveGizmoArmed = true;
       this.refreshRigOverlays();
       this.setStatus(`Move ${this.boneDisplayName(this.activeBoneName)} with the gizmo`);
@@ -1035,7 +1247,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       }
       const bone = this.bones.get(this.activeBoneName);
       const shouldShow = Boolean(
-        !this.cleanPreview
+        (!this.cleanPreview || this.cleanPreviewAllowsRigGizmo?.())
         && this.activeTool === "bone"
         && !this.pendingBonePlacement
         && this.boneMoveGizmoArmed
@@ -1061,6 +1273,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.transformHelper.visible = true;
       this.boneGizmoButton?.classList.add("is-active");
       this.boneGizmoButton?.setAttribute("aria-pressed", "true");
+      this.updateGizmoOnlyPreviewButton?.();
     },
 
     beginBoneMove() {
@@ -1211,7 +1424,13 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.renderAddBoneChainMemberOptions();
     },
 
-    setActiveBone(name, { stopPlacement = true } = {}) {
+    setActiveBone(name, {
+      stopPlacement = true,
+      selectedBoneChainRootName = "",
+      clearBoneChain = false,
+      suppressBoneChainAutoSelect = false,
+      preserveBoneChainMemberSelection = false
+    } = {}) {
       name = this.canonicalMirrorBone(name);
       if (!this.bones.has(name)) {
         return;
@@ -1224,9 +1443,18 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         }
       }
       this.activeBoneName = name;
-      const chainRoot = this.customBoneRootName(name);
-      if (chainRoot) {
-        this.selectedBoneChainRootName = chainRoot;
+      if (clearBoneChain) {
+        this.selectedBoneChainRootName = "";
+        this.chainBoneSelectionMode = "none";
+        this.ikEndBoneName = "";
+        for (const option of Array.from(this.addBoneChainMembersSelect?.options || [])) {
+          option.selected = false;
+        }
+      } else {
+        const chainRoot = suppressBoneChainAutoSelect ? "" : selectedBoneChainRootName || this.customBoneRootName(name);
+        if (chainRoot) {
+          this.selectedBoneChainRootName = chainRoot;
+        }
       }
       if (this.boneSelect.value !== name && [...this.boneSelect.options].some((option) => option.value === name)) {
         this.boneSelect.value = name;
@@ -1242,7 +1470,11 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.renderAddBoneParentOptions();
       this.syncBoneEditorControls(name);
       this.renderBoneChainOptions();
-      this.renderAddBoneChainMemberOptions();
+      if (!preserveBoneChainMemberSelection) {
+        this.renderAddBoneChainMemberOptions();
+      } else {
+        this.updateRedistributeChainButtonState?.();
+      }
       this.updateBoneMoveGizmo();
       this.updateIkMoveGizmo?.();
       this.updateSelectionInfluences();

@@ -2245,6 +2245,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.syncBoneEditorControls(this.activeBoneName);
       this.renderAddBoneChainMemberOptions?.();
       this.renderBoneChainOptions?.();
+      this.selectSingleBoneChainMember?.(this.activeBoneName);
       this.syncPoseClipboardControls?.();
       this.updateSelectionInfluences?.();
     }

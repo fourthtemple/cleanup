@@ -177,13 +177,6 @@ export function installPoseClipboardMethods(BirdWeightEditor, deps) {
       return true;
     },
 
-    syncPoseClipboardControls() {
-      if (this.pastePoseButton) {
-        this.pastePoseButton.disabled = !this.poseClipboard;
-      }
-      if (this.copyPoseButton) {
-        this.copyPoseButton.disabled = !this.model || !this.bones?.size;
-      }
-    }
+    syncPoseClipboardControls() {}
   });
 }

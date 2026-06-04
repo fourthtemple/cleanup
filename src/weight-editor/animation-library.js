@@ -1,3 +1,8 @@
+import {
+  BrowserAnimationLibraryStorage,
+  browserLibraryDefaultFolderName
+} from "./browser-library-storage.js";
+
 function animationLibraryActionIdFromFileName(value) {
   return String(value || "")
     .split("?")[0]
@@ -15,6 +20,49 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
   const LAST_LIBRARY_FILE_KEY = "mixamo-cleanup-editor:last-library-file";
 
   Object.assign(BirdWeightEditor.prototype, {
+    animationLibraryStartupMode() {
+      const params = new URLSearchParams(window.location.search || "");
+      const requested = String(params.get("library") || params.get("storage") || "").toLowerCase();
+      if (["browser", "server", "auto"].includes(requested)) {
+        return requested;
+      }
+      return "browser";
+    },
+
+    ensureBrowserAnimationLibraryStorage() {
+      if (!this.browserAnimationLibraryStorage) {
+        this.browserAnimationLibraryStorage = new BrowserAnimationLibraryStorage();
+      }
+      window.telekinetikittyAnimationLibraryStorage = this.browserAnimationLibraryStorage;
+      return this.browserAnimationLibraryStorage;
+    },
+
+    async browserAnimationLibraryPayload() {
+      const storage = this.ensureBrowserAnimationLibraryStorage();
+      const payload = await storage.list();
+      if (!payload.folders.length) {
+        const folder = browserLibraryDefaultFolderName();
+        await storage.createFolder(folder);
+        payload.folders.push({
+          name: folder,
+          label: folder,
+          path: `browser-library/${folder}`,
+          files: []
+        });
+      }
+      this.animationLibraryStorageMode = "browser";
+      return payload;
+    },
+
+    async serverAnimationLibraryPayload() {
+      const response = await fetch("/api/animation-library", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      this.animationLibraryStorageMode = "server";
+      return response.json();
+    },
+
     bindAnimationLibraryControls() {
       if (this.animationLibraryControlsBound) {
         return;
@@ -106,12 +154,11 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
     },
 
     async refreshAnimationLibrary({ silent = false } = {}) {
+      const startupMode = this.animationLibraryStartupMode();
       try {
-        const response = await fetch("/api/animation-library", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const payload = await response.json();
+        const payload = startupMode === "browser"
+          ? await this.browserAnimationLibraryPayload()
+          : await this.serverAnimationLibraryPayload();
         this.animationLibraryFolders = Array.isArray(payload.folders) ? payload.folders : [];
         const current = this.animationLibrarySelectedFolder || this.animationLibraryFolderSelect?.value || "";
         const hasCurrent = this.animationLibraryFolders.some((folder) => folder.name === current);
@@ -128,6 +175,25 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         }
         return true;
       } catch (error) {
+        if (startupMode === "auto") {
+          try {
+            const payload = await this.browserAnimationLibraryPayload();
+            this.animationLibraryFolders = Array.isArray(payload.folders) ? payload.folders : [];
+            const current = this.animationLibrarySelectedFolder || this.animationLibraryFolderSelect?.value || "";
+            const hasCurrent = this.animationLibraryFolders.some((folder) => folder.name === current);
+            this.animationLibrarySelectedFolder = hasCurrent
+              ? current
+              : this.animationLibraryFolders[0]?.name || "";
+            this.renderAnimationLibrary();
+            this.renderCharacterOptions?.();
+            if (!silent) {
+              this.setStatus("Using browser project storage");
+            }
+            return true;
+          } catch (browserError) {
+            console.warn("Could not open browser animation library", browserError);
+          }
+        }
         console.warn("Could not refresh animation library", error);
         this.animationLibraryFolders = [];
         this.animationLibrarySelectedFolder = "";
@@ -238,6 +304,16 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       }
 
       try {
+        if (this.animationLibraryStorageMode === "browser") {
+          const payload = await this.ensureBrowserAnimationLibraryStorage().createFolder(requestedName);
+          this.animationLibrarySelectedFolder = payload.folder?.name || requestedName;
+          if (this.animationLibraryFolderName) {
+            this.animationLibraryFolderName.value = "";
+          }
+          await this.refreshAnimationLibrary({ silent: true });
+          this.setStatus(`Created browser folder ${this.animationLibrarySelectedFolder}`);
+          return true;
+        }
         const response = await fetch("/api/animation-library/folder", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -318,6 +394,12 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         return false;
       }
       try {
+        if (this.animationLibraryStorageMode === "browser" || item.browserLibrary) {
+          await this.ensureBrowserAnimationLibraryStorage().deleteFile({ folder: folderName, fileName });
+          await this.refreshAnimationLibrary({ silent: true });
+          this.setStatus(`Deleted ${fileName} from ${folderName}`);
+          return true;
+        }
         const response = await fetch("/api/animation-library/delete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -341,8 +423,15 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
     },
 
     async uploadAnimationLibraryFile(file, folderName) {
-      const contentBase64 = await this.animationFileToBase64(file);
       try {
+        if (this.animationLibraryStorageMode === "browser") {
+          return await this.uploadAnimationLibraryBlob({
+            folderName,
+            fileName: file.name,
+            blob: file
+          });
+        }
+        const contentBase64 = await this.animationFileToBase64(file);
         const response = await fetch("/api/animation-library/upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -366,6 +455,14 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
           this.animationLibraryImportButton.disabled = !this.selectedAnimationLibraryFolderName();
         }
       }
+    },
+
+    async uploadAnimationLibraryBlob({ folderName, fileName, blob }) {
+      return this.ensureBrowserAnimationLibraryStorage().uploadFile({
+        folder: folderName,
+        fileName,
+        blob
+      });
     },
 
     async animationFileToBase64(file) {

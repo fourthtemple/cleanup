@@ -807,6 +807,17 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
         const result = await bake();
         const bytes = result?.bytes || result;
         const warnings = result?.warnings || [];
+        if (this.animationLibraryStorageMode === "browser" && typeof this.uploadAnimationLibraryBlob === "function") {
+          await this.uploadAnimationLibraryBlob({
+            folderName: folder,
+            fileName,
+            blob: blobFromExportResult(bytes, extension === "glb" ? "model/gltf-binary" : "application/octet-stream")
+          });
+          await this.refreshAnimationLibrary?.({ silent: true });
+          const warningText = warnings.length ? ` with ${warnings.length} warning${warnings.length === 1 ? "" : "s"}` : "";
+          this.setStatus(`Saved ${fileName} to browser project${warningText}`);
+          return true;
+        }
         const response = await fetch("/api/animation-library/upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

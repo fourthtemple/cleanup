@@ -774,7 +774,10 @@ export function installWeightMethods(BirdWeightEditor, deps) {
       this.markerGeometry.computeBoundingSphere();
       this.markerVertexCount = positions.length / 3;
       this.updateSelectionMarkerStyle?.();
-      this.selectionMarkers.visible = !this.cleanPreview && !this.cloneSpotlightActive && this.markerVertexCount > 0;
+      this.selectionMarkers.visible = !this.cleanPreview
+        && this.showSelectionLayer !== false
+        && !this.cloneSpotlightActive
+        && this.markerVertexCount > 0;
     },
 
     updateAllVertexMarkers() {

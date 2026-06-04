@@ -729,21 +729,15 @@ input[type="color"] {
   grid-column: 1 / -1;
 }
 
+.rig-bone-chain-members select {
+  min-height: 112px;
+  max-height: 168px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .rig-bone-chain-action {
   grid-column: 1 / -1;
-}
-
-.rig-pose-clipboard-actions {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.rig-pose-clipboard-actions button {
-  min-width: 0;
-  min-height: 30px;
-  padding: 0 8px;
 }
 
 .ik-chain-settings {
@@ -1111,10 +1105,18 @@ button.is-active {
   min-width: 0;
 }
 
+.weight-editor-app .viewer-field.is-disabled {
+  opacity: 0.45;
+}
+
 .weight-editor-app .rig-bone-create select[multiple] {
-  min-height: 76px;
+  min-height: 112px;
+  max-height: 168px;
   padding: 5px 7px;
   font-size: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  text-overflow: clip;
 }
 
 .weight-editor-app .animation-library-heading button,
@@ -1152,35 +1154,51 @@ button.is-active {
 .weight-viewport-tools {
   position: absolute;
   top: 10px;
+  left: 10px;
   right: 10px;
   z-index: 5;
+  pointer-events: none;
+}
+
+.viewport-tool-group {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
   gap: 4px;
-  max-width: min(390px, calc(100% - 20px));
   padding: 4px;
   border: 1px solid rgba(244, 234, 214, 0.24);
   background: rgba(11, 15, 18, 0.86);
   box-shadow: none;
   contain: layout paint style;
+  pointer-events: auto;
 }
 
-.viewport-tool-group {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px;
+.viewport-edit-dock {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.viewport-mode-group {
+  position: absolute;
+  right: 0;
+  top: 0;
 }
 
 .viewport-mode-group button {
-  min-width: 58px;
+  min-width: 0;
+}
+
+.viewport-clean-preview-pair {
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 4px;
 }
 
 .weight-viewport-tools button {
-  min-width: 42px;
+  min-width: 0;
   min-height: 24px;
-  padding: 0 6px;
+  padding: 0 5px;
   font-size: 11px;
 }
 
@@ -2504,11 +2522,14 @@ button.is-active {
 
   .weight-viewport-tools {
     top: 8px;
+    left: 8px;
     right: 8px;
-    max-width: calc(100% - 16px);
-    max-height: 34vh;
-    overflow: auto;
-    padding: 6px;
+  }
+
+  .viewport-mode-group {
+    max-width: calc(100% - 136px);
+    overflow-x: auto;
+    overflow-y: hidden;
   }
 
   .animation-editor-app .timeline-global-row {

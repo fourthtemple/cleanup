@@ -306,7 +306,7 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
       this.updateSelectedBoneHighlight();
       this.updateBonePickerOverlay();
       this.updateBoneLayerValues();
-      if (this.boneLabelToggle.checked) {
+      if (this.showBonesLayer) {
         this.updateBoneLabels();
       }
     },
@@ -583,6 +583,9 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
       const keyedNames = useAdaptiveEdit
         ? this.poseEditTargetNames({ boneName, frame })
         : this.activePoseBoneNames();
+      const preConversionPose = adaptiveAbsoluteEdit
+        ? this.interpolatedPoseForFrame(frame)
+        : null;
       if (useAdaptiveEdit) {
         this.prepareAdaptivePoseLayerForEdit?.();
       }
@@ -593,6 +596,7 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
         for (const keyedName of keyedNames) {
           const sourcePose = this.clonePose(
             this.manualPose.get(keyedName)
+              || preConversionPose?.[keyedName]
               || interpolatedPose[keyedName]
               || framePose[keyedName]
               || { x: 0, y: 0, z: 0, px: 0, py: 0, pz: 0 }

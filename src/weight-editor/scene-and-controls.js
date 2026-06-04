@@ -305,10 +305,29 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.transformHelper = this.transformControls.getHelper();
       this.transformHelper.visible = false;
       this.scene.add(this.transformHelper);
+      this.configureTransformControlHitAreas?.();
 
       this.scene.add(this.modelRoot);
       this.resize();
       window.addEventListener("resize", () => this.resize());
+    },
+
+    configureTransformControlHitAreas() {
+      const picker = this.transformControls?._gizmo?.picker?.translate;
+      if (!picker || picker.userData.mixamoCleanupHitAreaAdjusted) {
+        return;
+      }
+      const scale = new THREE.Matrix4().makeScale(0.72, 0.72, 0.72);
+      for (const handle of picker.children || []) {
+        if (!["X", "Y", "Z"].includes(handle.name) || !handle.geometry) {
+          continue;
+        }
+        handle.geometry = handle.geometry.clone();
+        handle.geometry.applyMatrix4(scale);
+        handle.geometry.computeBoundingSphere?.();
+        handle.geometry.computeBoundingBox?.();
+      }
+      picker.userData.mixamoCleanupHitAreaAdjusted = true;
     },
 
     currentOrbitViewSetting() {
@@ -436,8 +455,26 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.rigBoneGroup = button.dataset.rigBoneGroup || "all";
         this.updateRigBoneList();
       });
-      this.addBoneButton?.addEventListener("click", () => this.withUndo("Add bone", () => this.addBoneFromControls()));
-      this.addBoneChainButton?.addEventListener("click", () => this.withUndo("Add chain", () => this.addBoneChainFromControls()));
+      this.addBoneButton?.addEventListener("click", () => this.withRigUndo("Add bone", () => this.addBoneFromControls()));
+      this.addBoneChainButton?.addEventListener("click", () => this.withRigUndo("Add chain", () => this.addBoneChainFromControls()));
+      this.addBoneChainMembersSelect?.addEventListener("mousedown", (event) => {
+        const option = event.target instanceof HTMLOptionElement ? event.target : null;
+        if (!option || !(event.ctrlKey || event.metaKey) || !option.selected) {
+          return;
+        }
+        event.preventDefault();
+        option.selected = false;
+        this.addBoneChainMembersSelect.focus();
+        this.syncSelectedBoneChainFromMemberSelect?.();
+      });
+      this.addBoneChainMembersSelect?.addEventListener("contextmenu", (event) => {
+        if (event.target instanceof HTMLOptionElement && event.ctrlKey) {
+          event.preventDefault();
+        }
+      });
+      this.addBoneChainMembersSelect?.addEventListener("change", () => {
+        this.syncSelectedBoneChainFromMemberSelect?.();
+      });
       this.placeBoneSelectionButton?.addEventListener("click", () => this.beginBonePlacement());
       this.addBoneParentSelect?.addEventListener("change", () => {
         if (this.customBoneRecord?.(this.activeBoneName)) {
@@ -504,7 +541,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.viewModeButtons.forEach((button) => {
         button.addEventListener("click", () => this.setViewMode(button.dataset.viewMode));
       });
+      this.viewportLayerButtons?.forEach((button) => {
+        button.addEventListener("click", () => this.toggleViewportLayer(button.dataset.viewportLayer));
+      });
       this.cleanPreviewButton.addEventListener("click", () => this.setCleanPreview(!this.cleanPreview));
+      this.gizmoOnlyPreviewButton?.addEventListener("click", () => this.setGizmoOnlyPreview(!this.gizmoOnlyPreview));
       this.mirrorModeButton?.addEventListener("click", () => this.setMirrorMode(!this.mirrorMode));
       this.saveOrbitViewButton?.addEventListener("click", () => this.saveOrbitViewSetting());
       this.restoreOrbitViewButton?.addEventListener("click", () => this.restoreSavedOrbitView());
@@ -551,18 +592,15 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.clearSelectionButton.addEventListener("click", () => this.withSelectionUndo?.("Clear selection", () => this.clearSelection()));
       this.clearAllSelectionButton.addEventListener("click", () => this.withUndo("Reset all", () => this.resetWeights()));
       this.invertSelectionButton.addEventListener("click", () => this.withSelectionUndo?.("Invert selection", () => this.invertSelection()));
-      this.applyWeightButton.addEventListener("click", () => {
-        this.withUndo("Set weight", () => this.assignSelectionToBone(this.boneSelect.value, Number(this.weightValue.value)));
-      });
-      this.commitWeightButton.addEventListener("click", () => {
-        this.withUndo("Commit weight", () => this.assignSelectionToBone(this.boneSelect.value, Number(this.weightValue.value), { clearSelection: true }));
-      });
       this.removeWeightButton.addEventListener("click", () => {
         this.withUndo("De-weight", () => this.removeBoneInfluenceFromSelection(this.boneSelect.value));
       });
       this.resetWeightsButton.addEventListener("click", () => this.withUndo("Reset weights", () => this.resetWeights()));
       this.redistributeChainWeightsButton?.addEventListener("click", () => {
-        this.withUndo("Distribute chain", () => this.redistributeSelectionAcrossBoneChain(this.boneChainSelect?.value || this.selectedBoneChainRootName));
+        this.withUndo("Distribute chain", () => {
+          const chainRoot = this.ensureBoneChainForDistribution?.();
+          return chainRoot ? this.redistributeSelectionAcrossBoneChain(chainRoot) : 0;
+        });
       });
       this.selectionInfluenceList.addEventListener("input", (event) => {
         const slider = event.target.closest("[data-adjust-influence]");
@@ -616,7 +654,6 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.textureFillRegionButton?.addEventListener("click", () => {
         this.paintTextureRegion?.();
       });
-      this.weightValue.addEventListener("input", () => this.updateRangeOutputs());
       this.speedControl?.addEventListener("input", () => this.updateRangeOutputs());
       this.scaleControl?.addEventListener("input", () => {
         this.setActorScaleFromControlValue(Number(this.scaleControl.value) || 0);
@@ -629,22 +666,25 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         }
       });
       this.boneSelect.addEventListener("change", () => {
-        this.setActiveBone(this.boneSelect.value);
+        this.setActiveBone(this.boneSelect.value, { clearBoneChain: true });
       });
       this.boneChainSelect?.addEventListener("change", () => {
         this.selectBoneChain(this.boneChainSelect.value);
       });
+      this.boneChainSelect?.addEventListener("click", () => {
+        if (this.boneChainSelect.value) {
+          this.selectBoneChain(this.boneChainSelect.value);
+        }
+      });
       this.poseBoneSelect.addEventListener("change", () => {
-        this.setActiveBone(this.poseBoneSelect.value);
+        this.setActiveBone(this.poseBoneSelect.value, {
+          clearBoneChain: true,
+          preserveBoneChainMemberSelection: true
+        });
+        this.selectSingleBoneChainMember?.(this.poseBoneSelect.value);
         this.syncPoseControls();
         this.updateBoneLayerList();
       });
-      this.copyPoseButton?.addEventListener("click", () => this.copyCurrentPoseToClipboard?.());
-      this.pastePoseButton?.addEventListener("click", () => this.withUndo(
-        "Paste pose",
-        () => this.pastePoseClipboardToCurrentFrame?.(),
-        { clearManualPose: true }
-      ));
       for (const input of [this.poseRotX, this.poseRotY, this.poseRotZ, this.posePosX, this.posePosY, this.posePosZ]) {
         input.addEventListener("pointerdown", () => {
           this.beginPoseControlUndo();
@@ -849,8 +889,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       ));
       this.deleteKeyButton.addEventListener("click", () => this.withUndo("Delete key", () => this.deleteCurrentKey()));
       this.clearKeysButton.addEventListener("click", () => this.withUndo("Clear keys", () => this.clearKeyframes()));
-      this.skeletonToggle.addEventListener("change", () => this.updateSkeletonHelper());
-      this.boneLabelToggle.addEventListener("change", () => this.updateBoneLabels());
+      this.boneLabelToggle?.addEventListener("change", () => this.updateBoneLabels());
 
       this.savePatchButton?.addEventListener("click", () => this.savePatchFile());
       this.loadPatchButton?.addEventListener("click", () => {
@@ -1264,6 +1303,40 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return callback?.();
     },
 
+    pushRigUndoState(label = "Rig edit", options = {}) {
+      const before = options.before || this.captureRigHistorySnapshot?.();
+      const after = options.after || this.captureRigHistorySnapshot?.();
+      if (!before || !after || this.rigHistorySnapshotsMatch?.(before, after)) {
+        return false;
+      }
+      const state = {
+        kind: "rig",
+        label,
+        before,
+        after
+      };
+      this.undoStack.push(state);
+      if (this.undoStack.length > this.maxUndoSteps) {
+        this.disposeFastHistoryState?.(this.undoStack.shift());
+      }
+      if (!options.preserveRedo) {
+        for (const redoState of this.redoStack || []) {
+          this.disposeFastHistoryState?.(redoState);
+        }
+        this.redoStack = [];
+      }
+      this.updateUndoButton();
+      return true;
+    },
+
+    withRigUndo(label, callback, options = {}) {
+      const before = this.captureRigHistorySnapshot?.();
+      const result = callback?.();
+      const after = this.captureRigHistorySnapshot?.();
+      this.pushRigUndoState(label, { ...options, before, after });
+      return result;
+    },
+
     beginPoseControlUndo(label = "Pose edit") {
       if (this.poseControlUndoActive && this.undoStack.length) {
         return false;
@@ -1340,7 +1413,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.updateSkeletonHelper?.();
       this.updateSelectionMarkers();
       this.updateMoveGizmo();
-      if (this.boneLabelToggle?.checked) {
+      if (this.showBonesLayer) {
         this.updateBoneLabels();
       }
     },
@@ -1483,7 +1556,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     isFastHistoryState(state) {
-      return state?.kind === "selection" || state?.kind === "texture-paint";
+      return state?.kind === "selection" || state?.kind === "texture-paint" || state?.kind === "rig";
     },
 
     disposeFastHistoryState(state) {
@@ -1503,6 +1576,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.restoreSelectionSnapshot?.(snapshot);
       } else if (state?.kind === "texture-paint") {
         this.restoreTexturePaintSnapshot?.(state.entries, direction === "redo" ? "after" : "before");
+      } else if (state?.kind === "rig") {
+        this.restoreRigHistorySnapshot?.(direction === "redo" ? state.after : state.before);
       } else {
         return false;
       }
@@ -1511,7 +1586,15 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return true;
     },
 
-    setTool(tool) {
+    setTool(tool, options = {}) {
+      if (tool !== this.activeTool) {
+        if (this.usesSelectionStrokeUndo?.(this.activeTool)) {
+          this.endSelectionStrokeUndo?.();
+        }
+        if (this.usesTextureStrokeUndo?.(this.activeTool)) {
+          this.endTexturePaintStrokeUndo?.();
+        }
+      }
       if (tool !== "neighbor") {
         this.neighborStroke = null;
         if (this.neighborHoverMarker) {
@@ -1549,7 +1632,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (this.selectionMarkers) {
         this.selectionMarkers.visible = tool === "clone" || this.cloneSpotlightActive
           ? false
-          : !this.cleanPreview && this.markerVertexCount > 0;
+          : !this.cleanPreview && this.showSelectionLayer !== false && this.markerVertexCount > 0;
       }
       if (EDIT_ONLY_TOOLS.has(tool)) {
         this.pausePlayback();
@@ -1559,9 +1642,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.pausePlayback();
         this.setSidePanelOpen(true);
         this.setRigPanelOpen(true);
-        this.setViewMode("rendered", { silent: true });
-        if (this.skeletonToggle) {
-          this.skeletonToggle.checked = true;
+        if (!options.preserveViewportLayers) {
+          this.setViewMode("rendered", { silent: true });
+          this.showBonesLayer = true;
+          this.syncViewportLayerButtons?.();
           this.updateSkeletonHelper();
         }
         this.updateBonePickerOverlay();
@@ -1572,6 +1656,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.updateMoveGizmo();
       this.updateBoneMoveGizmo?.();
       this.updateIkMoveGizmo?.();
+      this.updateGizmoOnlyPreviewButton?.();
       this.updateNeighborHover?.();
       this.syncClonePaintControls?.();
       let usedEraseSelectionCommand = false;
@@ -1600,6 +1685,54 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
     },
 
+    viewportLayerState(layer) {
+      if (layer === "rendered") {
+        return this.showRenderedLayer !== false;
+      }
+      if (layer === "mesh") {
+        return Boolean(this.showMeshLayer);
+      }
+      if (layer === "selection") {
+        return this.showSelectionLayer !== false;
+      }
+      if (layer === "bones") {
+        return Boolean(this.showBonesLayer);
+      }
+      return false;
+    },
+
+    syncViewportLayerButtons() {
+      this.viewportLayerButtons?.forEach((button) => {
+        const active = this.viewportLayerState(button.dataset.viewportLayer);
+        button.classList.toggle("is-active", active);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+    },
+
+    toggleViewportLayer(layer, options = {}) {
+      if (layer === "rendered") {
+        this.showRenderedLayer = !this.viewportLayerState("rendered");
+      } else if (layer === "mesh") {
+        this.showMeshLayer = !this.viewportLayerState("mesh");
+      } else if (layer === "selection") {
+        this.showSelectionLayer = !this.viewportLayerState("selection");
+      } else if (layer === "bones") {
+        this.showBonesLayer = !this.viewportLayerState("bones");
+      } else {
+        return;
+      }
+      this.setViewMode(this.viewMode, { silent: true, preserveViewportLayers: true });
+      if (!options.silent) {
+        const label = {
+          rendered: "Rendered",
+          mesh: "Mesh",
+          selection: "Selection",
+          bones: "Bones"
+        }[layer] || "Layer";
+        this.setStatus(`${label} layer ${this.viewportLayerState(layer) ? "shown" : "hidden"}`);
+      }
+    },
+
     setViewMode(mode, options = {}) {
       if (this.activeTool === "clone" && mode === "edit") {
         mode = "both";
@@ -1613,13 +1746,19 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.viewModeButtons.forEach((button) => {
         button.classList.toggle("is-active", button.dataset.viewMode === mode);
       });
+      if (!options.preserveViewportLayers && mode !== "edit") {
+        this.showRenderedLayer = mode !== "mesh";
+        this.showMeshLayer = mode === "mesh" || mode === "both";
+      }
+      this.syncViewportLayerButtons();
       this.toolButtons.forEach((button) => {
         button.classList.toggle("is-active", button.dataset.tool === this.activeTool);
       });
 
       for (const record of this.paintRecords) {
+        record.object.visible = this.cleanPreview || mode === "edit" || this.showRenderedLayer !== false;
         for (const material of this.getObjectMaterials(record.object.material)) {
-          material.wireframe = !this.cleanPreview && mode === "mesh";
+          material.wireframe = !this.cleanPreview && mode === "mesh" && this.showMeshLayer && this.showRenderedLayer !== false;
           material.vertexColors = false;
           material.transparent = !this.cleanPreview && mode === "edit";
           material.opacity = !this.cleanPreview && mode === "edit" ? 0.88 : 1;
@@ -1632,7 +1771,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (this.selectionMarkers) {
         this.selectionMarkers.visible = this.activeTool === "clone" || this.cloneSpotlightActive
           ? false
-          : !this.cleanPreview && this.markerVertexCount > 0;
+          : !this.cleanPreview && this.showSelectionLayer !== false && this.markerVertexCount > 0;
       }
 
       if (this.vertexMarkers) {
@@ -1674,7 +1813,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       const selectedCount = this.markerVertexCount || 0;
       const crowded = selectedCount > 250;
       const dense = selectedCount > 900;
-      const rendered = this.viewMode === "rendered";
+      const rendered = this.viewMode === "rendered" && this.showRenderedLayer !== false;
 
       this.markerMaterial.size = rendered
         ? (dense ? 2.5 : crowded ? 3.25 : 4)
@@ -1730,7 +1869,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     updateMeshWireOverlays() {
-      const visible = !this.cleanPreview && this.viewMode === "both" && !this.cloneSpotlightActive;
+      const visible = !this.cleanPreview && Boolean(this.showMeshLayer) && !this.cloneSpotlightActive;
       for (const record of this.paintRecords || []) {
         const overlay = record.wireOverlay;
         if (!overlay) {
@@ -1746,20 +1885,71 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
     },
 
-    setCleanPreview(enabled) {
-      this.cleanPreview = enabled;
-      this.cleanPreviewButton.classList.toggle("is-active", enabled);
-      this.cleanPreviewButton.setAttribute("aria-pressed", String(enabled));
-      this.setViewMode(this.viewMode, { silent: true });
+    cleanPreviewAllowsRigGizmo() {
+      return Boolean(this.gizmoOnlyPreview);
+    },
+
+    updateGizmoOnlyPreviewButton() {
+      if (!this.gizmoOnlyPreviewButton) {
+        return;
+      }
+      const hasGizmo = Boolean(
+        this.activeTool === "bone"
+        && (
+          (this.boneMoveGizmoArmed && this.bones?.has(this.activeBoneName))
+          || (this.ikTargetGizmoArmed && (this.ikChainNames?.() || []).length >= 2)
+        )
+      );
+      this.gizmoOnlyPreviewButton.hidden = !hasGizmo && !this.gizmoOnlyPreview;
+      this.gizmoOnlyPreviewButton.disabled = !hasGizmo;
+      this.gizmoOnlyPreviewButton.classList.toggle("is-active", this.gizmoOnlyPreview);
+      this.gizmoOnlyPreviewButton.setAttribute("aria-pressed", String(this.gizmoOnlyPreview));
+    },
+
+    setGizmoOnlyPreview(enabled) {
+      this.gizmoOnlyPreview = Boolean(enabled);
+      if (this.gizmoOnlyPreview) {
+        this.cleanPreview = true;
+        this.cleanPreviewButton.classList.remove("is-active");
+        this.cleanPreviewButton.setAttribute("aria-pressed", "false");
+      } else {
+        this.cleanPreview = false;
+        this.cleanPreviewButton.classList.remove("is-active");
+        this.cleanPreviewButton.setAttribute("aria-pressed", "false");
+      }
+      this.setViewMode(this.viewMode, { silent: true, preserveViewportLayers: true });
       this.updateSelectionMarkers();
       this.updateAllVertexMarkers();
       this.updateMoveGizmo();
+      this.updateBoneMoveGizmo?.();
       this.updateIkMoveGizmo?.();
       this.updateSkeletonHelper();
       this.updateSelectedBoneHighlight();
       this.updateBonePickerOverlay();
       this.updateBoneLabels();
-      this.setStatus(enabled ? "Clean preview: selections hidden" : "Selection view restored");
+      this.updateGizmoOnlyPreviewButton();
+      this.setStatus(this.gizmoOnlyPreview ? "Gizmo only preview" : "Selection view restored");
+    },
+
+    setCleanPreview(enabled) {
+      enabled = Boolean(enabled);
+      this.gizmoOnlyPreview = false;
+      this.cleanPreview = enabled;
+      this.cleanPreviewButton.classList.toggle("is-active", enabled);
+      this.cleanPreviewButton.setAttribute("aria-pressed", String(enabled));
+      this.cleanPreviewButton.textContent = "Clean Preview";
+      this.setViewMode(this.viewMode, { silent: true, preserveViewportLayers: true });
+      this.updateSelectionMarkers();
+      this.updateAllVertexMarkers();
+      this.updateMoveGizmo();
+      this.updateBoneMoveGizmo?.();
+      this.updateIkMoveGizmo?.();
+      this.updateSkeletonHelper();
+      this.updateSelectedBoneHighlight();
+      this.updateBonePickerOverlay();
+      this.updateBoneLabels();
+      this.updateGizmoOnlyPreviewButton();
+      this.setStatus(enabled ? "Clean preview: overlays hidden" : "Selection view restored");
     },
 
     setMirrorMode(enabled) {
@@ -1940,9 +2130,6 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       if (this.textureBrushScatterOutput && this.textureBrushScatter) {
         this.textureBrushScatterOutput.textContent = `${Math.round(Number(this.textureBrushScatter.value) * 100)}%`;
-      }
-      if (this.weightValueOutput) {
-        this.weightValueOutput.textContent = Number(this.weightValue.value).toFixed(2);
       }
       if (this.cameraGizmoSpeedOutput && this.cameraGizmoSpeed) {
         this.cameraGizmoSpeedOutput.textContent = Number(this.cameraGizmoSpeed.value).toFixed(4);

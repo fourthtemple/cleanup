@@ -15,7 +15,6 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
     SELECTED_MODIFIED_COLOR,
     CURVE_CHANNELS,
     CURVE_CHANNEL_KEYS,
-    ADDITIVE_POSE_EASE_FRAMES,
     RIG_BONE_GROUPS,
     EDIT_ONLY_TOOLS,
     finitePoseValue,
@@ -557,24 +556,7 @@ export function installCurveEditorMethods(BirdWeightEditor, deps) {
     },
 
     ensureAdditivePoseAnchors(boneName, frame, channels = CURVE_CHANNEL_KEYS) {
-      if (this.actorTarget?.mode === "bird-flap" || !boneName) {
-        return;
-      }
-      const targetFrame = Math.max(0, Math.min(this.timelineFrames, Math.round(frame)));
-      const previousAnchor = targetFrame - ADDITIVE_POSE_EASE_FRAMES;
-      const nextAnchor = Math.min(this.timelineFrames, targetFrame + ADDITIVE_POSE_EASE_FRAMES);
-      for (const channel of channels.filter((key) => CURVE_CHANNELS[key])) {
-        if (previousAnchor > 0 && !this.hasPoseChannelBefore(boneName, channel, targetFrame)) {
-          this.setPoseChannelIfMissing(previousAnchor, boneName, channel, 0);
-        }
-        if (
-          targetFrame >= ADDITIVE_POSE_EASE_FRAMES
-          && !this.hasPoseChannelAfter(boneName, channel, targetFrame)
-          && nextAnchor !== targetFrame
-        ) {
-          this.setPoseChannelIfMissing(nextAnchor, boneName, channel, 0);
-        }
-      }
+      return;
     },
 
     setPoseChannelIfMissing(frame, boneName, channel, value) {

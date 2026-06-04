@@ -6,7 +6,6 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
 
   const IK_ITERATIONS = 18;
   const IK_TARGET_EPSILON = 0.003;
-  const IK_MAX_AUTO_CHAIN_BONES = 4;
   const IK_SMOOTH_CHAIN_PASSES = 4;
 
   function cloneManualPoseMap(source) {
@@ -59,6 +58,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       }
       if (nextMode !== "ik") {
         this.ikTargetGizmoArmed = false;
+        this.ikEndBoneName = "";
       }
       if (nextMode !== "fk") {
         this.boneMoveGizmoArmed = false;
@@ -117,6 +117,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       ) {
         this.ikTargetGizmoArmed = false;
         this.updateIkMoveGizmo();
+        this.updateGizmoOnlyPreviewButton?.();
         this.setStatus("IK gizmo off");
         return false;
       }
@@ -128,6 +129,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
         this.setStatus("Load a rigged model first");
         return false;
       }
+      this.ensureSelectedBoneChain?.({ status: false });
       const chainNames = this.ikChainNames();
       if (chainNames.length < 2) {
         this.setStatus("Select a bone chain or an end bone for IK");
@@ -140,15 +142,14 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       this.pausePlayback();
       this.setSidePanelOpen(true);
       this.setRigPanelOpen(true);
-      this.setTool("bone");
-      this.setViewMode("mesh", { silent: true });
-      if (this.skeletonToggle) {
-        this.skeletonToggle.checked = true;
-        this.updateSkeletonHelper();
-      }
+      this.setTool("bone", { preserveViewportLayers: true });
 
       this.ikTargetGizmoArmed = true;
-      this.setActiveBone(chainNames[chainNames.length - 1], { stopPlacement: false });
+      this.ikEndBoneName = chainNames[chainNames.length - 1];
+      this.setActiveBone(this.ikEndBoneName, {
+        stopPlacement: false,
+        selectedBoneChainRootName: this.selectedBoneChainRootName || ""
+      });
       this.updateIkTargetFromChain(chainNames);
       this.refreshRigOverlays();
       this.updateIkMoveGizmo();
@@ -160,6 +161,18 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
     ikChainNames() {
       const selectedChain = (this.selectedBoneChainNames?.() || []).filter((name) => this.bones.has(name));
       if (selectedChain.length >= 2) {
+        const endName = this.ikEndBoneName || "";
+        const targetEndName = endName && this.bones.has(endName) ? endName : selectedChain[selectedChain.length - 1];
+        const path = [];
+        let bone = this.bones.get(targetEndName);
+        const rootName = selectedChain[0];
+        while (bone?.isBone) {
+          path.unshift(bone.name);
+          if (bone.name === rootName) {
+            return path.filter((name, index, all) => name && all.indexOf(name) === index && this.bones.has(name));
+          }
+          bone = bone.parent;
+        }
         return selectedChain;
       }
 
@@ -170,7 +183,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       }
 
       const names = [];
-      while (bone?.isBone && names.length < IK_MAX_AUTO_CHAIN_BONES) {
+      while (bone?.isBone) {
         names.unshift(bone.name);
         bone = bone.parent;
       }
@@ -288,7 +301,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       }
       const chainNames = this.ikChainNames();
       const shouldShow = Boolean(
-        !this.cleanPreview
+        (!this.cleanPreview || this.cleanPreviewAllowsRigGizmo?.())
         && this.activeTool === "bone"
         && !this.pendingBonePlacement
         && this.ikTargetGizmoArmed
@@ -324,6 +337,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       this.ikGizmoButton?.setAttribute("aria-pressed", "true");
       this.boneGizmoButton?.classList.remove("is-active");
       this.boneGizmoButton?.setAttribute("aria-pressed", "false");
+      this.updateGizmoOnlyPreviewButton?.();
     },
 
     beginIkMove() {
