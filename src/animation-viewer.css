@@ -935,6 +935,11 @@ button.is-active {
   height: 100%;
 }
 
+.weight-editor-app.is-texture-airbrush #viewer-canvas,
+#viewer-canvas.is-texture-airbrush {
+  cursor: none;
+}
+
 .weight-editor-app.is-clone-stamp #viewer-canvas,
 #viewer-canvas.is-clone-stamp {
   cursor: url("data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%2232%22%20height%3D%2232%22%20viewBox%3D%220%200%2032%2032%22%3E%3Cpath%20d%3D%22M12%203h8l1%209H11z%22%20fill%3D%22%23f4ead6%22%20stroke%3D%22%2310151a%22%20stroke-width%3D%222%22/%3E%3Cpath%20d%3D%22M8%2013h16v7H8z%22%20fill%3D%22%23dfb45d%22%20stroke%3D%22%2310151a%22%20stroke-width%3D%222%22/%3E%3Cpath%20d%3D%22M6%2022h20v5H6z%22%20fill%3D%22%23f4ead6%22%20stroke%3D%22%2310151a%22%20stroke-width%3D%222%22/%3E%3Cpath%20d%3D%22M5%2029h22%22%20stroke%3D%22%23dfb45d%22%20stroke-width%3D%222%22/%3E%3C/svg%3E") 16 25, copy;
@@ -2102,6 +2107,14 @@ button.is-active {
   border: 0;
   background: var(--red);
   pointer-events: auto;
+}
+
+.timeline-key-marker.is-adaptive {
+  background: #7fc8ff;
+}
+
+.timeline-key-marker.is-authored {
+  background: var(--red);
 }
 
 .timeline-key-menu {

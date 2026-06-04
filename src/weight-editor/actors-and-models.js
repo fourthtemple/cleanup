@@ -44,6 +44,164 @@ function animationLabelFromFileName(value) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function embeddedPngDimensions(bytes, offset) {
+  if (offset + 24 > bytes.length) {
+    return null;
+  }
+  return {
+    width: (
+      (bytes[offset + 16] << 24)
+      | (bytes[offset + 17] << 16)
+      | (bytes[offset + 18] << 8)
+      | bytes[offset + 19]
+    ) >>> 0,
+    height: (
+      (bytes[offset + 20] << 24)
+      | (bytes[offset + 21] << 16)
+      | (bytes[offset + 22] << 8)
+      | bytes[offset + 23]
+    ) >>> 0
+  };
+}
+
+function embeddedJpegDimensions(bytes, offset, end) {
+  let cursor = offset + 2;
+  while (cursor < end - 9) {
+    if (bytes[cursor] !== 0xff) {
+      cursor += 1;
+      continue;
+    }
+    while (bytes[cursor] === 0xff) {
+      cursor += 1;
+    }
+    const marker = bytes[cursor];
+    cursor += 1;
+    if (marker === 0xd9 || marker === 0xda) {
+      return null;
+    }
+    if (cursor + 2 > end) {
+      return null;
+    }
+    const length = (bytes[cursor] << 8) | bytes[cursor + 1];
+    if (length < 2 || cursor + length > end) {
+      return null;
+    }
+    if (
+      (marker >= 0xc0 && marker <= 0xc3)
+      || (marker >= 0xc5 && marker <= 0xc7)
+      || (marker >= 0xc9 && marker <= 0xcb)
+      || (marker >= 0xcd && marker <= 0xcf)
+    ) {
+      return {
+        height: (bytes[cursor + 3] << 8) | bytes[cursor + 4],
+        width: (bytes[cursor + 5] << 8) | bytes[cursor + 6]
+      };
+    }
+    cursor += length;
+  }
+  return null;
+}
+
+function sortEmbeddedTexturePayloads(payloads) {
+  return [...payloads].sort((a, b) => {
+    const areaA = (a.width || 0) * (a.height || 0);
+    const areaB = (b.width || 0) * (b.height || 0);
+    return (areaB - areaA) || (b.content.byteLength - a.content.byteLength);
+  });
+}
+
+function extractEmbeddedTexturePayloads(buffer) {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer || []);
+  const images = [];
+  const pngSignature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const matchesAt = (index, signature) => signature.every((value, offset) => bytes[index + offset] === value);
+  for (let index = 0; index < bytes.length - 8; index += 1) {
+    if (matchesAt(index, pngSignature)) {
+      for (let cursor = index + 8; cursor < bytes.length - 12;) {
+        const length = (
+          (bytes[cursor] << 24)
+          | (bytes[cursor + 1] << 16)
+          | (bytes[cursor + 2] << 8)
+          | bytes[cursor + 3]
+        ) >>> 0;
+        const type = String.fromCharCode(bytes[cursor + 4], bytes[cursor + 5], bytes[cursor + 6], bytes[cursor + 7]);
+        cursor += 12 + length;
+        if (type === "IEND" && cursor <= bytes.length) {
+          const imageBytes = bytes.subarray(index, cursor);
+          const content = imageBytes.slice();
+          const dimensions = embeddedPngDimensions(bytes, index);
+          images.push({
+            content,
+            mimeType: "image/png",
+            src: `data:image/png;base64,${bytesToBase64(imageBytes)}`,
+            fileName: `embedded-texture-${images.length + 1}.png`,
+            width: dimensions?.width || 0,
+            height: dimensions?.height || 0
+          });
+          index = cursor - 1;
+          break;
+        }
+      }
+    } else if (bytes[index] === 0xff && bytes[index + 1] === 0xd8 && bytes[index + 2] === 0xff) {
+      for (let cursor = index + 2; cursor < bytes.length - 1; cursor += 1) {
+        if (bytes[cursor] === 0xff && bytes[cursor + 1] === 0xd9) {
+          const imageBytes = bytes.subarray(index, cursor + 2);
+          const dimensions = embeddedJpegDimensions(bytes, index, cursor + 2);
+          if (!dimensions?.width || !dimensions?.height) {
+            index = cursor + 1;
+            break;
+          }
+          const content = imageBytes.slice();
+          images.push({
+            content,
+            mimeType: "image/jpeg",
+            src: `data:image/jpeg;base64,${bytesToBase64(imageBytes)}`,
+            fileName: `embedded-texture-${images.length + 1}.jpg`,
+            width: dimensions.width,
+            height: dimensions.height
+          });
+          index = cursor + 1;
+          break;
+        }
+      }
+    }
+  }
+  return sortEmbeddedTexturePayloads(images);
+}
+
+async function imageFromDataUrl(src) {
+  if (typeof Image === "undefined" || !src) {
+    return null;
+  }
+  const image = new Image();
+  image.decoding = "async";
+  image.src = src;
+  try {
+    if (typeof image.decode === "function") {
+      await image.decode();
+    } else if (!image.complete) {
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = reject;
+      });
+    }
+  } catch (error) {
+    console.warn("Could not decode embedded FBX texture", error);
+    return null;
+  }
+  return image;
+}
+
 function formatPreviewScaleMultiplier(value) {
   if (value < 0.01) {
     return value.toFixed(4);
@@ -537,6 +695,58 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       }
     },
 
+    async attachEmbeddedFbxTextures(scene, buffer) {
+      const payloads = extractEmbeddedTexturePayloads(buffer);
+      if (!scene || !payloads.length) {
+        return 0;
+      }
+      const decodedImages = (await Promise.all(payloads.map((payload) => imageFromDataUrl(payload.src))))
+        .map((image, index) => image ? { image, ...payloads[index] } : null)
+        .filter(Boolean);
+      if (!decodedImages.length) {
+        return 0;
+      }
+      const textures = [];
+      const seen = new Set();
+      const textureFields = ["map", "alphaMap", "aoMap", "bumpMap", "displacementMap", "emissiveMap", "lightMap", "metalnessMap", "normalMap", "roughnessMap", "specularMap"];
+      scene.traverse((object) => {
+        const materials = Array.isArray(object.material)
+          ? object.material
+          : [object.material].filter(Boolean);
+        for (const material of materials) {
+          for (const field of textureFields) {
+            const texture = material?.[field];
+            if (!texture || seen.has(texture.uuid)) {
+              continue;
+            }
+            seen.add(texture.uuid);
+            textures.push(texture);
+          }
+        }
+      });
+      let attached = 0;
+      textures.forEach((texture, index) => {
+        const embedded = decodedImages[Math.min(index, decodedImages.length - 1)];
+        if (!embedded) {
+          return;
+        }
+        texture.image = embedded.image;
+        texture.source.data = embedded.image;
+        texture.userData = {
+          ...(texture.userData || {}),
+          content: embedded.content,
+          mimeType: embedded.mimeType,
+          width: embedded.width,
+          height: embedded.height,
+          fileName: embedded.fileName,
+          relativeFileName: embedded.fileName
+        };
+        texture.needsUpdate = true;
+        attached += 1;
+      });
+      return attached;
+    },
+
     async loadModelAssetUrl(url) {
       const extension = animationFileExtension(url);
       if (extension === "fbx") {
@@ -544,7 +754,9 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        const scene = this.fbxLoader.parse(await response.arrayBuffer(), "");
+        const buffer = await response.arrayBuffer();
+        const scene = this.fbxLoader.parse(buffer, "");
+        await this.attachEmbeddedFbxTextures?.(scene, buffer);
         return {
           scene,
           animations: scene.animations || [],
@@ -625,7 +837,9 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         if (!response.ok) {
           throw new Error(`HTTP ${response.status}`);
         }
-        const scene = this.fbxLoader.parse(await response.arrayBuffer(), "");
+        const buffer = await response.arrayBuffer();
+        const scene = this.fbxLoader.parse(buffer, "");
+        await this.attachEmbeddedFbxTextures?.(scene, buffer);
         animations = scene.animations || [];
       } else {
         const gltf = await this.loadGLTFUrl(entry.url);
@@ -671,6 +885,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         let imported;
         if (extension === "fbx") {
           const scene = this.fbxLoader.parse(buffer, "");
+          await this.attachEmbeddedFbxTextures?.(scene, buffer);
           imported = { scene, animations: scene.animations || [] };
         } else {
           imported = await this.parseGLTFBuffer(buffer, "");
@@ -829,7 +1044,9 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }
-          const scene = this.fbxLoader.parse(await response.arrayBuffer(), "");
+          const buffer = await response.arrayBuffer();
+          const scene = this.fbxLoader.parse(buffer, "");
+          await this.attachEmbeddedFbxTextures?.(scene, buffer);
           imported = { scene, animations: scene.animations || [] };
         } else {
           imported = await this.loadGLTFUrl(url);
