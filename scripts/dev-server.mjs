@@ -64,7 +64,7 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(port, () => {
-  console.log(`Mixamo Cleanup dev server: http://127.0.0.1:${port}/`);
+  console.log(`Fourth Temple Cleanup dev server: http://127.0.0.1:${port}/`);
 });
 
 async function listAnimationLibrary(response) {

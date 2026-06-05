@@ -1706,7 +1706,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           result = await writeJsonFile(
             this.patchFileName(),
             text,
-            `Mixamo Cleanup ${this.actorTarget.label} weight patch`
+            `Fourth Temple Cleanup ${this.actorTarget.label} weight patch`
           );
         }
         this.setStatus(`${result === "download" ? "Downloaded" : "Saved"} ${this.patchFileName()}`);
