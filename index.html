@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fourth Temple Cleanup</title>
     <link rel="icon" href="./assets/fourth-temple-logo.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=rig-transform-details-20260605c" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=tutorial-drawer-20260605a" />
     <script type="importmap">
       {
         "imports": {
@@ -21,6 +21,7 @@
         <div class="viewer-panel-scroll">
           <header class="viewer-header">
             <button id="side-panel-toggle" class="panel-collapse-toggle" type="button" aria-label="Hide panel" title="Hide panel" aria-pressed="true"></button>
+            <button id="tutorials-toggle" class="tutorials-toggle" type="button" aria-controls="tutorial-drawer" aria-expanded="false" aria-label="Open tutorials" title="Tutorials">?</button>
             <div class="viewer-brand">
               <img class="viewer-logo" src="./assets/fourth-temple-logo.svg" alt="" aria-hidden="true" />
               <h1>Fourth Temple Cleanup</h1>
@@ -575,6 +576,74 @@
         <div id="texture-brush-cursor" class="texture-brush-cursor" aria-hidden="true" hidden></div>
       </section>
     </main>
+    <div id="tutorial-backdrop" class="tutorial-backdrop" hidden></div>
+    <aside id="tutorial-drawer" class="tutorial-drawer" aria-labelledby="tutorial-title" aria-hidden="true" tabindex="-1" hidden>
+      <header class="tutorial-drawer-header">
+        <div>
+          <p class="tutorial-eyebrow">Fourth Temple Cleanup</p>
+          <h2 id="tutorial-title">Feature Recipes</h2>
+        </div>
+        <button id="tutorial-close" class="tutorial-close" type="button" aria-label="Close tutorials" title="Close tutorials">×</button>
+      </header>
+      <div class="tutorial-drawer-body">
+        <section class="tutorial-card">
+          <h3>Quick Start</h3>
+          <ol>
+            <li>Use <b>Import To Folder</b> to add an FBX, GLB, or GLTF file.</li>
+            <li>Pick the file in <b>Animation Library</b>, then press <b>Play</b>.</li>
+            <li>Make edits, then use <b>Save</b> or <b>Save As</b> to keep the cleanup in browser storage.</li>
+          </ol>
+        </section>
+        <section class="tutorial-card">
+          <h3>Painting And Selection</h3>
+          <ol>
+            <li>Choose <b>Pen</b>, then paint vertices on the character.</li>
+            <li>Adjust <b>Selection radius</b>; enable <b>Through</b> when you want the brush to pass through the mesh.</li>
+            <li>Use <b>Airbrush</b> for color work, or <b>Clear Selection</b>, <b>Reset All</b>, and <b>Invert Selection</b> to reshape the selected region.</li>
+          </ol>
+        </section>
+        <section class="tutorial-card">
+          <h3>FK/IK Posing And Keys</h3>
+          <ol>
+            <li>Select a bone from <b>Bone</b> in the timeline.</li>
+            <li>Use <b>FK</b> with <b>Rotate</b> or <b>Move</b> for direct posing.</li>
+            <li>Use <b>IK</b> to drag a limb target, then press <b>Key</b> to bake the pose at the current frame.</li>
+          </ol>
+        </section>
+        <section class="tutorial-card">
+          <h3>Bone Chains And Distribution</h3>
+          <ol>
+            <li>Open <b>Rig</b>, select ordered items in <b>Chain bones</b>, then click <b>Add Chain</b>.</li>
+            <li>Choose that chain in <b>Assign Weight</b> and paint the region it should control.</li>
+            <li>Press <b>Distribute Chain</b> to spread the selected vertices across the chain.</li>
+          </ol>
+        </section>
+        <section class="tutorial-card">
+          <h3>Joint Constraints</h3>
+          <ol>
+            <li>Select the joint you want to limit and turn <b>Joint Constraints</b> <b>On</b>.</li>
+            <li>Pose the joint at its lower limit and click <b>Min Pose</b>.</li>
+            <li>Pose the joint at its upper limit and click <b>Max Pose</b>; use <b>Clear</b> to remove the limit.</li>
+          </ol>
+        </section>
+        <section class="tutorial-card">
+          <h3>Root Motion Cleanup</h3>
+          <ol>
+            <li>Load an animation where the hips carry travel motion.</li>
+            <li>Click <b>Unbake Root</b> to separate root travel from hip posing.</li>
+            <li>Preview the result, then <b>Save</b> before exporting for Unreal or Unity workflows.</li>
+          </ol>
+        </section>
+        <section class="tutorial-card">
+          <h3>Export</h3>
+          <ol>
+            <li>Choose an <b>FBX Target</b> such as Three.js/Web, Blender, Unity, Unreal, or Maya.</li>
+            <li>Use <b>Export FBX</b> for rigged animation pipelines.</li>
+            <li>Use <b>Export GLB</b> when you want a web-friendly scene export.</li>
+          </ol>
+        </section>
+      </div>
+    </aside>
     <script type="importmap">
       {
         "imports": {
@@ -583,6 +652,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/bird-weight-editor.js?v=browser-hosting-20260605a"></script>
+    <script type="module" src="./src/bird-weight-editor.js?v=tutorial-drawer-20260605a"></script>
   </body>
 </html>

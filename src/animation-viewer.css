@@ -162,6 +162,27 @@ input {
   filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.22));
 }
 
+.tutorials-toggle {
+  position: absolute;
+  top: 28px;
+  right: 0;
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-color: rgba(223, 180, 93, 0.48);
+  background: rgba(223, 180, 93, 0.12);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.tutorials-toggle[aria-expanded="true"] {
+  border-color: rgba(223, 180, 93, 0.88);
+  background: rgba(223, 180, 93, 0.28);
+}
+
 .viewer-kicker {
   margin: 0 0 4px;
   color: var(--muted);
@@ -670,6 +691,123 @@ input[type="color"] {
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
+}
+
+.tutorial-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 38;
+  background: rgba(5, 8, 10, 0.58);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.tutorial-backdrop.is-open {
+  opacity: 1;
+}
+
+.tutorial-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 39;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(430px, calc(100vw - 24px));
+  height: 100%;
+  border-left: 1px solid rgba(223, 180, 93, 0.34);
+  background: #11171c;
+  box-shadow: -18px 0 42px rgba(0, 0, 0, 0.34);
+  color: var(--text);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(18px);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.tutorial-drawer.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.tutorial-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border-bottom: 1px solid rgba(244, 234, 214, 0.16);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tutorial-eyebrow {
+  margin: 0 0 4px;
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tutorial-drawer h2 {
+  margin: 0;
+  font-size: 24px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.tutorial-close {
+  flex: 0 0 auto;
+  width: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.tutorial-drawer-body {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+}
+
+.tutorial-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(244, 234, 214, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.tutorial-card h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.tutorial-card ol {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding-left: 18px;
+  color: rgba(244, 234, 214, 0.82);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.tutorial-card b {
+  color: var(--text);
+  font-weight: 800;
 }
 
 .texture-brush-cursor {
@@ -1258,6 +1396,14 @@ button.is-active {
 .weight-editor-app .viewer-logo {
   width: 34px;
   height: 34px;
+}
+
+.weight-editor-app .viewer-panel .tutorials-toggle {
+  width: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  font-size: 11px;
 }
 
 .weight-editor-app .editor-control-panel .viewer-header {
@@ -2701,10 +2847,45 @@ button.is-active {
   white-space: nowrap;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .tutorial-backdrop,
+  .tutorial-drawer {
+    transition: none;
+  }
+}
+
 @media (max-width: 760px), (max-height: 560px) {
+  .tutorial-drawer {
+    width: min(100vw, 430px);
+  }
+
+  .tutorial-drawer-header {
+    padding: 14px;
+  }
+
+  .tutorial-drawer h2 {
+    font-size: 21px;
+  }
+
+  .tutorial-drawer-body {
+    padding: 10px;
+  }
+
   .viewer-app {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .weight-editor-app.is-side-panel-open {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .weight-editor-app.is-side-panel-open .viewer-panel {
+    display: flex;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
   }
 
   .viewer-panel {

@@ -652,6 +652,41 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       button.title = `${open ? "Minimize" : "Restore"} ${title}`;
     },
 
+    setTutorialDrawerOpen(open) {
+      if (!this.tutorialDrawer) {
+        return;
+      }
+      const nextOpen = Boolean(open);
+      window.clearTimeout(this.tutorialDrawerHideTimer);
+      this.tutorialDrawerOpen = nextOpen;
+      this.tutorialsToggle?.setAttribute("aria-expanded", String(nextOpen));
+      this.tutorialDrawer.setAttribute("aria-hidden", String(!nextOpen));
+      if (nextOpen) {
+        this.tutorialDrawer.hidden = false;
+        if (this.tutorialBackdrop) {
+          this.tutorialBackdrop.hidden = false;
+        }
+        window.requestAnimationFrame(() => {
+          if (!this.tutorialDrawerOpen) {
+            return;
+          }
+          this.tutorialDrawer?.classList.add("is-open");
+          this.tutorialBackdrop?.classList.add("is-open");
+        });
+        this.tutorialCloseButton?.focus({ preventScroll: true });
+        return;
+      }
+      this.tutorialDrawer.classList.remove("is-open");
+      this.tutorialBackdrop?.classList.remove("is-open");
+      this.tutorialDrawerHideTimer = window.setTimeout(() => {
+        this.tutorialDrawer.hidden = true;
+        if (this.tutorialBackdrop) {
+          this.tutorialBackdrop.hidden = true;
+        }
+      }, 180);
+      this.tutorialsToggle?.focus({ preventScroll: true });
+    },
+
     bindControls() {
       this.bindPanelSectionCollapseControls?.();
       this.characterSelect?.addEventListener("change", () => {
@@ -847,6 +882,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.undoButton?.addEventListener("click", () => this.undoLastEdit());
       this.redoButton?.addEventListener("click", () => this.redoLastEdit());
       window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && this.tutorialDrawerOpen) {
+          event.preventDefault();
+          this.setTutorialDrawerOpen(false);
+          return;
+        }
         const isUndo = (event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === "z";
         const isRedo = (event.metaKey || event.ctrlKey)
           && ((event.shiftKey && event.key.toLowerCase() === "z") || event.key.toLowerCase() === "y");
@@ -1233,6 +1273,15 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       });
       this.sidePanelShowToggle?.addEventListener("click", () => {
         this.setSidePanelOpen(true);
+      });
+      this.tutorialsToggle?.addEventListener("click", () => {
+        this.setTutorialDrawerOpen(!this.tutorialDrawerOpen);
+      });
+      this.tutorialCloseButton?.addEventListener("click", () => {
+        this.setTutorialDrawerOpen(false);
+      });
+      this.tutorialBackdrop?.addEventListener("click", () => {
+        this.setTutorialDrawerOpen(false);
       });
       this.timelineCompactToggle?.addEventListener("click", () => {
         this.setTimelineCompact(!this.app.classList.contains("is-timeline-compact"));
