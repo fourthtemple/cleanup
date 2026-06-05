@@ -2,6 +2,7 @@ import { exportCharacterFbx } from "@fourthtemple/fbx-exporter";
 
 export function installAssetExportMethods(BirdWeightEditor, deps) {
   const { THREE, GLTFExporter, SkeletonUtils } = deps;
+  const FBX_EXPORT_TARGETS = new Set(["threejs", "blender", "unity", "unreal", "maya"]);
   const EXPORT_TEXTURE_FIELDS = [
     "map",
     "alphaMap",
@@ -102,6 +103,28 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
   }
 
   Object.assign(BirdWeightEditor.prototype, {
+    selectedFbxExportTarget() {
+      const target = this.fbxExportTargetSelect?.value || this.fbxExportTarget || "threejs";
+      return FBX_EXPORT_TARGETS.has(target) ? target : "threejs";
+    },
+
+    fbxExportTargetLabel() {
+      return this.fbxExportTargetSelect?.selectedOptions?.[0]?.textContent?.trim()
+        || this.selectedFbxExportTarget();
+    },
+
+    setFbxExportTarget(target = "threejs", options = {}) {
+      const normalized = FBX_EXPORT_TARGETS.has(target) ? target : "threejs";
+      this.fbxExportTarget = normalized;
+      if (this.fbxExportTargetSelect && this.fbxExportTargetSelect.value !== normalized) {
+        this.fbxExportTargetSelect.value = normalized;
+      }
+      if (options.status !== false) {
+        this.setStatus(`FBX target: ${this.fbxExportTargetLabel()}`);
+      }
+      return normalized;
+    },
+
     syncExportButtons() {
       const enabled = Boolean(this.model);
       if (this.exportGlbButton) {
@@ -109,6 +132,9 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       }
       if (this.exportFbxButton) {
         this.exportFbxButton.disabled = !enabled;
+      }
+      if (this.unbakeRootMotionButton) {
+        this.unbakeRootMotionButton.disabled = !enabled || !this.activeClipEntry?.clip;
       }
       if (this.animationLibrarySaveFbxButton) {
         this.animationLibrarySaveFbxButton.disabled = !enabled;
@@ -712,6 +738,7 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       return this.withPreparedAssetExport("fbx", async (prepared) => {
         const warnings = [];
         const bytes = exportCharacterFbx(prepared, {
+          target: this.selectedFbxExportTarget(),
           embedTextures: true,
           textureTransformMode: "blender",
           bakeAnimations: false,
@@ -770,7 +797,7 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
         return false;
       }
       try {
-        this.setStatus("Baking FBX export");
+        this.setStatus(`Baking ${this.fbxExportTargetLabel()} FBX export`);
         const { bytes, warnings } = await this.bakeFbxExportBytes();
         const fileName = `${this.exportFileBaseName()}.fbx`;
         const blob = blobFromExportResult(bytes, "application/octet-stream");

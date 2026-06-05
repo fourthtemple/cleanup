@@ -67,6 +67,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
         this.updateBoneMoveGizmo?.();
         this.updateIkMoveGizmo?.();
       }
+      this.syncPoseGizmoModeControls?.();
     },
 
     restorePoseGizmoMode(mode = "") {
@@ -86,6 +87,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       this.ikTargetGizmoArmed = nextMode === "ik";
       this.updateBoneMoveGizmo?.();
       this.updateIkMoveGizmo?.();
+      this.syncPoseGizmoModeControls?.();
     },
 
     createIkTarget() {
@@ -318,6 +320,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
         this.ikTargetMarker.visible = false;
         this.ikGizmoButton?.classList.remove("is-active");
         this.ikGizmoButton?.setAttribute("aria-pressed", "false");
+        this.syncPoseGizmoModeControls?.();
         return;
       }
 
@@ -338,6 +341,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       this.boneGizmoButton?.classList.remove("is-active");
       this.boneGizmoButton?.setAttribute("aria-pressed", "false");
       this.updateGizmoOnlyPreviewButton?.();
+      this.syncPoseGizmoModeControls?.();
     },
 
     beginIkMove() {

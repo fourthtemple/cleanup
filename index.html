@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Telekinetikitty Cleanup</title>
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=joint-constraints-package-20260604a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=fk-rotate-mode-20260604a" />
     <script type="importmap">
       {
         "imports": {
@@ -35,9 +35,23 @@
             <span>Animation</span>
             <select id="weight-action-select"></select>
           </label>
+          <label class="viewer-field">
+            <span>FBX Target</span>
+            <select id="fbx-export-target">
+              <option value="threejs" selected>Three.js/Web</option>
+              <option value="blender">Blender</option>
+              <option value="unity">Unity</option>
+              <option value="unreal">Unreal</option>
+              <option value="maya">Maya</option>
+              <option value="custom" disabled>Custom</option>
+            </select>
+          </label>
           <div class="viewer-actions export-actions">
             <button id="export-fbx-button" type="button" disabled>Export FBX</button>
             <button id="export-glb-button" type="button" disabled>Export GLB</button>
+          </div>
+          <div class="viewer-actions export-actions">
+            <button id="unbake-root-motion" type="button" disabled>Unbake Root</button>
           </div>
           <div class="viewer-checks import-options">
             <label><input id="use-timeline-keys" name="edit-source-mode" type="radio" value="solved" /> Use solved keys</label>
@@ -244,20 +258,27 @@
                     On
                   </label>
                 </div>
-                <div class="joint-constraint-grid" aria-label="Rotation limits in degrees">
-                  <span></span>
-                  <span>Min</span>
-                  <span>Max</span>
-                  <span>X</span>
-                  <input id="joint-constraint-x-min" type="number" min="-360" max="360" step="1" value="-180" />
-                  <input id="joint-constraint-x-max" type="number" min="-360" max="360" step="1" value="180" />
-                  <span>Y</span>
-                  <input id="joint-constraint-y-min" type="number" min="-360" max="360" step="1" value="-180" />
-                  <input id="joint-constraint-y-max" type="number" min="-360" max="360" step="1" value="180" />
-                  <span>Z</span>
-                  <input id="joint-constraint-z-min" type="number" min="-360" max="360" step="1" value="-180" />
-                  <input id="joint-constraint-z-max" type="number" min="-360" max="360" step="1" value="180" />
+                <div class="viewer-actions joint-constraint-capture" aria-label="Capture rotation limits from the current FK pose">
+                  <button type="button" data-joint-constraint-capture="min" title="Set the selected bone's minimum rotation from the current FK pose">Min Pose</button>
+                  <button type="button" data-joint-constraint-capture="max" title="Set the selected bone's maximum rotation from the current FK pose">Max Pose</button>
                 </div>
+                <details class="joint-constraint-advanced">
+                  <summary>Advanced Axes</summary>
+                  <div class="joint-constraint-grid" aria-label="Rotation limits in degrees">
+                    <span></span>
+                    <span>Min</span>
+                    <span>Max</span>
+                    <span>X</span>
+                    <input id="joint-constraint-x-min" type="number" min="-360" max="360" step="1" value="-180" />
+                    <input id="joint-constraint-x-max" type="number" min="-360" max="360" step="1" value="180" />
+                    <span>Y</span>
+                    <input id="joint-constraint-y-min" type="number" min="-360" max="360" step="1" value="-180" />
+                    <input id="joint-constraint-y-max" type="number" min="-360" max="360" step="1" value="180" />
+                    <span>Z</span>
+                    <input id="joint-constraint-z-min" type="number" min="-360" max="360" step="1" value="-180" />
+                    <input id="joint-constraint-z-max" type="number" min="-360" max="360" step="1" value="180" />
+                  </div>
+                </details>
                 <div class="viewer-grid-actions joint-constraint-actions">
                   <button id="joint-constraint-clear" type="button">Clear</button>
                 </div>
@@ -447,10 +468,14 @@
           <div class="timeline-pose-row">
             <div class="timeline-pose-tools">
               <div class="timeline-bone-tool-actions">
-                <button id="bone-gizmo" class="timeline-bone-tool" type="button" title="Move selected bone with the FK gizmo">FK</button>
+                <button id="bone-gizmo" class="timeline-bone-tool" type="button" title="Pose selected bone with the FK gizmo">FK</button>
                 <button id="ik-gizmo" class="timeline-bone-tool" type="button" title="Move selected chain with inverse kinematics">IK</button>
               </div>
-              <div class="ik-chain-settings timeline-ik-settings" aria-label="IK chain settings">
+              <div id="fk-gizmo-mode-control" class="timeline-fk-mode" role="radiogroup" aria-label="FK gizmo mode" hidden>
+                <label><input id="fk-gizmo-mode-rotate" name="fk-gizmo-mode" type="radio" value="rotate" checked /> Rotate</label>
+                <label><input id="fk-gizmo-mode-move" name="fk-gizmo-mode" type="radio" value="translate" /> Move</label>
+              </div>
+              <div id="timeline-ik-settings" class="ik-chain-settings timeline-ik-settings" aria-label="IK chain settings">
                 <label class="viewer-field">
                   <span>IK solver</span>
                   <select id="ik-solver-mode">
@@ -478,32 +503,32 @@
                 <label class="timeline-rot-field">
                   <span>Rot X</span>
                   <input id="pose-rot-x" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
-                  <input id="pose-rot-x-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
+                  <input id="pose-rot-x-value" class="timeline-value-input" type="number" step="0.01" value="0.00" />
                 </label>
                 <label class="timeline-rot-field">
                   <span>Rot Y</span>
                   <input id="pose-rot-y" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
-                  <input id="pose-rot-y-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
+                  <input id="pose-rot-y-value" class="timeline-value-input" type="number" step="0.01" value="0.00" />
                 </label>
                 <label class="timeline-rot-field">
                   <span>Rot Z</span>
                   <input id="pose-rot-z" type="range" min="-1.57" max="1.57" step="0.01" value="0" />
-                  <input id="pose-rot-z-value" class="timeline-value-input" type="number" min="-1.57" max="1.57" step="0.01" value="0.00" />
+                  <input id="pose-rot-z-value" class="timeline-value-input" type="number" step="0.01" value="0.00" />
                 </label>
                 <label class="timeline-rot-field">
                   <span>Move X</span>
                   <input id="pose-pos-x" type="range" min="-30" max="30" step="0.005" value="0" />
-                  <input id="pose-pos-x-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
+                  <input id="pose-pos-x-value" class="timeline-value-input" type="number" step="0.005" value="0.000" />
                 </label>
                 <label class="timeline-rot-field">
                   <span>Move Y</span>
                   <input id="pose-pos-y" type="range" min="-30" max="30" step="0.005" value="0" />
-                  <input id="pose-pos-y-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
+                  <input id="pose-pos-y-value" class="timeline-value-input" type="number" step="0.005" value="0.000" />
                 </label>
                 <label class="timeline-rot-field">
                   <span>Move Z</span>
                   <input id="pose-pos-z" type="range" min="-30" max="30" step="0.005" value="0" />
-                  <input id="pose-pos-z-value" class="timeline-value-input" type="number" min="-30" max="30" step="0.005" value="0.000" />
+                  <input id="pose-pos-z-value" class="timeline-value-input" type="number" step="0.005" value="0.000" />
                 </label>
               </div>
             </div>
@@ -562,6 +587,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/bird-weight-editor.js?v=split-viewport-toolbar-20260604a"></script>
+    <script type="module" src="./src/bird-weight-editor.js?v=root-unbake-20260604d"></script>
   </body>
 </html>

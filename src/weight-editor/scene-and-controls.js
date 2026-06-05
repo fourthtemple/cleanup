@@ -432,8 +432,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.exportFbxButton?.addEventListener("click", () => {
         void this.exportFbxAsset?.();
       });
+      this.fbxExportTargetSelect?.addEventListener("change", () => {
+        this.setFbxExportTarget?.(this.fbxExportTargetSelect.value);
+      });
       this.exportGlbButton?.addEventListener("click", () => {
         void this.exportGlbAsset?.();
+      });
+      this.unbakeRootMotionButton?.addEventListener("click", () => {
+        this.withUndo("Unbake root motion", () => this.unbakeActiveClipHipRootMotion?.(), { includeClip: true });
       });
       this.bindAnimationLibraryControls?.();
       this.timelineBlendActionSelect?.addEventListener("change", () => {
@@ -526,6 +532,13 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.deleteBoneButton?.addEventListener("click", () => this.withUndo("Delete bone", () => this.deleteActiveVirtualBone()));
       this.boneGizmoButton?.addEventListener("click", () => this.toggleActiveBoneMoveGizmo?.());
       this.ikGizmoButton?.addEventListener("click", () => this.toggleIkMoveGizmo?.());
+      for (const input of this.fkGizmoModeInputs || []) {
+        input.addEventListener("change", () => {
+          if (input.checked) {
+            this.setFkGizmoMode?.(input.value);
+          }
+        });
+      }
       this.ikSolverModeSelect?.addEventListener("change", () => {
         this.withUndo("IK settings", () => this.updateSelectedIkSettingsFromControls?.());
       });
@@ -560,6 +573,13 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.jointConstraintClearButton?.addEventListener("click", () => {
         this.withUndo("Clear joint constraint", () => this.clearSelectedJointConstraint?.());
       });
+      for (const button of this.jointConstraintCaptureButtons || []) {
+        button.addEventListener("click", () => {
+          this.withUndo("Capture joint limit", () => {
+            this.captureCurrentJointConstraintPoseLimit?.(button.dataset.jointConstraintCapture || "max");
+          });
+        });
+      }
       this.jointConstraintSaveTemplateButton?.addEventListener("click", () => this.saveCurrentJointConstraintTemplate?.());
       this.jointConstraintApplyTemplateButton?.addEventListener("click", () => {
         this.withUndo("Apply joint constraints", () => this.applySelectedJointConstraintTemplate?.());
@@ -714,9 +734,17 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.selectSingleBoneChainMember?.(this.poseBoneSelect.value);
         this.syncPoseControls();
         this.syncJointConstraintControls?.();
+        this.clearJointConstraintEditedPoseChannels?.(this.poseBoneSelect.value);
         this.updateBoneLayerList();
       });
-      for (const input of [this.poseRotX, this.poseRotY, this.poseRotZ, this.posePosX, this.posePosY, this.posePosZ]) {
+      for (const [input, channel] of [
+        [this.poseRotX, "x"],
+        [this.poseRotY, "y"],
+        [this.poseRotZ, "z"],
+        [this.posePosX, "px"],
+        [this.posePosY, "py"],
+        [this.posePosZ, "pz"]
+      ]) {
         input.addEventListener("pointerdown", () => {
           this.beginPoseControlUndo();
           this.draggingPoseControl = true;
@@ -732,8 +760,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         });
         input.addEventListener("input", () => {
           this.beginPoseControlUndo();
+          this.markJointConstraintPoseChannelEdited?.(channel);
           this.pausePlayback();
-          this.updateManualPoseFromControls();
+          this.updateManualPoseFromControls({ channel });
         });
       }
       for (const [range, numberInput, channel] of [
@@ -755,8 +784,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           this.beginPoseControlUndo();
           this.expandPoseControlDomainForValue(channel, value);
           range.value = String(value);
+          this.markJointConstraintPoseChannelEdited?.(channel);
           this.pausePlayback();
-          this.updateManualPoseFromControls();
+          this.updateManualPoseFromControls({ channel });
         };
         numberInput.addEventListener("pointerdown", () => {
           this.beginPoseControlUndo();

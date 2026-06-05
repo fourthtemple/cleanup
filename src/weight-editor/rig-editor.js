@@ -116,7 +116,8 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
           name: bone.name,
           parent: bone.parent,
           position: [...(bone.position || [])],
-          rotation: [...(bone.rotation || [])]
+          rotation: [...(bone.rotation || [])],
+          ...(bone.role ? { role: bone.role } : {})
         })),
         manualBoneChains: (this.manualBoneChains || []).map((chain) => ({
           id: chain.id,
@@ -143,8 +144,18 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.boneMoveGizmoArmed = false;
       this.ikTargetGizmoArmed = false;
       const currentNames = new Set((this.virtualBones || []).map((bone) => bone.name));
+      const currentRecords = new Map((this.virtualBones || []).map((bone) => [bone.name, bone]));
       for (const name of currentNames) {
         const bone = this.bones.get(name);
+        if (currentRecords.get(name)?.role === "rootMotion" && bone?.parent) {
+          bone.position.set(0, 0, 0);
+          bone.quaternion.identity();
+          bone.scale.set(1, 1, 1);
+          const parent = bone.parent;
+          for (const child of [...bone.children]) {
+            parent.add(child);
+          }
+        }
         bone?.parent?.remove(bone);
         this.bones.delete(name);
         this.manualPose?.delete?.(name);
@@ -155,6 +166,10 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.ikChainSettings?.clear?.();
 
       for (const bone of snapshot.virtualBones || []) {
+        if (bone.role === "rootMotion") {
+          this.ensureRootMotionUnbakeBone?.(this.rootMotionUnbakeHipBone?.(), { name: bone.name });
+          continue;
+        }
         this.addVirtualBone({
           name: bone.name,
           parent: bone.parent,
@@ -795,6 +810,36 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       return this.showActiveBoneMoveGizmo();
     },
 
+    fkGizmoTransformMode() {
+      return this.fkGizmoMode === "translate" ? "translate" : "rotate";
+    },
+
+    setFkGizmoMode(mode = "rotate", options = {}) {
+      const nextMode = mode === "translate" ? "translate" : "rotate";
+      this.fkGizmoMode = nextMode;
+      for (const input of this.fkGizmoModeInputs || []) {
+        input.checked = input.value === nextMode;
+      }
+      if (this.boneMoveGizmoArmed) {
+        this.updateBoneMoveGizmo();
+      }
+      this.syncPoseGizmoModeControls?.();
+      if (!options.silent) {
+        this.setStatus(`FK ${nextMode === "rotate" ? "rotate" : "move"}`);
+      }
+      return nextMode;
+    },
+
+    syncPoseGizmoModeControls() {
+      const activeMode = this.activePoseGizmoMode?.() || "";
+      if (this.fkGizmoModeControl) {
+        this.fkGizmoModeControl.hidden = activeMode !== "fk";
+      }
+      if (this.timelineIkSettings) {
+        this.timelineIkSettings.hidden = activeMode === "fk";
+      }
+    },
+
     showActiveBoneMoveGizmo() {
       const bone = this.bones.get(this.activeBoneName);
       if (!bone) {
@@ -810,7 +855,9 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.setTool("bone", { preserveViewportLayers: true });
       this.boneMoveGizmoArmed = true;
       this.refreshRigOverlays();
-      this.setStatus(`Move ${this.boneDisplayName(this.activeBoneName)} with the gizmo`);
+      this.syncPoseGizmoModeControls?.();
+      const modeLabel = this.fkGizmoTransformMode() === "rotate" ? "Rotate" : "Move";
+      this.setStatus(`${modeLabel} ${this.boneDisplayName(this.activeBoneName)} with the FK gizmo`);
       return true;
     },
 
@@ -978,9 +1025,19 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       }
       this.boneMoveGizmoArmed = false;
       const names = new Set(this.virtualBones.map((bone) => bone.name));
+      const records = new Map(this.virtualBones.map((bone) => [bone.name, bone]));
       this.removeBoneInfluencesByNames(names);
       for (const name of names) {
         const bone = this.bones.get(name);
+        if (records.get(name)?.role === "rootMotion" && bone?.parent) {
+          bone.position.set(0, 0, 0);
+          bone.quaternion.identity();
+          bone.scale.set(1, 1, 1);
+          const parent = bone.parent;
+          for (const child of [...bone.children]) {
+            parent.add(child);
+          }
+        }
         bone?.parent?.remove(bone);
         this.bones.delete(name);
         this.manualPose.delete(name);
@@ -1032,6 +1089,15 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.removeBoneInfluencesByNames(names);
       for (const name of names) {
         const bone = this.bones.get(name);
+        if (this.customBoneRecord(name)?.role === "rootMotion" && bone?.parent) {
+          bone.position.set(0, 0, 0);
+          bone.quaternion.identity();
+          bone.scale.set(1, 1, 1);
+          const parent = bone.parent;
+          for (const child of [...bone.children]) {
+            parent.add(child);
+          }
+        }
         bone?.parent?.remove(bone);
         this.bones.delete(name);
         this.manualPose.delete(name);
@@ -1264,10 +1330,13 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         }
         this.boneGizmoButton?.classList.remove("is-active");
         this.boneGizmoButton?.setAttribute("aria-pressed", "false");
+        this.syncPoseGizmoModeControls?.();
         return;
       }
 
-      this.transformControls.setMode("translate");
+      const transformMode = this.fkGizmoTransformMode();
+      this.transformControls.setMode(transformMode);
+      this.transformControls.setSpace?.(transformMode === "rotate" ? "local" : "world");
       if (this.transformControls.object !== bone) {
         this.transformControls.attach(bone);
       }
@@ -1276,6 +1345,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.boneGizmoButton?.classList.add("is-active");
       this.boneGizmoButton?.setAttribute("aria-pressed", "true");
       this.updateGizmoOnlyPreviewButton?.();
+      this.syncPoseGizmoModeControls?.();
     },
 
     beginBoneMove() {
@@ -1287,13 +1357,28 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         return;
       }
       this.setBonePlacementPending(false);
-      this.beginPoseControlUndo(record ? "Move rig bone" : "Move bone");
+      const gizmoMode = this.fkGizmoTransformMode();
+      const manualPose = this.manualPose.get(bone.name) || {};
+      const editedChannels = this.manualPoseEditedChannels?.get?.(bone.name)
+        || new Set(Object.keys(manualPose).filter((channel) => ["x", "y", "z"].includes(channel)));
+      const startManualPose = {};
+      for (const channel of ["x", "y", "z", "px", "py", "pz"]) {
+        if (editedChannels.has(channel) && manualPose[channel] !== undefined) {
+          startManualPose[channel] = finitePoseValue(manualPose[channel]);
+        }
+      }
+      this.beginPoseControlUndo(record
+        ? gizmoMode === "rotate" ? "Rotate rig bone" : "Move rig bone"
+        : gizmoMode === "rotate" ? "Rotate bone" : "Move bone");
       this.boneMoveDrag = {
         mode: record ? "rig" : "pose",
+        gizmoMode,
         name: bone.name,
         bone,
         startPosition: bone.position.clone(),
         startQuaternion: bone.quaternion.clone(),
+        startManualPose: record ? null : startManualPose,
+        startEditedChannels: record ? null : new Set(editedChannels),
         startPose: record ? null : this.poseGizmoStartPose(bone.name)
       };
     },
@@ -1322,6 +1407,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       }
       const { bone, name } = this.boneMoveDrag;
       if (this.boneMoveDrag.mode === "pose") {
+        const actionLabel = this.boneMoveDrag.gizmoMode === "rotate" ? "Rotated" : "Moved";
         this.applyPoseBoneMove();
         this.boneMoveDrag = null;
         this.endPoseControlUndo();
@@ -1329,9 +1415,10 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         this.syncPoseControlsToCurrentBone();
         this.refreshRigOverlays();
         this.syncPatchJson();
-        this.setStatus(`Moved ${this.boneDisplayName(bone.name || name)} pose`);
+        this.setStatus(`${actionLabel} ${this.boneDisplayName(bone.name || name)} pose`);
         return;
       }
+      const actionLabel = this.boneMoveDrag.gizmoMode === "rotate" ? "Rotated" : "Moved";
       this.boneMoveDrag = null;
       this.endPoseControlUndo();
       this.updateBoneRecordFromObject(bone.name);
@@ -1340,7 +1427,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.refreshRigControls(bone.name || name, { stopPlacement: false });
       this.refreshRigOverlays();
       this.syncPatchJson();
-      this.setStatus(`Moved ${this.boneDisplayName(bone.name || name)}`);
+      this.setStatus(`${actionLabel} ${this.boneDisplayName(bone.name || name)}`);
     },
 
     poseGizmoStartPose(name) {
@@ -1361,18 +1448,36 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       if (!drag?.bone || drag.mode !== "pose") {
         return;
       }
-      const delta = drag.bone.position.clone().sub(drag.startPosition);
-      const nextPose = {
-        ...drag.startPose,
-        px: finitePoseValue((drag.startPose?.px || 0) + delta.x),
-        py: finitePoseValue((drag.startPose?.py || 0) + delta.y),
-        pz: finitePoseValue((drag.startPose?.pz || 0) + delta.z)
-      };
-      for (const [name, pose] of this.mirroredBoneEntries(drag.name, nextPose)) {
+      const relativePose = drag.gizmoMode === "rotate"
+        ? this.getBoneRelativePose?.(drag.name) || {}
+        : null;
+      const nextPose = drag.gizmoMode === "rotate"
+        ? {
+          ...(drag.startManualPose || {}),
+          x: finitePoseValue(relativePose.x ?? drag.startPose?.x),
+          y: finitePoseValue(relativePose.y ?? drag.startPose?.y),
+          z: finitePoseValue(relativePose.z ?? drag.startPose?.z)
+        }
+        : {
+          ...drag.startPose,
+          px: finitePoseValue((drag.startPose?.px || 0) + drag.bone.position.x - drag.startPosition.x),
+          py: finitePoseValue((drag.startPose?.py || 0) + drag.bone.position.y - drag.startPosition.y),
+          pz: finitePoseValue((drag.startPose?.pz || 0) + drag.bone.position.z - drag.startPosition.z)
+        };
+      const constrainedPose = this.clampPoseWithJointConstraint?.(drag.name, nextPose) || nextPose;
+      if (drag.gizmoMode === "rotate") {
+        for (const channel of ["x", "y", "z"]) {
+          if (Math.abs(finitePoseValue(constrainedPose[channel]) - finitePoseValue(drag.startPose?.[channel])) > 0.00001) {
+            this.markJointConstraintPoseChannelEdited?.(channel, drag.name);
+          }
+        }
+      }
+      for (const [name, pose] of this.mirroredBoneEntries(drag.name, constrainedPose)) {
         this.manualPose.set(name, { ...pose });
+        this.manualPoseEditedChannels?.set?.(name, new Set(Object.keys(constrainedPose)));
       }
       if (this.poseBoneSelect?.value === drag.name) {
-        this.setPoseControlsFromPose(nextPose, drag.name);
+        this.setPoseControlsFromPose(constrainedPose, drag.name);
       }
       this.applyPose(this.progress);
       this.model?.updateMatrixWorld(true);
@@ -1404,6 +1509,17 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       for (const definition of rigBones) {
         const name = this.sanitizeNewBoneName(definition?.name);
         const parent = this.sanitizeNewBoneName(definition?.parent);
+        if (definition?.role === "rootMotion") {
+          const hips = this.rootMotionUnbakeHipBone?.();
+          const root = this.ensureRootMotionUnbakeBone?.(hips, { name });
+          if (root) {
+            const record = this.virtualBones.find((bone) => bone.name === root.name);
+            if (record) {
+              record.role = "rootMotion";
+            }
+          }
+          continue;
+        }
         if (!name || !parent || this.bones.has(name)) {
           continue;
         }
@@ -1445,6 +1561,9 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         }
       }
       this.activeBoneName = name;
+      if (previousName !== name) {
+        this.clearJointConstraintEditedPoseChannels?.(name);
+      }
       if (clearBoneChain) {
         this.selectedBoneChainRootName = "";
         this.chainBoneSelectionMode = "none";

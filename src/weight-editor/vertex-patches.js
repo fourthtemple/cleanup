@@ -504,6 +504,10 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
       if (jointConstraints.length) {
         patch.jointConstraints = jointConstraints;
       }
+      const rootMotionUnbakes = this.serializeRootMotionUnbakes?.() || [];
+      if (rootMotionUnbakes.length) {
+        patch.rootMotionUnbakes = rootMotionUnbakes;
+      }
       if (poseCurveHandles.length) {
         patch.poseCurveHandles = poseCurveHandles;
       }
@@ -838,6 +842,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         this.applyRigBones(patch.rigBones || []);
         this.applyBoneChains?.(patch.boneChains || []);
         this.applySerializedJointConstraints?.(patch.jointConstraints || []);
+        const rootMotionUnbakeChanged = this.applySerializedRootMotionUnbakes?.(patch.rootMotionUnbakes || []) || false;
         const customBoneNames = new Set(this.virtualBones.map((bone) => bone.name));
         const clipCleanupChanged = this.applySerializedClipCleanupEdits?.(patch.clipCleanup || []) || false;
         const poseLayer = this.normalizedPatchPoseLayer(patch, customBoneNames);
@@ -920,7 +925,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         }
         this.updateSelectionMarkers();
         this.updateMoveGizmo();
-        if (clipCleanupChanged && this.activeClipEntry?.clip && this.actorTarget?.mode !== "bird-flap") {
+        if ((clipCleanupChanged || rootMotionUnbakeChanged) && this.activeClipEntry?.clip && this.actorTarget?.mode !== "bird-flap") {
           void this.playClipEntry(this.activeClipEntry);
         }
         if (applyPose) {

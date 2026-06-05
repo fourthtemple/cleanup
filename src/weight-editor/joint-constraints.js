@@ -205,6 +205,9 @@ export function installJointConstraintMethods(BirdWeightEditor, deps) {
           maxInput.value = String(toDegrees(constraint.max[channel]));
         }
       }
+      for (const button of this.jointConstraintCaptureButtons || []) {
+        button.disabled = disabled;
+      }
       this.refreshJointConstraintTemplateSelect();
     },
 
@@ -225,6 +228,81 @@ export function installJointConstraintMethods(BirdWeightEditor, deps) {
     updateSelectedJointConstraintFromControls(options = {}) {
       const boneName = this.poseBoneSelect?.value || this.activeBoneName || "";
       return this.setJointConstraintForBone(boneName, this.readJointConstraintControls(), options);
+    },
+
+    clearJointConstraintEditedPoseChannels(boneName = this.poseBoneSelect?.value || this.activeBoneName || "") {
+      this.jointConstraintEditedPoseBone = boneName || "";
+      this.jointConstraintEditedPoseChannels?.clear?.();
+    },
+
+    markJointConstraintPoseChannelEdited(channel, boneName = this.poseBoneSelect?.value || this.activeBoneName || "") {
+      if (!ROTATION_CHANNELS.includes(channel)) {
+        return;
+      }
+      if (!this.jointConstraintEditedPoseChannels) {
+        this.jointConstraintEditedPoseChannels = new Set();
+      }
+      const name = boneName || "";
+      if (this.jointConstraintEditedPoseBone !== name) {
+        this.jointConstraintEditedPoseChannels.clear();
+        this.jointConstraintEditedPoseBone = name;
+      }
+      this.jointConstraintEditedPoseChannels.add(channel);
+    },
+
+    jointConstraintCaptureChannels(boneName, pose = {}) {
+      if (
+        boneName
+        && this.jointConstraintEditedPoseBone === boneName
+        && this.jointConstraintEditedPoseChannels?.size
+      ) {
+        return ROTATION_CHANNELS.filter((channel) => this.jointConstraintEditedPoseChannels.has(channel));
+      }
+      return ROTATION_CHANNELS.filter((channel) => Math.abs(finitePoseValue(pose[channel])) >= 0.0001);
+    },
+
+    captureCurrentJointConstraintPoseLimit(side = "max") {
+      const boneName = this.poseBoneSelect?.value || this.activeBoneName || "";
+      if (!boneName || !this.bones?.has?.(boneName)) {
+        this.setStatus("Select a bone before capturing joint limits");
+        return false;
+      }
+      const targetSide = side === "min" ? "min" : "max";
+      const oppositeSide = targetSide === "min" ? "max" : "min";
+      const pose = this.readPoseControls?.() || {};
+      const current = this.jointConstraintForBone(boneName);
+      const defaults = current.enabled ? current : this.defaultJointConstraint();
+      const next = {
+        enabled: true,
+        min: { ...defaults.min },
+        max: { ...defaults.max }
+      };
+      const captureChannels = this.jointConstraintCaptureChannels(boneName, pose);
+      if (!captureChannels.length) {
+        this.setStatus("Rotate the selected bone before capturing a joint limit");
+        return false;
+      }
+      for (const channel of captureChannels) {
+        const value = finitePoseValue(pose[channel]);
+        next[targetSide][channel] = value;
+        if (targetSide === "min" && next[oppositeSide][channel] < value) {
+          next[oppositeSide][channel] = value;
+        }
+        if (targetSide === "max" && next[oppositeSide][channel] > value) {
+          next[oppositeSide][channel] = value;
+        }
+      }
+      const captured = this.setJointConstraintForBone(boneName, next, {
+        clampCurrentPose: false,
+        silent: true
+      });
+      if (!captured) {
+        return false;
+      }
+      this.clearJointConstraintEditedPoseChannels(boneName);
+      const channelLabel = captureChannels.map((channel) => channel.toUpperCase()).join("/");
+      this.setStatus(`Captured ${this.boneDisplayName?.(boneName) || boneName} ${targetSide} ${channelLabel} pose`);
+      return true;
     },
 
     saveCurrentJointConstraintTemplate() {
@@ -279,6 +357,7 @@ export function installJointConstraintMethods(BirdWeightEditor, deps) {
 
     clearSelectedJointConstraint() {
       const boneName = this.poseBoneSelect?.value || this.activeBoneName || "";
+      this.clearJointConstraintEditedPoseChannels(boneName);
       return this.setJointConstraintForBone(boneName, { ...this.defaultJointConstraint(), enabled: false });
     }
   });

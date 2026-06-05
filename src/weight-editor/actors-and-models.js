@@ -558,6 +558,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.invalidateRootMotionPreviewProfile?.();
       this.clipEntries = [];
       this.clipCleanupEdits.clear();
+      this.rootMotionUnbakeActions?.clear?.();
       this.lastClipSampleTime = null;
       this.poseKeyframeMode = "additive";
       this.poseKeyframesGenerated = false;
@@ -824,6 +825,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.lastClipSampleTime = null;
       this.invalidateRootMotionPreviewProfile?.();
       this.syncClipCleanupControls();
+      this.syncExportButtons?.();
     },
 
     async loadClipForEntry(entry) {
