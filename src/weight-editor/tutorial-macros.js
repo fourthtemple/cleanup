@@ -283,6 +283,9 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         this.setStatus("Load the cat demo before recording the tutorial macro");
         return false;
       }
+      if (name === "fk-ik") {
+        this.ensureTutorialDemoFkIkChain?.({ status: false });
+      }
       const restoreState = this.captureUndoState?.("Tutorial macro baseline", { includeClip: true }) || null;
       const startTime = nowMs();
       this.tutorialMacroRecording = {
@@ -616,6 +619,9 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if (!ready) {
         this.setStatus("Load the cat demo before playing the tutorial macro");
         return false;
+      }
+      if (macroName === "fk-ik") {
+        this.ensureTutorialDemoFkIkChain?.({ status: false });
       }
       this.tutorialMacroPlaying = true;
       this.tutorialMacroPlayingName = macroName;

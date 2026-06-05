@@ -404,6 +404,46 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       return chain.id;
     },
 
+    tutorialDemoFkIkChainNames(side = "left") {
+      const prefix = String(side || "left").toLowerCase() === "right" ? "Right" : "Left";
+      return [
+        `mixamorig${prefix}Shoulder`,
+        `mixamorig${prefix}Arm`,
+        `mixamorig${prefix}ForeArm`,
+        `mixamorig${prefix}Hand`
+      ].filter((name) => this.bones.has(name));
+    },
+
+    ensureTutorialDemoFkIkChain(options = {}) {
+      const names = this.tutorialDemoFkIkChainNames(options.side || "left");
+      if (names.length < 4) {
+        if (options.status !== false) {
+          this.setStatus("Could not find the shoulder, arm, forearm, and hand bones for the FK/IK demo");
+        }
+        return "";
+      }
+      const chain = this.upsertManualBoneChain(names);
+      this.selectedBoneChainRootName = chain.id;
+      this.chainBoneSelectionMode = "chain";
+      this.ikEndBoneName = names[names.length - 1];
+      this.renderBoneChainOptions?.(chain.id);
+      this.renderAddBoneChainMemberOptions?.(names);
+      this.setActiveBone(this.ikEndBoneName, {
+        selectedBoneChainRootName: chain.id,
+        preserveBoneChainMemberSelection: true
+      });
+      this.selectedBoneChainRootName = chain.id;
+      if (this.boneChainSelect) {
+        this.boneChainSelect.value = chain.id;
+      }
+      this.updateIkSettingsControls?.();
+      this.updateRedistributeChainButtonState?.();
+      if (options.status !== false) {
+        this.setStatus(`Prepared FK/IK chain ${this.boneDisplayName(names[0])} -> ${this.boneDisplayName(names[names.length - 1])}`);
+      }
+      return chain.id;
+    },
+
     applyBoneChains(chains) {
       this.manualBoneChains = [];
       if (!Array.isArray(chains)) {
@@ -1474,6 +1514,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       }
       for (const [name, pose] of this.mirroredBoneEntries(drag.name, constrainedPose)) {
         this.manualPose.set(name, { ...pose });
+        this.manualPoseAdditiveNames?.delete?.(name);
         this.manualPoseEditedChannels?.set?.(name, new Set(Object.keys(constrainedPose)));
       }
       if (this.poseBoneSelect?.value === drag.name) {

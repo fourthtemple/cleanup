@@ -1097,11 +1097,21 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (action === "load-demo-cat") {
         return await this.ensureTutorialDemoModelLoaded?.("cat") || false;
       }
+      if (action === "ensure-demo-fk-ik-chain") {
+        const loaded = await this.ensureTutorialDemoModelLoaded?.("cat") || false;
+        if (!loaded) {
+          return false;
+        }
+        return Boolean(this.ensureTutorialDemoFkIkChain?.({ status: true }));
+      }
       const macroName = source?.dataset?.tutorialMacro || "";
       if (macroName) {
         const loaded = await this.ensureTutorialDemoModelLoaded?.("cat") || false;
         if (!loaded) {
           return false;
+        }
+        if (macroName === "fk-ik") {
+          this.ensureTutorialDemoFkIkChain?.({ status: false });
         }
         this.highlightTutorialTargets(source);
         this.setStatus("Demo ready");
@@ -1763,6 +1773,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.poseKeyframes.clear();
         this.poseCurveHandles?.clear?.();
         this.manualPose.clear();
+        this.manualPoseAdditiveNames?.clear?.();
         this.poseKeyframeMode = "additive";
         this.poseKeyframesGenerated = false;
         this.clipCleanupEdits.clear();
@@ -2095,6 +2106,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         poseKeyframes: this.serializePoseKeyframes?.() || [],
         adaptivePoseKeyframes: this.serializePoseKeyframeMap?.(this.adaptivePoseKeyframes) || [],
         poseCurveHandles: this.serializePoseCurveHandles?.() || [],
+        manualPoseAdditiveNames: [...(this.manualPoseAdditiveNames || [])],
         manualPose: options.clearManualPose
           ? []
           : [...this.manualPose.entries()].map(([name, pose]) => [name, { ...pose }])
@@ -2303,6 +2315,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.manualPose = new Map((state.manualPose || [])
         .filter(([name]) => this.bones.has(name))
         .map(([name, pose]) => [name, { ...pose }]));
+      this.manualPoseAdditiveNames = new Set((state.manualPoseAdditiveNames || [])
+        .filter((name) => this.manualPose.has(name)));
       state.selected.forEach((selected, index) => {
         const record = this.paintRecords[index];
         if (!record) {

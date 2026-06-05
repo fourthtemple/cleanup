@@ -460,6 +460,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         if (previousActionId && previousActionId !== nextActionId) {
           this.poseKeyframes.clear();
           this.manualPose.clear();
+          this.manualPoseAdditiveNames?.clear?.();
           this.poseKeyframeMode = "additive";
           this.poseKeyframesGenerated = false;
           this.clipCleanupEdits.clear();
@@ -574,6 +575,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.bones.clear();
       this.paintRecords = [];
       this.manualPose.clear();
+      this.manualPoseAdditiveNames?.clear?.();
       this.poseKeyframes.clear();
       this.poseClipboard = null;
       this.poseKeyframesGenerated = false;
@@ -982,6 +984,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       if (previousActionId && previousActionId !== nextActionId) {
         this.poseKeyframes.clear();
         this.manualPose.clear();
+        this.manualPoseAdditiveNames?.clear?.();
         this.poseKeyframeMode = "additive";
         this.poseKeyframesGenerated = false;
         this.clipCleanupEdits.clear();
