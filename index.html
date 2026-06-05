@@ -595,35 +595,39 @@
         </div>
       </header>
       <div class="tutorial-drawer-body">
-        <section class="tutorial-card" data-tutorial-targets="#animation-library-import-button,#animation-library-list,#timeline-play-toggle,#save-patch,#animation-library-save-as">
+        <section class="tutorial-card" data-tutorial-targets="#animation-library-folder-name,#create-animation-library-folder,#animation-library-import-button,#animation-library-list,#save-patch,#animation-library-save-as">
           <h3>Quick Start</h3>
           <ol>
-            <li data-tutorial-targets="#animation-library-import-button">Use <b>Import To Folder</b> to add an FBX, GLB, or GLTF file.</li>
-            <li data-tutorial-targets="#animation-library-list,#timeline-play-toggle">Pick the file in <b>Animation Library</b>, then press <b>Play</b>.</li>
+            <li data-tutorial-targets="#animation-library-folder-name">Enter a folder name for the character or project.</li>
+            <li data-tutorial-targets="#create-animation-library-folder">Click <b>Create Folder</b>.</li>
+            <li data-tutorial-targets="#animation-library-import-button">Click <b>Import To Folder</b> and choose the FBX, GLB, or GLTF files.</li>
+            <li data-tutorial-targets="#animation-library-list">Click a library item to load it, or click its delete button if you do not want it.</li>
             <li data-tutorial-targets="#save-patch,#animation-library-save-as">Make edits, then use <b>Save</b> or <b>Save As</b> to keep the cleanup in browser storage.</li>
           </ol>
         </section>
         <section class="tutorial-card" data-tutorial-targets=".select-tool-panel,#tool-pen,#brush-radius,#through-selection-toggle,.airbrush-tool-panel,#texture-airbrush-tool,#clear-selection,#clear-all-selection,#invert-selection">
           <h3>Painting And Selection</h3>
           <ol>
-            <li data-tutorial-targets=".select-tool-panel,#tool-pen,#tool-neighbor">Choose <b>Pen</b> to paint vertices, or <b>Neighbor</b> to select connected nearby vertices.</li>
+            <li data-tutorial-targets=".select-tool-panel,#tool-pen,#tool-neighbor">Use <b>Pen</b> for 2D raycast projection painting, or <b>Neighbor</b> to avoid accidental selections by mapping to the initial vertex neighborhood.</li>
             <li data-tutorial-targets="#brush-radius,#through-selection-toggle">Adjust <b>Selection radius</b>; enable <b>Through</b> when you want the brush to pass through the mesh.</li>
             <li data-tutorial-targets=".airbrush-tool-panel,#texture-airbrush-tool,#clear-selection,#clear-all-selection,#invert-selection">Use <b>Airbrush</b> for color work, or <b>Clear Selection</b>, <b>Reset All</b>, and <b>Invert Selection</b> to reshape the selected region.</li>
           </ol>
         </section>
-        <section class="tutorial-card" data-tutorial-targets=".weight-timeline-panel,#pose-bone-select,#bone-gizmo,#fk-gizmo-mode-control,#ik-gizmo,#key-current-pose">
+        <section class="tutorial-card" data-tutorial-targets=".weight-timeline-panel,#pose-bone-select,#bone-gizmo,#fk-gizmo-mode-control,#ik-gizmo,#key-current-pose,#bone-layer-list">
           <h3>FK/IK Posing And Keys</h3>
           <ol>
             <li data-tutorial-targets="#pose-bone-select">Select a bone from <b>Bone</b> in the timeline.</li>
             <li data-tutorial-targets="#bone-gizmo,#fk-gizmo-mode-control">Use <b>FK</b> with <b>Rotate</b> or <b>Move</b> for direct posing.</li>
-            <li data-tutorial-targets="#ik-gizmo,#key-current-pose">Use <b>IK</b> to drag a limb target, then press <b>Key</b> to bake the pose at the current frame.</li>
+            <li data-tutorial-targets="#ik-gizmo">Use <b>IK</b> to drag a limb target.</li>
+            <li data-tutorial-targets="#key-current-pose">Press <b>Key</b>.</li>
+            <li data-tutorial-targets="#bone-layer-list,.bone-layer-expand-toggle,.bone-layer-curve-toolbar,.bone-layer-curve-canvas">Open the timeline curve editor for greater control.</li>
           </ol>
         </section>
         <section class="tutorial-card" data-tutorial-targets=".rig-bone-panel,#add-bone-chain-members,#add-bone-chain,#bone-chain-select,#redistribute-chain-weights">
           <h3>Bone Chains And Distribution</h3>
           <ol>
             <li data-tutorial-targets=".rig-bone-panel,#add-bone-chain-members,#add-bone-chain">Open <b>Rig</b>, select ordered items in <b>Chain bones</b>, then click <b>Add Chain</b>.</li>
-            <li data-tutorial-targets="#bone-chain-select,.select-tool-panel,#tool-pen">Choose that chain in <b>Assign Weight</b> and paint the region it should control.</li>
+            <li data-tutorial-targets="#bone-chain-select,.select-tool-panel,#tool-pen,#tool-neighbor">The chain is already assigned; go back and make a selection only if you need to adjust the region.</li>
             <li data-tutorial-targets="#redistribute-chain-weights">Press <b>Distribute Chain</b> to spread the selected vertices across the chain.</li>
           </ol>
         </section>
