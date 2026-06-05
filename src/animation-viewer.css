@@ -148,6 +148,20 @@ input {
   gap: 8px;
 }
 
+.viewer-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.viewer-logo {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.22));
+}
+
 .viewer-kicker {
   margin: 0 0 4px;
   color: var(--muted);
@@ -1239,6 +1253,11 @@ button.is-active {
 
 .weight-editor-app .viewer-header {
   gap: 10px;
+}
+
+.weight-editor-app .viewer-logo {
+  width: 34px;
+  height: 34px;
 }
 
 .weight-editor-app .editor-control-panel .viewer-header {
