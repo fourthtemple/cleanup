@@ -1462,6 +1462,7 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
       if (!material) {
         return null;
       }
+      material.userData ||= {};
       if (material.userData?.clonePaintCanvas && material.userData?.clonePaintContext && material.userData?.clonePaintTexture === material.map) {
         return {
           canvas: material.userData.clonePaintCanvas,
@@ -1471,6 +1472,9 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
       }
 
       const sourceMap = material.map || null;
+      if (!Object.prototype.hasOwnProperty.call(material.userData, "clonePaintOriginalMap")) {
+        material.userData.clonePaintOriginalMap = sourceMap;
+      }
       const image = sourceMap?.image || null;
       const { width, height } = sourceImageSize(image);
       const hasSourceImage = Boolean(width && height);
@@ -1534,6 +1538,72 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
       material.userData.clonePaintTexture = texture;
       material.userData.clonePaintTextureScale = canvasSize.scale;
       return { canvas, context, texture };
+    },
+
+    resetEditableTexturePaintMaterial(material) {
+      if (!material?.userData) {
+        return false;
+      }
+      const userData = material.userData;
+      let changed = false;
+      const gpuEntry = userData.textureAirbrushGpuTarget;
+      if (gpuEntry?.target) {
+        if (material.map === gpuEntry.target.texture) {
+          material.map = gpuEntry.sourceTexture || userData.clonePaintTexture || userData.clonePaintOriginalMap || null;
+        }
+        gpuEntry.target.dispose?.();
+        delete userData.textureAirbrushGpuTarget;
+        changed = true;
+      }
+
+      const hasOriginalMap = Object.prototype.hasOwnProperty.call(userData, "clonePaintOriginalMap");
+      const cloneTexture = userData.clonePaintTexture;
+      const hasClonePaint = Boolean(userData.clonePaintCanvas || userData.clonePaintContext || cloneTexture || hasOriginalMap);
+      if (hasClonePaint) {
+        const originalMap = hasOriginalMap ? userData.clonePaintOriginalMap : null;
+        if (!material.map || material.map === cloneTexture || material.map === gpuEntry?.sourceTexture) {
+          material.map = originalMap || null;
+        }
+        if (cloneTexture && cloneTexture !== originalMap && cloneTexture !== material.map) {
+          cloneTexture.dispose?.();
+        }
+        delete userData.clonePaintCanvas;
+        delete userData.clonePaintContext;
+        delete userData.clonePaintTexture;
+        delete userData.clonePaintTextureScale;
+        delete userData.clonePaintOriginalMap;
+        changed = true;
+      }
+
+      if (changed) {
+        material.needsUpdate = true;
+      }
+      return changed;
+    },
+
+    resetEditableTexturePaints({ sync = true } = {}) {
+      const seen = new Set();
+      let reset = 0;
+      for (const record of this.paintRecords || []) {
+        for (const material of this.getObjectMaterials?.(record.object?.material) || []) {
+          if (!material || seen.has(material)) {
+            continue;
+          }
+          seen.add(material);
+          if (this.resetEditableTexturePaintMaterial(material)) {
+            reset += 1;
+          }
+        }
+      }
+      if (!reset) {
+        return 0;
+      }
+      this.textureAirbrushGpuProxies?.clear?.();
+      this.updateClonePaintPreviews?.();
+      if (sync) {
+        this.syncPatchJson?.();
+      }
+      return reset;
     },
 
     clonePaintTextureUv(uv, texture) {

@@ -915,6 +915,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
           this.poseKeyframeMode = poseLayer.mode;
         }
         const texturePaints = Array.isArray(patch.texturePaints) ? patch.texturePaints : [];
+        this.resetEditableTexturePaints?.({ sync: false });
 
         for (const record of this.paintRecords) {
           record.geometry.attributes.position.needsUpdate = true;

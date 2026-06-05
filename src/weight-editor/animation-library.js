@@ -1,7 +1,7 @@
 import {
   BrowserAnimationLibraryStorage,
   browserLibraryDefaultFolderName
-} from "./browser-library-storage.js";
+} from "./browser-library-storage.js?v=tutorial-folder-flow-20260605b";
 
 function animationLibraryActionIdFromFileName(value) {
   return String(value || "")
@@ -22,25 +22,33 @@ const BUILT_IN_DEMO_LIBRARY_FOLDER = Object.freeze({
   path: "assets/models/animation-library/cat",
   files: Object.freeze([
     Object.freeze({
-      key: "built-in-demo:cat-walking",
-      name: "fantasy-cat-knight-walking.glb",
-      label: "Cat Walking",
-      extension: "glb",
+      key: "built-in-demo:humanoid-cat-walking",
+      name: "humanoid-cat-walking.fbx",
+      label: "humanoid-cat-walking",
+      extension: "fbx",
       folder: "cat",
-      path: "assets/models/animation-library/cat/fantasy-cat-knight-walking.glb",
-      url: "./assets/models/animation-library/cat/fantasy-cat-knight-walking.glb",
-      cleanupFile: "fantasy-cat-knight-walking-weight-patch.json",
-      cleanupPath: "assets/models/animation-library/cat/fantasy-cat-knight-walking-weight-patch.json",
+      path: "assets/models/animation-library/cat/humanoid-cat-walking.fbx",
+      url: "./assets/models/animation-library/cat/humanoid-cat-walking.fbx",
+      cleanupFile: "humanoid-cat-walking-weight-patch.json",
+      cleanupPath: "assets/models/animation-library/cat/humanoid-cat-walking-weight-patch.json",
       engine: true,
       demo: true
     })
   ])
 });
 
-function builtInDemoLibraryFolder() {
+function builtInDemoLibraryFolder({ includeFiles = true, folderName = BUILT_IN_DEMO_LIBRARY_FOLDER.name, label = BUILT_IN_DEMO_LIBRARY_FOLDER.label } = {}) {
   return {
     ...BUILT_IN_DEMO_LIBRARY_FOLDER,
-    files: BUILT_IN_DEMO_LIBRARY_FOLDER.files.map((file) => ({ ...file }))
+    name: folderName,
+    label,
+    files: includeFiles
+      ? BUILT_IN_DEMO_LIBRARY_FOLDER.files.map((file) => ({
+        ...file,
+        key: `built-in-demo:${folderName}:humanoid-cat-walking`,
+        folder: folderName
+      }))
+      : []
   };
 }
 
@@ -108,23 +116,40 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
     },
 
     animationLibraryPayloadWithBuiltInDemos(payload = {}) {
-      const folders = Array.isArray(payload.folders)
+      let folders = Array.isArray(payload.folders)
         ? payload.folders.map((folder) => ({
           ...folder,
           files: Array.isArray(folder.files) ? [...folder.files] : []
         }))
         : [];
-      const demoFolder = builtInDemoLibraryFolder();
-      const existing = folders.find((folder) => folder.name === demoFolder.name);
+      const demoName = this.tutorialDemoAnimationLibraryName();
+      if (demoName === "cat") {
+        if (!this.tutorialDemoLibraryFolderName) {
+          return {
+            ...payload,
+            folders: []
+          };
+        }
+        folders = folders.filter((folder) => folder.name === this.tutorialDemoLibraryFolderName);
+      }
+      if (!demoName || !this.tutorialDemoLibraryImported || !this.tutorialDemoLibraryFolderName) {
+        return {
+          ...payload,
+          folders
+        };
+      }
+      const existing = folders.find((folder) => folder.name === this.tutorialDemoLibraryFolderName);
       if (existing) {
+        const demoFolder = builtInDemoLibraryFolder({
+          folderName: existing.name,
+          label: existing.label || existing.name
+        });
         existing.label ||= demoFolder.label;
         existing.path ||= demoFolder.path;
         const keys = new Set(existing.files.map((file) => file.key || file.path || file.name));
         existing.files.unshift(
           ...demoFolder.files.filter((file) => !keys.has(file.key || file.path || file.name))
         );
-      } else {
-        folders.unshift(demoFolder);
       }
       return {
         ...payload,
@@ -167,6 +192,9 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       this.animationLibraryImportButton?.addEventListener("click", () => {
         if (!this.selectedAnimationLibraryFolderName()) {
           this.setStatus("Create an animation folder first");
+          return;
+        }
+        if (this.seedTutorialDemoAnimationLibraryFile?.("cat")) {
           return;
         }
         if (this.animationLibraryFileInput) {
@@ -373,6 +401,7 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         if (this.animationLibraryStorageMode === "browser") {
           const payload = await this.ensureBrowserAnimationLibraryStorage().createFolder(requestedName);
           this.animationLibrarySelectedFolder = payload.folder?.name || requestedName;
+          this.rememberTutorialDemoAnimationLibraryFolder?.(this.animationLibrarySelectedFolder);
           if (this.animationLibraryFolderName) {
             this.animationLibraryFolderName.value = "";
           }
@@ -390,6 +419,7 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
           throw new Error(payload.error || `HTTP ${response.status}`);
         }
         this.animationLibrarySelectedFolder = payload.folder?.name || requestedName;
+        this.rememberTutorialDemoAnimationLibraryFolder?.(this.animationLibrarySelectedFolder);
         if (this.animationLibraryFolderName) {
           this.animationLibraryFolderName.value = "";
         }
@@ -688,6 +718,129 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       }
       candidates.sort((a, b) => b.score - a.score);
       return candidates[0]?.file || null;
+    },
+
+    tutorialDemoFolderLabel(demoName = "cat") {
+      return normalizedDemoLibraryName(demoName) === "cat" ? BUILT_IN_DEMO_LIBRARY_FOLDER.label : String(demoName || "Demo");
+    },
+
+    tutorialDemoAnimationLibraryFolder(demoName = "cat") {
+      const labelKey = normalizedDemoLibraryName(this.tutorialDemoFolderLabel(demoName));
+      return (this.animationLibraryFolders || []).find((folder) => folder.name === this.tutorialDemoLibraryFolderName)
+        || (this.animationLibraryFolders || []).find((folder) => (
+          normalizedDemoLibraryName(folder.label || folder.name) === labelKey
+          || normalizedDemoLibraryName(folder.name) === labelKey
+        ))
+        || null;
+    },
+
+    rememberTutorialDemoAnimationLibraryFolder(folderName) {
+      if (this.tutorialDemoAnimationLibraryName() !== "cat" || !folderName) {
+        return false;
+      }
+      this.tutorialDemoLibraryFolderName = folderName;
+      return true;
+    },
+
+    resetTutorialDemoSceneForImportStep(demoName = "cat") {
+      const normalized = normalizedDemoLibraryName(demoName) || "cat";
+      if (this.tutorialDemoAnimationLibraryName() !== normalized || (!this.model && !this.activeClipEntry)) {
+        return false;
+      }
+      this.loadToken = (this.loadToken || 0) + 1;
+      this.clearActorModel?.();
+      this.populateBoneSelect?.();
+      this.renderActionOptions?.();
+      this.syncTimelineControls?.();
+      this.updateTimelineKeyMarkers?.();
+      this.syncPatchJson?.();
+      this.syncExportButtons?.();
+      if (this.source) {
+        this.source.textContent = "Import a raw Mixamo FBX to begin";
+      }
+      return true;
+    },
+
+    seedTutorialDemoAnimationLibraryFile(demoName = "cat", { resetScene = true } = {}) {
+      const normalized = normalizedDemoLibraryName(demoName) || "cat";
+      const activeDemoName = this.tutorialDemoAnimationLibraryName();
+      if (activeDemoName !== normalized) {
+        return false;
+      }
+      const folderName = this.selectedAnimationLibraryFolderName();
+      const existing = this.animationLibraryFolders?.find((folder) => folder.name === folderName);
+      if (!existing || folderName !== this.tutorialDemoLibraryFolderName) {
+        this.setStatus("Create the Cat Demo folder first");
+        return true;
+      }
+      if (resetScene) {
+        this.resetTutorialDemoSceneForImportStep(demoName);
+      }
+      const demoFolder = builtInDemoLibraryFolder({
+        folderName: existing.name,
+        label: existing.label || this.tutorialDemoFolderLabel(demoName)
+      });
+      existing.label ||= demoFolder.label;
+      existing.path ||= demoFolder.path;
+      const keys = new Set((existing.files || []).map((file) => file.key || file.path || file.name));
+      existing.files ||= [];
+      existing.files.unshift(
+        ...demoFolder.files.filter((file) => !keys.has(file.key || file.path || file.name))
+      );
+      this.tutorialDemoLibraryImported = true;
+      this.animationLibrarySelectedFolder = existing.name;
+      this.renderAnimationLibrary();
+      this.renderCharacterOptions?.();
+      this.setStatus("Imported humanoid-cat-walking into the tutorial folder");
+      return true;
+    },
+
+    async ensureTutorialDemoAnimationLibraryFile(demoName = "cat") {
+      const normalized = normalizedDemoLibraryName(demoName) || "cat";
+      if (this.tutorialDemoAnimationLibraryName() !== normalized) {
+        return false;
+      }
+      let folder = this.tutorialDemoAnimationLibraryFolder(demoName);
+      if (!folder) {
+        const created = await this.createAnimationLibraryFolder?.(this.tutorialDemoFolderLabel(demoName) || "Cat Demo");
+        if (!created) {
+          return false;
+        }
+        folder = this.tutorialDemoAnimationLibraryFolder(demoName);
+      }
+      if (!folder) {
+        return false;
+      }
+      this.tutorialDemoLibraryFolderName = folder.name;
+      this.animationLibrarySelectedFolder = folder.name;
+      if (this.animationLibraryFolderSelect && !this.animationLibraryFolderSelect.disabled) {
+        this.animationLibraryFolderSelect.value = folder.name;
+      }
+      this.seedTutorialDemoAnimationLibraryFile(demoName, { resetScene: false });
+      return Boolean(this.demoAnimationLibraryFile(demoName));
+    },
+
+    async ensureTutorialDemoModelLoaded(demoName = "cat") {
+      const normalized = normalizedDemoLibraryName(demoName) || "cat";
+      if (this.tutorialDemoAnimationLibraryName() !== normalized) {
+        return false;
+      }
+      if (this.model || this.activeClipEntry) {
+        return true;
+      }
+      const imported = await this.ensureTutorialDemoAnimationLibraryFile?.(demoName);
+      if (!imported) {
+        this.setStatus("Cat demo is not available");
+        return false;
+      }
+      const item = this.demoAnimationLibraryFile?.(demoName);
+      if (!item) {
+        this.setStatus("Cat demo is not available");
+        return false;
+      }
+      return this.restoreAnimationLibraryFile?.(item, {
+        statusVerb: "Loaded demo"
+      }) || false;
     },
 
     syncAnimationLibrarySelectionToFile(item) {

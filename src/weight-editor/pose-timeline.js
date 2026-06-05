@@ -480,7 +480,7 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
     syncPoseControls() {
       const boneName = this.poseBoneSelect.value;
       if (!boneName) {
-        this.updatePoseOutputs();
+        this.setPoseControlsFromPose({}, "");
         return;
       }
       const framePose = this.getPoseAtFrame(this.currentFrame(), boneName);
@@ -508,7 +508,7 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
       }
       const boneName = this.poseBoneSelect.value;
       if (!boneName || !this.bones.has(boneName)) {
-        this.updatePoseOutputs();
+        this.setPoseControlsFromPose({}, "");
         return;
       }
       if (this.actorTarget?.mode !== "bird-flap") {
@@ -1072,6 +1072,7 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
     },
 
     applyPoseLayer() {
+      // Generated replacement keys are timeline guides for editing; the raw clip remains the live pose source.
       const generatedReplacementPreview = this.poseKeyframesGenerated && this.poseKeyframeMode === "replace";
       const interpolated = generatedReplacementPreview ? {} : this.interpolatedPoseForFrame(this.progress * this.timelineFrames);
       const rawSource = {

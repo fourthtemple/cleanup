@@ -1542,6 +1542,39 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.renderAddBoneChainMemberOptions();
     },
 
+    clearActiveBone({ stopPlacement = true } = {}) {
+      if (stopPlacement) {
+        this.setBonePlacementPending(false);
+        this.boneMoveGizmoArmed = false;
+      }
+      this.activeBoneName = "";
+      this.clearJointConstraintEditedPoseChannels?.("");
+      this.clearSelectedBoneChainState?.();
+      if (this.boneSelect && [...this.boneSelect.options].some((option) => option.value === "")) {
+        this.boneSelect.value = "";
+      }
+      if (this.poseBoneSelect && [...this.poseBoneSelect.options].some((option) => option.value === "")) {
+        this.poseBoneSelect.value = "";
+      }
+      for (const option of Array.from(this.addBoneChainMembersSelect?.options || [])) {
+        option.selected = false;
+      }
+      this.syncPoseControls();
+      this.updateRigBoneList();
+      this.updateTimelineKeyMarkers();
+      this.updateSelectedBoneHighlight();
+      this.updateBonePickerOverlay();
+      this.renderAddBoneParentOptions();
+      this.syncBoneEditorControls("");
+      this.syncJointConstraintControls?.();
+      this.renderBoneChainOptions();
+      this.renderAddBoneChainMemberOptions();
+      this.updateBoneMoveGizmo();
+      this.updateIkMoveGizmo?.();
+      this.updateSelectionInfluences();
+      this.syncJointConstraintControls?.();
+    },
+
     setActiveBone(name, {
       stopPlacement = true,
       selectedBoneChainRootName = "",
@@ -1550,6 +1583,10 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       preserveBoneChainMemberSelection = false
     } = {}) {
       name = this.canonicalMirrorBone(name);
+      if (!name) {
+        this.clearActiveBone({ stopPlacement });
+        return;
+      }
       if (!this.bones.has(name)) {
         return;
       }

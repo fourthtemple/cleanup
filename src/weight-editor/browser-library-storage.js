@@ -192,9 +192,13 @@ export class BrowserAnimationLibraryStorage {
     if (!folderName) {
       throw new Error("Folder name is required");
     }
+    const label = String(folder || "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .slice(0, 80) || folderName;
     const record = {
       name: folderName,
-      label: folderName,
+      label,
       createdAt: new Date().toISOString()
     };
     const db = await this.db();
@@ -209,6 +213,7 @@ export class BrowserAnimationLibraryStorage {
       ok: true,
       folder: {
         name: folderName,
+        label,
         path: `browser-library/${folderName}`
       }
     };

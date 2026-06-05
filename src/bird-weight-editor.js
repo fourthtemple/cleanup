@@ -12,29 +12,30 @@ import {
   remainingClipStartOffsetSeconds
 } from "./animation/animation-clip-utils.js";
 import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
-import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=root-unbake-20260604b";
-import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=blank-start-tutorial-load-20260605a";
-import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=root-unbake-20260604c";
-import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=safari-picker-webgl-20260602b";
+import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=tutorial-macro-reset-20260605a";
+import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=help-demo-clean-slate-20260605a";
+import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=tutorial-help-safe-20260605a";
+import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=tutorial-macro-reset-20260605a";
 import { installClonePaintReplayMethods } from "./weight-editor/clone-paint-replay.js?v=airbrush-command-20260602a";
 import { installCurveEditorMethods } from "./weight-editor/curve-editor.js";
 import { installCurveHandleMethods } from "./weight-editor/curve-handles.js";
-import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js";
+import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js?v=blank-bone-select-20260605a";
 import { installJointConstraintMethods } from "./weight-editor/joint-constraints.js?v=joint-limit-capture-20260604a";
 import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=joint-limit-min-max-20260604b";
 import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=safari-picker-webgl-20260602b";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js";
 import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js";
-import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=pose-channel-edit-20260604b";
+import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=blank-bone-select-20260605a";
 import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=inferred-limb-ik-20260605b";
 import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
-import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=root-unbake-20260604d";
+import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=blank-bone-select-20260605a";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=blank-start-tutorial-load-20260605a";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=tutorial-help-safe-20260605a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=safari-picker-webgl-20260602b";
-import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=root-unbake-20260604b";
+import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=fk-ik-demo-slot-20260605a";
+import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=tutorial-macro-reset-20260605a";
 import { installWeightMethods } from "./weight-editor/weights.js";
 
 const BIRD_WEIGHT_PATCH_FILE_NAME = "mixamo-cleanup-weight-patch.json";
@@ -300,6 +301,12 @@ class BirdWeightEditor {
     this.tutorialSaveButton = document.getElementById("tutorial-save");
     this.tutorialCancelButton = document.getElementById("tutorial-cancel");
     this.tutorialResetButton = document.getElementById("tutorial-reset");
+    this.tutorialMacroRecordButton = document.getElementById("tutorial-macro-record");
+    this.tutorialMacroStopButton = document.getElementById("tutorial-macro-stop");
+    this.tutorialDemoControls = document.getElementById("tutorial-demo-controls");
+    this.tutorialMacroPlayButton = document.getElementById("tutorial-macro-play");
+    this.tutorialMacroSpeedSelect = document.getElementById("tutorial-macro-speed");
+    this.tutorialMacroScrubInput = document.getElementById("tutorial-macro-scrub");
     this.tutorialCloseButton = document.getElementById("tutorial-close");
     this.timelineCompactToggle = document.getElementById("timeline-compact-toggle");
     this.timelineHideToggle = document.getElementById("timeline-hide-toggle");
@@ -546,6 +553,7 @@ installOverlayAndRenderMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installCurveEditorMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installAutoKeySolverMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 installTextureAirbrushMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installTutorialMacroMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
 
 
 async function writeJsonFile(fileName, text, description) {

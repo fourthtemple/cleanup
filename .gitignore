@@ -14,4 +14,4 @@ __pycache__/
 assets/models/animation-library/*
 !assets/models/animation-library/.gitkeep
 !assets/models/animation-library/cat/
-!assets/models/animation-library/cat/fantasy-cat-knight-walking.glb
+!assets/models/animation-library/cat/humanoid-cat-walking.fbx

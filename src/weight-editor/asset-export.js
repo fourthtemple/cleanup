@@ -455,6 +455,7 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
         delete cleanMaterialUserData.clonePaintContext;
         delete cleanMaterialUserData.clonePaintTexture;
         delete cleanMaterialUserData.clonePaintTextureScale;
+        delete cleanMaterialUserData.clonePaintOriginalMap;
         delete cleanMaterialUserData.textureAirbrushBakedTexture;
         delete cleanMaterialUserData.textureAirbrushGpuTarget;
         material.userData = cleanMaterialUserData;

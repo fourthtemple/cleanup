@@ -83,11 +83,18 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
   function normalizedTutorialStep(step, fallback = {}) {
     if (typeof step === "string") {
-      return { text: step.trim(), targets: fallback.targets || "" };
+      return {
+        text: step.trim(),
+        targets: fallback.targets || "",
+        action: fallback.action || "",
+        macro: fallback.macro || ""
+      };
     }
     return {
       text: String(step?.text || fallback.text || "").trim(),
-      targets: String(step?.targets || fallback.targets || "")
+      targets: String(step?.targets || fallback.targets || ""),
+      action: String(step?.action || fallback.action || ""),
+      macro: String(step?.macro || fallback.macro || "")
     };
   }
 
@@ -99,6 +106,28 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       targets: String(card?.targets || fallback.targets || ""),
       steps: rawSteps.map((step, index) => normalizedTutorialStep(step, fallbackSteps[index] || { targets: fallback.targets || "" }))
     };
+  }
+
+  function normalizeTutorialRecipeMacros(cards = []) {
+    for (const card of cards) {
+      if (!/fk\s*\/?\s*ik/i.test(card?.title || "") || !Array.isArray(card.steps)) {
+        continue;
+      }
+      const hasFkIkMacro = card.steps.some((step) => step?.macro === "fk-ik");
+      if (!hasFkIkMacro) {
+        continue;
+      }
+      for (const step of card.steps) {
+        if (step?.macro === "fk-ik") {
+          step.macro = "";
+        }
+      }
+      const lastStep = card.steps.at(-1);
+      if (lastStep) {
+        lastStep.macro = "fk-ik";
+      }
+    }
+    return cards;
   }
 
   function finiteVectorArray(value, length = 3) {
@@ -386,10 +415,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.configureTransformControlHitAreas?.();
       this.canvas.addEventListener("pointermove", (event) => this.updateProjectedTransformGizmoAxis?.(event), { capture: true });
       this.canvas.addEventListener("pointerdown", (event) => this.tryProjectedTransformGizmoPointerDown?.(event), { capture: true });
+      this.bindTutorialMacroSceneEvents?.();
 
       this.scene.add(this.modelRoot);
       this.resize();
-      window.addEventListener("resize", () => this.resize());
+      window.addEventListener("resize", () => {
+        this.resize();
+        this.queueTutorialViewportResize?.();
+      });
     },
 
     configureTransformControlHitAreas() {
@@ -740,7 +773,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         targets: card.dataset.tutorialTargets || "",
         steps: Array.from(card.querySelectorAll(":scope > ol > li")).map((step) => ({
           text: tutorialMarkdownFromNode(step),
-          targets: step.dataset.tutorialTargets || ""
+          targets: step.dataset.tutorialTargets || "",
+          action: step.dataset.tutorialAction || "",
+          macro: step.dataset.tutorialMacro || ""
         }))
       }));
     },
@@ -770,7 +805,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         if (!Array.isArray(cards)) {
           return null;
         }
-        return cards.map((card, index) => normalizedTutorialCard(card, this.tutorialDefaultRecipes?.[index]));
+        return normalizeTutorialRecipeMacros(cards.map((card, index) => normalizedTutorialCard(card, this.tutorialDefaultRecipes?.[index])));
       } catch {
         return null;
       }
@@ -787,7 +822,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       const cardNodes = this.tutorialCardNodes();
       for (const [index, cardNode] of cardNodes.entries()) {
         const fallback = this.tutorialDefaultRecipes?.[index] || {};
-        const card = normalizedTutorialCard(cards[index], fallback);
+        const card = normalizeTutorialRecipeMacros([normalizedTutorialCard(cards[index], fallback)])[0];
         const title = cardNode.querySelector(":scope > h3");
         const list = cardNode.querySelector(":scope > ol");
         if (title) {
@@ -803,6 +838,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           const item = document.createElement("li");
           if (step.targets) {
             item.dataset.tutorialTargets = step.targets;
+          }
+          if (step.action) {
+            item.dataset.tutorialAction = step.action;
+          }
+          if (step.macro) {
+            item.dataset.tutorialMacro = step.macro;
           }
           appendTutorialMarkdown(item, step.text);
           return item;
@@ -858,7 +899,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     tutorialRecipesFromEditors() {
       const previousCards = this.tutorialEditSnapshot || this.tutorialRecipesFromDom();
-      return this.tutorialCardNodes().map((cardNode, cardIndex) => {
+      return normalizeTutorialRecipeMacros(this.tutorialCardNodes().map((cardNode, cardIndex) => {
         const fallback = normalizedTutorialCard(previousCards[cardIndex], this.tutorialDefaultRecipes?.[cardIndex]);
         const title = cardNode.querySelector(":scope .tutorial-title-input")?.value?.trim() || fallback.title;
         const stepLines = (cardNode.querySelector(":scope .tutorial-steps-input")?.value || "")
@@ -870,10 +911,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           targets: fallback.targets,
           steps: stepLines.map((line, stepIndex) => ({
             text: line,
-            targets: fallback.steps[stepIndex]?.targets || fallback.targets
+            targets: fallback.steps[stepIndex]?.targets || fallback.targets,
+            action: fallback.steps[stepIndex]?.action || "",
+            macro: fallback.steps[stepIndex]?.macro || ""
           }))
         };
-      });
+      }));
     },
 
     updateTutorialEditControls() {
@@ -891,6 +934,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (this.tutorialResetButton) {
         this.tutorialResetButton.hidden = !enabled;
       }
+      this.updateTutorialMacroControls?.();
     },
 
     setTutorialEditing(editing) {
@@ -950,6 +994,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (storedRecipes) {
         this.renderTutorialRecipes(storedRecipes);
       }
+      this.bindTutorialMacroControls?.();
       this.updateTutorialEditControls();
     },
 
@@ -962,6 +1007,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       this.tutorialBackdrop?.classList.remove("is-highlight-mode");
       this.tutorialHighlightedElements = [];
+      this.tutorialActiveMacroName = "";
+      this.updateTutorialMacroControls?.();
     },
 
     highlightTutorialTargets(source) {
@@ -970,8 +1017,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       const card = source.closest(".tutorial-card");
       const targetText = source.dataset.tutorialTargets || card?.dataset.tutorialTargets || "";
+      const macroName = source.dataset.tutorialMacro || "";
       const selectors = targetText.split(",").map((selector) => selector.trim()).filter(Boolean);
       this.clearTutorialHighlights();
+      this.tutorialActiveMacroName = macroName;
+      if (macroName) {
+        this.attachTutorialDemoControls?.(source);
+      }
+      this.updateTutorialMacroControls?.();
       card?.classList.add("is-active");
       source.classList.add("is-active");
 
@@ -1019,20 +1072,85 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     async runTutorialAction(source) {
       const action = source?.dataset?.tutorialAction || "";
-      if (action !== "load-demo-cat") {
+      if (action === "fill-demo-folder-name") {
+        if (this.tutorialDemoAnimationLibraryName?.() !== "cat") {
+          return false;
+        }
+        const label = this.tutorialDemoFolderLabel?.("cat") || "Cat Demo";
+        if (this.animationLibraryFolderName) {
+          this.animationLibraryFolderName.value = label;
+          this.animationLibraryFolderName.focus();
+          this.animationLibraryFolderName.select?.();
+        }
+        this.setStatus(`Entered folder name ${label}`);
+        return true;
+      }
+      if (action === "create-demo-folder") {
+        if (this.tutorialDemoAnimationLibraryName?.() !== "cat") {
+          return false;
+        }
+        return await this.createAnimationLibraryFolder?.(this.tutorialDemoFolderLabel?.("cat") || "Cat Demo") || false;
+      }
+      if (action === "seed-demo-cat") {
+        return this.seedTutorialDemoAnimationLibraryFile?.("cat") || false;
+      }
+      if (action === "load-demo-cat") {
+        return await this.ensureTutorialDemoModelLoaded?.("cat") || false;
+      }
+      const macroName = source?.dataset?.tutorialMacro || "";
+      if (macroName) {
+        const loaded = await this.ensureTutorialDemoModelLoaded?.("cat") || false;
+        if (!loaded) {
+          return false;
+        }
+        this.highlightTutorialTargets(source);
+        this.setStatus("Demo ready");
+        return true;
+      }
+      if (!this.tutorialSourceNeedsDemoModel?.(source)) {
         return false;
       }
-      if (this.model || this.activeClipEntry) {
+      const loaded = await this.ensureTutorialDemoModelLoaded?.("cat") || false;
+      if (loaded) {
+        this.highlightTutorialTargets(source);
+      }
+      return loaded;
+    },
+
+    tutorialSourceNeedsDemoModel(source) {
+      if (this.tutorialDemoAnimationLibraryName?.() !== "cat" || !source) {
         return false;
       }
-      const item = this.demoAnimationLibraryFile?.("cat");
-      if (!item) {
-        this.setStatus("Cat demo is not available");
+      const action = source.dataset?.tutorialAction || "";
+      if (["fill-demo-folder-name", "create-demo-folder", "seed-demo-cat"].includes(action)) {
         return false;
       }
-      return this.restoreAnimationLibraryFile?.(item, {
-        statusVerb: "Loaded demo"
-      }) || false;
+      const card = source.closest?.(".tutorial-card");
+      const cards = this.tutorialCardNodes?.() || [];
+      const quickStart = cards[0] || null;
+      if (!card) {
+        return false;
+      }
+      if (card === quickStart) {
+        if (!source.matches?.("li")) {
+          return false;
+        }
+        const steps = Array.from(card.querySelectorAll(":scope > ol > li"));
+        return steps.indexOf(source) >= 3;
+      }
+      return cards.indexOf(card) > 0;
+    },
+
+    queueTutorialViewportResize() {
+      if (!this.canvas || typeof window === "undefined") {
+        return;
+      }
+      window.clearTimeout(this.tutorialDrawerResizeTimer);
+      window.requestAnimationFrame(() => {
+        this.resize();
+        window.requestAnimationFrame(() => this.resize());
+      });
+      this.tutorialDrawerResizeTimer = window.setTimeout(() => this.resize(), 220);
     },
 
     setTutorialDrawerOpen(open) {
@@ -1042,6 +1160,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       const nextOpen = Boolean(open);
       window.clearTimeout(this.tutorialDrawerHideTimer);
       this.tutorialDrawerOpen = nextOpen;
+      this.app?.classList.toggle("is-tutorial-drawer-open", nextOpen);
+      this.queueTutorialViewportResize();
       this.tutorialsToggle?.setAttribute("aria-expanded", String(nextOpen));
       this.tutorialDrawer.setAttribute("aria-hidden", String(!nextOpen));
       if (nextOpen) {
@@ -1062,6 +1182,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.clearTutorialHighlights?.();
       this.tutorialDrawer.classList.remove("is-open");
       this.tutorialBackdrop?.classList.remove("is-open");
+      this.queueTutorialViewportResize();
       this.tutorialDrawerHideTimer = window.setTimeout(() => {
         this.tutorialDrawer.hidden = true;
         if (this.tutorialBackdrop) {
@@ -1970,7 +2091,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         clipCleanupEdits: this.serializeClipCleanupEdits?.() || [],
         poseKeyframeMode: this.poseKeyframeMode,
         poseKeyframesGenerated: Boolean(this.poseKeyframesGenerated),
+        timelineKeysSourceWasAutoGenerated: Boolean(this.timelineKeysSourceWasAutoGenerated),
         poseKeyframes: this.serializePoseKeyframes?.() || [],
+        adaptivePoseKeyframes: this.serializePoseKeyframeMap?.(this.adaptivePoseKeyframes) || [],
         poseCurveHandles: this.serializePoseCurveHandles?.() || [],
         manualPose: options.clearManualPose
           ? []
@@ -2168,6 +2291,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.applySerializedPoseCurveHandles?.(state.poseCurveHandles || []);
         this.poseKeyframeMode = state.poseKeyframeMode === "replace" ? "replace" : "additive";
         this.poseKeyframesGenerated = Boolean(state.poseKeyframesGenerated);
+        this.timelineKeysSourceWasAutoGenerated = Boolean(state.timelineKeysSourceWasAutoGenerated);
+      }
+      if (Array.isArray(state.adaptivePoseKeyframes)) {
+        this.adaptivePoseKeyframes = this.serializedPoseKeyframeMap?.(state.adaptivePoseKeyframes) || new Map();
       }
       if (Array.isArray(state.clipCleanupEdits)) {
         this.applySerializedClipCleanupEdits?.(state.clipCleanupEdits);
@@ -2417,6 +2544,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (!usedEraseSelectionCommand) {
         this.setStatus(labels[tool] || "Ready");
       }
+      this.recordTutorialMacroToolChange?.(tool);
     },
 
     viewportLayerState(layer) {

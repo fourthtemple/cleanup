@@ -128,7 +128,7 @@ export function installAutoKeySolverMethods(BirdWeightEditor, deps) {
       if (this.timelineScrub) {
         this.timelineScrub.value = "0";
       }
-      if (solution.primaryBoneName && this.bones.has(solution.primaryBoneName)) {
+      if (options.selectPrimaryBone !== false && solution.primaryBoneName && this.bones.has(solution.primaryBoneName)) {
         this.setActiveBone(solution.primaryBoneName);
         this.expandedBoneName = solution.primaryBoneName;
       }
@@ -163,6 +163,7 @@ export function installAutoKeySolverMethods(BirdWeightEditor, deps) {
         minKeys: options.minKeys || 6,
         pushUndo: false,
         generated: true,
+        selectPrimaryBone: false,
         silent: true
       });
       if (solution && !options.silent) {

@@ -931,13 +931,14 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       const actionId = item.actionId || animationActionIdFromFileName(fileName) || animationActionIdFromFileName(item.path) || "library-clip";
       const label = item.label || animationLabelFromFileName(fileName);
       const url = item.url || `./${item.path}`;
+      const cleanupUrl = item.cleanupUrl || (item.cleanupPath ? `./${item.cleanupPath}` : "");
       return {
         id: actionId,
         name: label,
         url,
         libraryFolder: item.folder || "",
         libraryCleanupFile: item.cleanupFile || this.animationLibraryCleanupFileNameFromLabel(fileName),
-        libraryCleanupUrl: item.cleanupUrl || "",
+        libraryCleanupUrl: cleanupUrl,
         libraryPath: item.path || "",
         libraryKey: item.key || item.path || url,
         imported: true
@@ -1070,7 +1071,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           patchStem,
           libraryFolder: folderName,
           libraryCleanupFile: item.cleanupFile || `${patchStem}-weight-patch.json`,
-          patchUrl: item.cleanupUrl || "",
+          patchUrl: item.cleanupUrl || (item.cleanupPath ? `./${item.cleanupPath}` : ""),
           characterId: folderName ? `library:${folderName}` : "",
           clipNameOverride: actionId,
           clipIdOverride: actionId
@@ -2211,12 +2212,22 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       }
       const otherNames = allBoneNames.filter((name) => !names.includes(name)).sort();
       const allNames = [...names, ...otherNames];
-      const defaultBone = this.findDefaultBone(allNames);
-      const currentWeightBone = this.canonicalMirrorBone(this.boneSelect.value || defaultBone);
-      const currentPoseBone = this.canonicalMirrorBone(this.poseBoneSelect.value || defaultBone);
+      const currentWeightBone = this.activeBoneName
+        ? this.canonicalMirrorBone(this.boneSelect.value || this.activeBoneName)
+        : "";
+      const currentPoseBone = this.activeBoneName
+        ? this.canonicalMirrorBone(this.poseBoneSelect.value || this.activeBoneName)
+        : "";
       const displayNames = this.mirrorMode ? this.collapsedMirrorBoneNames(allNames) : allNames;
+      const blankOption = () => {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "--";
+        return option;
+      };
       this.boneLayerNames = displayNames;
       this.boneSelect.replaceChildren(
+        blankOption(),
         ...displayNames.map((name) => {
           const option = document.createElement("option");
           option.value = name;
@@ -2224,10 +2235,11 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           return option;
         })
       );
-      this.boneSelect.value = displayNames.includes(currentWeightBone)
+      this.boneSelect.value = currentWeightBone && displayNames.includes(currentWeightBone)
         ? currentWeightBone
-        : displayNames.includes(defaultBone) ? defaultBone : this.boneSelect.options[0]?.value || "";
+        : "";
       this.poseBoneSelect.replaceChildren(
+        blankOption(),
         ...displayNames.map((name) => {
           const option = document.createElement("option");
           option.value = name;
@@ -2235,10 +2247,13 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
           return option;
         })
       );
-      this.poseBoneSelect.value = displayNames.includes(currentPoseBone)
+      this.poseBoneSelect.value = currentPoseBone && displayNames.includes(currentPoseBone)
         ? currentPoseBone
-        : displayNames.includes(defaultBone) ? defaultBone : this.poseBoneSelect.options[0]?.value || "";
+        : "";
       this.activeBoneName = this.poseBoneSelect.value;
+      if (!this.activeBoneName) {
+        this.clearSelectedBoneChainState?.();
+      }
       this.syncPoseControls();
       this.updateRigBoneList();
       this.updateBoneLayerList();
@@ -2247,7 +2262,9 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.syncBoneEditorControls(this.activeBoneName);
       this.renderAddBoneChainMemberOptions?.();
       this.renderBoneChainOptions?.();
-      this.selectSingleBoneChainMember?.(this.activeBoneName);
+      if (this.activeBoneName) {
+        this.selectSingleBoneChainMember?.(this.activeBoneName);
+      }
       this.syncPoseClipboardControls?.();
       this.updateSelectionInfluences?.();
     }

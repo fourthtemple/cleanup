@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fourth Temple Model Cleanup</title>
     <link rel="icon" href="./assets/fourth-temple-logo.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=editable-tutorials-20260605a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=painting-demo-controls-20260605a" />
     <script type="importmap">
       {
         "imports": {
@@ -591,6 +591,8 @@
           <button id="tutorial-save" type="button" hidden>Save</button>
           <button id="tutorial-cancel" type="button" hidden>Cancel</button>
           <button id="tutorial-reset" type="button" hidden>Reset</button>
+          <button id="tutorial-macro-record" type="button" hidden>Record Macro</button>
+          <button id="tutorial-macro-stop" type="button" hidden>Stop</button>
           <button id="tutorial-close" class="tutorial-close" type="button" aria-label="Close tutorials" title="Close tutorials">×</button>
         </div>
       </header>
@@ -598,9 +600,9 @@
         <section class="tutorial-card" data-tutorial-targets="#animation-library-folder-name,#create-animation-library-folder,#animation-library-import-button,#animation-library-list,#save-patch,#animation-library-save-as">
           <h3>Quick Start</h3>
           <ol>
-            <li data-tutorial-targets="#animation-library-folder-name">Enter a folder name for the character or project.</li>
-            <li data-tutorial-targets="#create-animation-library-folder">Click <b>Create Folder</b>.</li>
-            <li data-tutorial-targets="#animation-library-import-button">Click <b>Import To Folder</b> and choose the FBX, GLB, or GLTF files.</li>
+            <li data-tutorial-targets="#animation-library-folder-name" data-tutorial-action="fill-demo-folder-name">Enter a folder name for the character or project.</li>
+            <li data-tutorial-targets="#create-animation-library-folder" data-tutorial-action="create-demo-folder">Click <b>Create Folder</b>.</li>
+            <li data-tutorial-targets="#animation-library-import-button" data-tutorial-action="seed-demo-cat">Click <b>Import To Folder</b> and choose the FBX, GLB, or GLTF files.</li>
             <li data-tutorial-targets="#animation-library-list" data-tutorial-action="load-demo-cat">Click a library item to load it, or click its delete button if you do not want it.</li>
             <li data-tutorial-targets="#save-patch,#animation-library-save-as">Make edits, then use <b>Save</b> or <b>Save As</b> to keep the cleanup in browser storage.</li>
           </ol>
@@ -610,17 +612,32 @@
           <ol>
             <li data-tutorial-targets=".select-tool-panel,#tool-pen,#tool-neighbor">Use <b>Pen</b> for 2D raycast projection painting, or <b>Neighbor</b> to avoid accidental selections by mapping to the initial vertex neighborhood.</li>
             <li data-tutorial-targets="#brush-radius,#through-selection-toggle">Adjust <b>Selection radius</b>; enable <b>Through</b> when you want the brush to pass through the mesh.</li>
-            <li data-tutorial-targets=".airbrush-tool-panel,#texture-airbrush-tool,#clear-selection,#clear-all-selection,#invert-selection">Use <b>Airbrush</b> for color work, or <b>Clear Selection</b>, <b>Reset All</b>, and <b>Invert Selection</b> to reshape the selected region.</li>
+            <li data-tutorial-targets=".airbrush-tool-panel,#texture-airbrush-tool,#clear-selection,#clear-all-selection,#invert-selection" data-tutorial-macro="airbrush">
+              Use <b>Airbrush</b> for color work, or <b>Clear Selection</b>, <b>Reset All</b>, and <b>Invert Selection</b> to reshape the selected region.
+              <div id="tutorial-demo-controls" class="tutorial-demo-controls" hidden>
+                <button id="tutorial-macro-play" type="button">Play Demo</button>
+                <select id="tutorial-macro-speed" aria-label="Demo playback speed">
+                  <option value="0.5">0.5x</option>
+                  <option value="0.75">0.75x</option>
+                  <option value="1">1x</option>
+                  <option value="1.5">1.5x</option>
+                  <option value="2">2x</option>
+                  <option value="3">3x</option>
+                  <option value="4" selected>4x</option>
+                </select>
+                <input id="tutorial-macro-scrub" type="range" min="0" max="1000" step="1" value="0" aria-label="Demo playback position" />
+              </div>
+            </li>
           </ol>
         </section>
-        <section class="tutorial-card" data-tutorial-targets=".weight-timeline-panel,#pose-bone-select,#bone-gizmo,#fk-gizmo-mode-control,#ik-gizmo,#key-current-pose,#bone-layer-list">
+        <section class="tutorial-card" data-tutorial-targets=".weight-timeline-panel,#bone-chain-select,#pose-bone-select,#bone-gizmo,#fk-gizmo-mode-control,#ik-gizmo,#key-current-pose,#bone-layer-list">
           <h3>FK/IK Posing And Keys</h3>
           <ol>
-            <li data-tutorial-targets="#pose-bone-select">Select a bone from <b>Bone</b> in the timeline.</li>
+            <li data-tutorial-targets="#bone-chain-select,#pose-bone-select">Select a <b>Bone chain</b>, then select the bone you want to pose from <b>Bone</b>.</li>
             <li data-tutorial-targets="#bone-gizmo,#fk-gizmo-mode-control">Use <b>FK</b> with <b>Rotate</b> or <b>Move</b> for direct posing.</li>
             <li data-tutorial-targets="#ik-gizmo">Use <b>IK</b> to drag a limb target.</li>
             <li data-tutorial-targets="#key-current-pose">Press <b>Key</b>.</li>
-            <li data-tutorial-targets="#bone-layer-list,.bone-layer-expand-toggle,.bone-layer-curve-toolbar,.bone-layer-curve-canvas">Open the timeline curve editor for greater control.</li>
+            <li data-tutorial-targets="#bone-layer-list,.bone-layer-expand-toggle,.bone-layer-curve-toolbar,.bone-layer-curve-canvas" data-tutorial-macro="fk-ik">Open the timeline curve editor for greater control.</li>
           </ol>
         </section>
         <section class="tutorial-card" data-tutorial-targets=".rig-bone-panel,#add-bone-chain-members,#add-bone-chain,#bone-chain-select,#redistribute-chain-weights">
@@ -665,6 +682,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/bird-weight-editor.js?v=blank-start-tutorial-load-20260605a"></script>
+    <script type="module" src="./src/bird-weight-editor.js?v=tutorial-help-safe-20260605a"></script>
   </body>
 </html>
