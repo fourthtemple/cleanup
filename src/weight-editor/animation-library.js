@@ -16,6 +16,42 @@ function animationLibraryActionIdFromFileName(value) {
     .toLowerCase() || "";
 }
 
+const BUILT_IN_DEMO_LIBRARY_FOLDER = Object.freeze({
+  name: "cat",
+  label: "Cat Demo",
+  path: "assets/models/animation-library/cat",
+  files: Object.freeze([
+    Object.freeze({
+      key: "built-in-demo:cat-walking",
+      name: "fantasy-cat-knight-walking.glb",
+      label: "Cat Walking",
+      extension: "glb",
+      folder: "cat",
+      path: "assets/models/animation-library/cat/fantasy-cat-knight-walking.glb",
+      url: "./assets/models/animation-library/cat/fantasy-cat-knight-walking.glb",
+      cleanupFile: "fantasy-cat-knight-walking-weight-patch.json",
+      cleanupPath: "assets/models/animation-library/cat/fantasy-cat-knight-walking-weight-patch.json",
+      engine: true,
+      demo: true
+    })
+  ])
+});
+
+function builtInDemoLibraryFolder() {
+  return {
+    ...BUILT_IN_DEMO_LIBRARY_FOLDER,
+    files: BUILT_IN_DEMO_LIBRARY_FOLDER.files.map((file) => ({ ...file }))
+  };
+}
+
+function normalizedDemoLibraryName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export function installAnimationLibraryMethods(BirdWeightEditor) {
   const LAST_LIBRARY_FILE_KEY = "mixamo-cleanup-editor:last-library-file";
 
@@ -69,6 +105,41 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       }
       this.animationLibraryStorageMode = "server";
       return response.json();
+    },
+
+    animationLibraryPayloadWithBuiltInDemos(payload = {}) {
+      const folders = Array.isArray(payload.folders)
+        ? payload.folders.map((folder) => ({
+          ...folder,
+          files: Array.isArray(folder.files) ? [...folder.files] : []
+        }))
+        : [];
+      const demoFolder = builtInDemoLibraryFolder();
+      const existing = folders.find((folder) => folder.name === demoFolder.name);
+      if (existing) {
+        existing.label ||= demoFolder.label;
+        existing.path ||= demoFolder.path;
+        const keys = new Set(existing.files.map((file) => file.key || file.path || file.name));
+        existing.files.unshift(
+          ...demoFolder.files.filter((file) => !keys.has(file.key || file.path || file.name))
+        );
+      } else {
+        folders.unshift(demoFolder);
+      }
+      return {
+        ...payload,
+        folders
+      };
+    },
+
+    setAnimationLibraryFoldersFromPayload(payload = {}) {
+      const payloadWithDemos = this.animationLibraryPayloadWithBuiltInDemos(payload);
+      this.animationLibraryFolders = Array.isArray(payloadWithDemos.folders) ? payloadWithDemos.folders : [];
+      const current = this.animationLibrarySelectedFolder || this.animationLibraryFolderSelect?.value || "";
+      const hasCurrent = this.animationLibraryFolders.some((folder) => folder.name === current);
+      this.animationLibrarySelectedFolder = hasCurrent
+        ? current
+        : this.animationLibraryFolders[0]?.name || "";
     },
 
     bindAnimationLibraryControls() {
@@ -167,16 +238,11 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         const payload = startupMode === "browser"
           ? await this.browserAnimationLibraryPayload()
           : await this.serverAnimationLibraryPayload();
-        this.animationLibraryFolders = Array.isArray(payload.folders) ? payload.folders : [];
-        const current = this.animationLibrarySelectedFolder || this.animationLibraryFolderSelect?.value || "";
-        const hasCurrent = this.animationLibraryFolders.some((folder) => folder.name === current);
-        this.animationLibrarySelectedFolder = hasCurrent
-          ? current
-          : this.animationLibraryFolders[0]?.name || "";
+        this.setAnimationLibraryFoldersFromPayload(payload);
         this.renderAnimationLibrary();
         this.renderCharacterOptions?.();
         if (!this.model && !this.activeClipEntry) {
-          void this.restoreLastAnimationLibraryFile({ silent: true });
+          void this.restoreStartupAnimationLibraryFile({ silent: true });
         }
         if (!silent) {
           this.setStatus("Animation library refreshed");
@@ -186,14 +252,12 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         if (startupMode === "auto") {
           try {
             const payload = await this.browserAnimationLibraryPayload();
-            this.animationLibraryFolders = Array.isArray(payload.folders) ? payload.folders : [];
-            const current = this.animationLibrarySelectedFolder || this.animationLibraryFolderSelect?.value || "";
-            const hasCurrent = this.animationLibraryFolders.some((folder) => folder.name === current);
-            this.animationLibrarySelectedFolder = hasCurrent
-              ? current
-              : this.animationLibraryFolders[0]?.name || "";
+            this.setAnimationLibraryFoldersFromPayload(payload);
             this.renderAnimationLibrary();
             this.renderCharacterOptions?.();
+            if (!this.model && !this.activeClipEntry) {
+              void this.restoreStartupAnimationLibraryFile({ silent: true });
+            }
             if (!silent) {
               this.setStatus("Using browser project storage");
             }
@@ -550,28 +614,144 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         storedKey = "";
       }
       return (storedKey && this.findAnimationLibraryFile(storedKey))
-        || this.animationLibraryFolders.flatMap((folder) => folder.files || []).find((file) => file.available !== false)
+        || this.firstAvailableAnimationLibraryFile()
         || null;
     },
 
-    async restoreLastAnimationLibraryFile({ silent = false } = {}) {
-      if (this.restoringAnimationLibraryFile || this.model || this.activeClipEntry) {
+    storedAnimationLibraryFile() {
+      let storedKey = "";
+      try {
+        storedKey = window.localStorage?.getItem(LAST_LIBRARY_FILE_KEY) || "";
+      } catch {
+        storedKey = "";
+      }
+      return storedKey ? this.findAnimationLibraryFile(storedKey) : null;
+    },
+
+    firstAvailableAnimationLibraryFile() {
+      for (const folder of this.animationLibraryFolders || []) {
+        const file = (folder.files || []).find((item) => item.available !== false);
+        if (file) {
+          return file.folder ? file : { ...file, folder: folder.name };
+        }
+      }
+      return null;
+    },
+
+    tutorialDemoAnimationLibraryName() {
+      const params = new URLSearchParams(window.location.search || "");
+      const requested = params.get("tutorial-demo")
+        ?? params.get("tutorialDemo")
+        ?? params.get("demo-character")
+        ?? params.get("demo");
+      if (requested === null) {
+        return "";
+      }
+      const normalized = normalizedDemoLibraryName(requested);
+      if (!normalized || ["1", "true", "yes", "on"].includes(normalized)) {
+        return "cat";
+      }
+      if (["0", "false", "no", "off", "none"].includes(normalized)) {
+        return "";
+      }
+      return normalized;
+    },
+
+    demoAnimationLibraryFile(demoName = "cat") {
+      const normalized = normalizedDemoLibraryName(demoName) || "cat";
+      const candidates = [];
+      for (const folder of this.animationLibraryFolders || []) {
+        for (const rawFile of folder.files || []) {
+          if (rawFile.available === false) {
+            continue;
+          }
+          const file = rawFile.folder ? rawFile : { ...rawFile, folder: folder.name };
+          const searchText = [
+            folder.name,
+            folder.label,
+            file.key,
+            file.path,
+            file.name,
+            file.label,
+            file.folder
+          ].join(" ").toLowerCase();
+          if (!searchText.includes(normalized)) {
+            continue;
+          }
+          let score = 0;
+          if (file.demo || file.engine) {
+            score += 100;
+          }
+          if (normalizedDemoLibraryName(folder.name) === normalized) {
+            score += 40;
+          }
+          if (/walk|walking/.test(searchText)) {
+            score += 20;
+          }
+          if (String(file.extension || "").toLowerCase() === "glb") {
+            score += 5;
+          }
+          candidates.push({ file, score });
+        }
+      }
+      candidates.sort((a, b) => b.score - a.score);
+      return candidates[0]?.file || null;
+    },
+
+    startupAnimationLibraryFile() {
+      const tutorialDemoName = this.tutorialDemoAnimationLibraryName();
+      return (tutorialDemoName && this.demoAnimationLibraryFile(tutorialDemoName))
+        || this.storedAnimationLibraryFile()
+        || this.demoAnimationLibraryFile("cat")
+        || this.firstAvailableAnimationLibraryFile();
+    },
+
+    syncAnimationLibrarySelectionToFile(item) {
+      const folderName = item?.folder || "";
+      if (!folderName) {
+        return;
+      }
+      this.animationLibrarySelectedFolder = folderName;
+      if (this.animationLibraryFolderSelect && !this.animationLibraryFolderSelect.disabled) {
+        this.animationLibraryFolderSelect.value = folderName;
+      }
+      this.renderAnimationLibrary();
+      this.renderCharacterOptions?.();
+    },
+
+    async restoreAnimationLibraryFile(item, { silent = false, statusVerb = "Restored" } = {}) {
+      if (!item || this.restoringAnimationLibraryFile || this.model || this.activeClipEntry) {
         return false;
       }
-      const item = this.lastAnimationLibraryFile();
-      if (!item) {
-        return false;
-      }
+      this.syncAnimationLibrarySelectionToFile(item);
       this.restoringAnimationLibraryFile = true;
       try {
-        await this.loadAnimationLibraryAsset(item);
+        const loaded = await this.loadAnimationLibraryAsset(item);
+        if (!loaded) {
+          return false;
+        }
         if (!silent) {
-          this.setStatus(`Restored ${item.name}`);
+          this.setStatus(`${statusVerb} ${item.label || item.name}`);
         }
         return true;
       } finally {
         this.restoringAnimationLibraryFile = false;
       }
+    },
+
+    async restoreStartupAnimationLibraryFile({ silent = false } = {}) {
+      const item = this.startupAnimationLibraryFile();
+      if (!item) {
+        return false;
+      }
+      return this.restoreAnimationLibraryFile(item, {
+        silent,
+        statusVerb: item.demo ? "Loaded demo" : "Restored"
+      });
+    },
+
+    async restoreLastAnimationLibraryFile({ silent = false } = {}) {
+      return this.restoreAnimationLibraryFile(this.lastAnimationLibraryFile(), { silent });
     },
 
     showAnimationLibrarySaveAsControls() {

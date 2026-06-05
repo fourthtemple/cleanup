@@ -15,7 +15,9 @@ function shouldCopyAsset(source) {
     return false;
   }
   if (relativePath.startsWith("assets/models/animation-library/")) {
-    return relativePath === "assets/models/animation-library/.gitkeep";
+    return relativePath === "assets/models/animation-library/.gitkeep"
+      || relativePath === "assets/models/animation-library/cat"
+      || relativePath.startsWith("assets/models/animation-library/cat/");
   }
   return true;
 }

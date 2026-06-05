@@ -13,3 +13,5 @@ __pycache__/
 # but do not commit user-imported FBX files or saved cleanup patches by default.
 assets/models/animation-library/*
 !assets/models/animation-library/.gitkeep
+!assets/models/animation-library/cat/
+!assets/models/animation-library/cat/fantasy-cat-knight-walking.glb

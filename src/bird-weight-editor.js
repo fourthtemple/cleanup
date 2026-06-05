@@ -13,7 +13,7 @@ import {
 } from "./animation/animation-clip-utils.js";
 import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
 import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=root-unbake-20260604b";
-import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=browser-hosting-20260605a";
+import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=demo-cat-20260605a";
 import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=root-unbake-20260604c";
 import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=safari-picker-webgl-20260602b";
 import { installClonePaintReplayMethods } from "./weight-editor/clone-paint-replay.js?v=airbrush-command-20260602a";
