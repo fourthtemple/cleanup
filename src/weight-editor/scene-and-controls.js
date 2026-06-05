@@ -22,6 +22,84 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     writeJsonFile
   } = deps;
   const ORBIT_VIEW_STORAGE_KEY = "mixamo-cleanup-editor:orbit-view:v1";
+  const TUTORIAL_EDITOR_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-editor-enabled:v1";
+  const TUTORIAL_RECIPES_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-recipes:v1";
+
+  function tutorialLocalStorageGet(key) {
+    try {
+      return window.localStorage?.getItem(key) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  function tutorialLocalStorageSet(key, value) {
+    try {
+      window.localStorage?.setItem(key, value);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function tutorialLocalStorageRemove(key) {
+    try {
+      window.localStorage?.removeItem(key);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function tutorialMarkdownFromNode(node) {
+    let output = "";
+    for (const child of node?.childNodes || []) {
+      if (child.nodeType === 3) {
+        output += child.textContent || "";
+      } else if (child.nodeType === 1 && /^(b|strong)$/i.test(child.tagName || "")) {
+        output += `**${(child.textContent || "").trim()}**`;
+      } else {
+        output += tutorialMarkdownFromNode(child);
+      }
+    }
+    return output.replace(/\s+/g, " ").trim();
+  }
+
+  function appendTutorialMarkdown(target, value) {
+    const parts = String(value || "").split(/(\*\*[^*]+\*\*)/g);
+    for (const part of parts) {
+      if (!part) {
+        continue;
+      }
+      if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+        const bold = document.createElement("b");
+        bold.textContent = part.slice(2, -2);
+        target.append(bold);
+      } else {
+        target.append(document.createTextNode(part));
+      }
+    }
+  }
+
+  function normalizedTutorialStep(step, fallback = {}) {
+    if (typeof step === "string") {
+      return { text: step.trim(), targets: fallback.targets || "" };
+    }
+    return {
+      text: String(step?.text || fallback.text || "").trim(),
+      targets: String(step?.targets || fallback.targets || "")
+    };
+  }
+
+  function normalizedTutorialCard(card, fallback = {}) {
+    const fallbackSteps = Array.isArray(fallback.steps) ? fallback.steps : [];
+    const rawSteps = Array.isArray(card?.steps) && card.steps.length ? card.steps : fallbackSteps;
+    return {
+      title: String(card?.title || fallback.title || "Recipe").trim(),
+      targets: String(card?.targets || fallback.targets || ""),
+      steps: rawSteps.map((step, index) => normalizedTutorialStep(step, fallbackSteps[index] || { targets: fallback.targets || "" }))
+    };
+  }
 
   function finiteVectorArray(value, length = 3) {
     return Array.isArray(value)
@@ -652,6 +730,292 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       button.title = `${open ? "Minimize" : "Restore"} ${title}`;
     },
 
+    tutorialCardNodes() {
+      return Array.from(this.tutorialDrawer?.querySelectorAll(".tutorial-card") || []);
+    },
+
+    tutorialRecipesFromDom() {
+      return this.tutorialCardNodes().map((card) => ({
+        title: card.querySelector(":scope > h3")?.textContent?.trim() || "Recipe",
+        targets: card.dataset.tutorialTargets || "",
+        steps: Array.from(card.querySelectorAll(":scope > ol > li")).map((step) => ({
+          text: tutorialMarkdownFromNode(step),
+          targets: step.dataset.tutorialTargets || ""
+        }))
+      }));
+    },
+
+    tutorialEditorEnabledForBrowser() {
+      const params = new URLSearchParams(window.location.search || "");
+      const requested = params.get("tutorial-edit") || params.get("tutorialEdit");
+      if (/^(1|true|yes)$/i.test(requested || "")) {
+        tutorialLocalStorageSet(TUTORIAL_EDITOR_STORAGE_KEY, "1");
+        return true;
+      }
+      if (/^(0|false|no)$/i.test(requested || "")) {
+        tutorialLocalStorageRemove(TUTORIAL_EDITOR_STORAGE_KEY);
+        return false;
+      }
+      return tutorialLocalStorageGet(TUTORIAL_EDITOR_STORAGE_KEY) === "1";
+    },
+
+    storedTutorialRecipes() {
+      const raw = tutorialLocalStorageGet(TUTORIAL_RECIPES_STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        const cards = Array.isArray(parsed) ? parsed : parsed?.cards;
+        if (!Array.isArray(cards)) {
+          return null;
+        }
+        return cards.map((card, index) => normalizedTutorialCard(card, this.tutorialDefaultRecipes?.[index]));
+      } catch {
+        return null;
+      }
+    },
+
+    storeTutorialRecipes(cards) {
+      return tutorialLocalStorageSet(TUTORIAL_RECIPES_STORAGE_KEY, JSON.stringify({
+        version: 1,
+        cards
+      }));
+    },
+
+    renderTutorialRecipes(cards = []) {
+      const cardNodes = this.tutorialCardNodes();
+      for (const [index, cardNode] of cardNodes.entries()) {
+        const fallback = this.tutorialDefaultRecipes?.[index] || {};
+        const card = normalizedTutorialCard(cards[index], fallback);
+        const title = cardNode.querySelector(":scope > h3");
+        const list = cardNode.querySelector(":scope > ol");
+        if (title) {
+          title.textContent = card.title;
+        }
+        if (card.targets) {
+          cardNode.dataset.tutorialTargets = card.targets;
+        }
+        if (!list) {
+          continue;
+        }
+        list.replaceChildren(...card.steps.map((step) => {
+          const item = document.createElement("li");
+          if (step.targets) {
+            item.dataset.tutorialTargets = step.targets;
+          }
+          appendTutorialMarkdown(item, step.text);
+          return item;
+        }));
+      }
+    },
+
+    ensureTutorialCardEditors() {
+      for (const card of this.tutorialCardNodes()) {
+        if (card.querySelector(":scope > .tutorial-card-editor")) {
+          continue;
+        }
+        const editor = document.createElement("div");
+        editor.className = "tutorial-card-editor";
+        editor.hidden = true;
+
+        const titleLabel = document.createElement("label");
+        const titleLabelText = document.createElement("span");
+        const titleInput = document.createElement("input");
+        titleLabelText.textContent = "Title";
+        titleInput.className = "tutorial-title-input";
+        titleInput.type = "text";
+        titleInput.autocomplete = "off";
+        titleLabel.append(titleLabelText, titleInput);
+
+        const stepsLabel = document.createElement("label");
+        const stepsLabelText = document.createElement("span");
+        const stepsInput = document.createElement("textarea");
+        stepsLabelText.textContent = "Steps";
+        stepsInput.className = "tutorial-steps-input";
+        stepsInput.rows = 4;
+        stepsInput.spellcheck = true;
+        stepsLabel.append(stepsLabelText, stepsInput);
+        editor.append(titleLabel, stepsLabel);
+        card.append(editor);
+      }
+    },
+
+    populateTutorialEditors(cards = this.tutorialRecipesFromDom()) {
+      const cardNodes = this.tutorialCardNodes();
+      for (const [index, cardNode] of cardNodes.entries()) {
+        const card = normalizedTutorialCard(cards[index], this.tutorialDefaultRecipes?.[index]);
+        const titleInput = cardNode.querySelector(":scope .tutorial-title-input");
+        const stepsInput = cardNode.querySelector(":scope .tutorial-steps-input");
+        if (titleInput) {
+          titleInput.value = card.title;
+        }
+        if (stepsInput) {
+          stepsInput.value = card.steps.map((step) => step.text).join("\n");
+        }
+      }
+    },
+
+    tutorialRecipesFromEditors() {
+      const previousCards = this.tutorialEditSnapshot || this.tutorialRecipesFromDom();
+      return this.tutorialCardNodes().map((cardNode, cardIndex) => {
+        const fallback = normalizedTutorialCard(previousCards[cardIndex], this.tutorialDefaultRecipes?.[cardIndex]);
+        const title = cardNode.querySelector(":scope .tutorial-title-input")?.value?.trim() || fallback.title;
+        const stepLines = (cardNode.querySelector(":scope .tutorial-steps-input")?.value || "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+        return {
+          title,
+          targets: fallback.targets,
+          steps: stepLines.map((line, stepIndex) => ({
+            text: line,
+            targets: fallback.steps[stepIndex]?.targets || fallback.targets
+          }))
+        };
+      });
+    },
+
+    updateTutorialEditControls() {
+      const enabled = Boolean(this.tutorialEditorEnabled);
+      const editing = Boolean(this.tutorialEditing);
+      if (this.tutorialEditButton) {
+        this.tutorialEditButton.hidden = !enabled || editing;
+      }
+      if (this.tutorialSaveButton) {
+        this.tutorialSaveButton.hidden = !enabled || !editing;
+      }
+      if (this.tutorialCancelButton) {
+        this.tutorialCancelButton.hidden = !enabled || !editing;
+      }
+      if (this.tutorialResetButton) {
+        this.tutorialResetButton.hidden = !enabled;
+      }
+    },
+
+    setTutorialEditing(editing) {
+      if (!this.tutorialEditorEnabled || !this.tutorialDrawer) {
+        return;
+      }
+      const nextEditing = Boolean(editing);
+      this.tutorialEditing = nextEditing;
+      this.tutorialDrawer.classList.toggle("is-editing", nextEditing);
+      if (nextEditing) {
+        this.clearTutorialHighlights?.();
+        this.ensureTutorialCardEditors();
+        this.tutorialEditSnapshot = this.tutorialRecipesFromDom();
+        this.populateTutorialEditors(this.tutorialEditSnapshot);
+      }
+      for (const card of this.tutorialCardNodes()) {
+        card.classList.toggle("is-editing", nextEditing);
+        const editor = card.querySelector(":scope > .tutorial-card-editor");
+        if (editor) {
+          editor.hidden = !nextEditing;
+        }
+      }
+      this.updateTutorialEditControls();
+    },
+
+    saveTutorialEdits() {
+      const cards = this.tutorialRecipesFromEditors();
+      this.renderTutorialRecipes(cards);
+      this.storeTutorialRecipes(cards);
+      this.setTutorialEditing(false);
+      this.setStatus("Tutorial recipes saved in this browser");
+    },
+
+    cancelTutorialEdits() {
+      if (this.tutorialEditSnapshot) {
+        this.renderTutorialRecipes(this.tutorialEditSnapshot);
+      }
+      this.setTutorialEditing(false);
+      this.setStatus("Tutorial edits canceled");
+    },
+
+    resetTutorialRecipes() {
+      tutorialLocalStorageRemove(TUTORIAL_RECIPES_STORAGE_KEY);
+      this.renderTutorialRecipes(this.tutorialDefaultRecipes || []);
+      this.setTutorialEditing(false);
+      this.setStatus("Tutorial recipes reset");
+    },
+
+    initializeTutorialEditor() {
+      if (!this.tutorialDrawer || this.tutorialEditorInitialized) {
+        return;
+      }
+      this.tutorialEditorInitialized = true;
+      this.tutorialDefaultRecipes = this.tutorialRecipesFromDom();
+      this.tutorialEditorEnabled = this.tutorialEditorEnabledForBrowser();
+      const storedRecipes = this.storedTutorialRecipes();
+      if (storedRecipes) {
+        this.renderTutorialRecipes(storedRecipes);
+      }
+      this.updateTutorialEditControls();
+    },
+
+    clearTutorialHighlights() {
+      for (const element of this.tutorialHighlightedElements || []) {
+        element.classList.remove("tutorial-highlight-target");
+      }
+      for (const node of this.tutorialDrawer?.querySelectorAll(".tutorial-card.is-active, .tutorial-card li.is-active") || []) {
+        node.classList.remove("is-active");
+      }
+      this.tutorialBackdrop?.classList.remove("is-highlight-mode");
+      this.tutorialHighlightedElements = [];
+    },
+
+    highlightTutorialTargets(source) {
+      if (!source || this.tutorialEditing) {
+        return;
+      }
+      const card = source.closest(".tutorial-card");
+      const targetText = source.dataset.tutorialTargets || card?.dataset.tutorialTargets || "";
+      const selectors = targetText.split(",").map((selector) => selector.trim()).filter(Boolean);
+      this.clearTutorialHighlights();
+      card?.classList.add("is-active");
+      source.classList.add("is-active");
+
+      const targets = [];
+      for (const selector of selectors) {
+        for (const target of document.querySelectorAll(selector)) {
+          if (this.tutorialDrawer?.contains(target)) {
+            continue;
+          }
+          if (!targets.includes(target)) {
+            targets.push(target);
+          }
+        }
+      }
+      for (const target of targets) {
+        const section = target.closest(".viewer-section");
+        if (section) {
+          this.setPanelSectionOpen?.(section, true);
+        }
+        target.classList.add("tutorial-highlight-target");
+      }
+      this.tutorialHighlightedElements = targets;
+      this.tutorialBackdrop?.classList.toggle("is-highlight-mode", targets.length > 0);
+      const firstVisibleTarget = targets.find((target) => {
+        const rect = target.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      firstVisibleTarget?.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "smooth" });
+      if (targets.length) {
+        this.setStatus(`Highlighted ${targets.length} tutorial ${targets.length === 1 ? "area" : "areas"}`);
+      }
+    },
+
+    handleTutorialRecipeClick(event) {
+      if (this.tutorialEditing || event.target?.closest?.(".tutorial-card-editor")) {
+        return;
+      }
+      const source = event.target?.closest?.(".tutorial-card li[data-tutorial-targets], .tutorial-card");
+      if (!source || !this.tutorialDrawer?.contains(source)) {
+        return;
+      }
+      this.highlightTutorialTargets(source);
+    },
+
     setTutorialDrawerOpen(open) {
       if (!this.tutorialDrawer) {
         return;
@@ -676,6 +1040,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.tutorialCloseButton?.focus({ preventScroll: true });
         return;
       }
+      this.clearTutorialHighlights?.();
       this.tutorialDrawer.classList.remove("is-open");
       this.tutorialBackdrop?.classList.remove("is-open");
       this.tutorialDrawerHideTimer = window.setTimeout(() => {
@@ -689,6 +1054,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     bindControls() {
       this.bindPanelSectionCollapseControls?.();
+      this.initializeTutorialEditor?.();
       this.characterSelect?.addEventListener("change", () => {
         void this.selectActor(this.characterSelect.value);
       });
@@ -1283,6 +1649,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.tutorialBackdrop?.addEventListener("click", () => {
         this.setTutorialDrawerOpen(false);
       });
+      this.tutorialEditButton?.addEventListener("click", () => this.setTutorialEditing(true));
+      this.tutorialSaveButton?.addEventListener("click", () => this.saveTutorialEdits());
+      this.tutorialCancelButton?.addEventListener("click", () => this.cancelTutorialEdits());
+      this.tutorialResetButton?.addEventListener("click", () => this.resetTutorialRecipes());
+      this.tutorialDrawer?.addEventListener("click", (event) => this.handleTutorialRecipeClick(event));
       this.timelineCompactToggle?.addEventListener("click", () => {
         this.setTimelineCompact(!this.app.classList.contains("is-timeline-compact"));
       });

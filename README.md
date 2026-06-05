@@ -1,4 +1,4 @@
-# Fourth Temple Cleanup
+# Fourth Temple Model Cleanup
 
 A standalone browser-based editor for cleaning up raw Mixamo FBX animations.
 

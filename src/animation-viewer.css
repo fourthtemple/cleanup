@@ -155,6 +155,21 @@ input {
   min-width: 0;
 }
 
+.viewer-brand-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.viewer-brand-copy span {
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
 .viewer-logo {
   flex: 0 0 auto;
   width: 44px;
@@ -706,6 +721,11 @@ input[type="color"] {
   opacity: 1;
 }
 
+.tutorial-backdrop.is-highlight-mode {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .tutorial-drawer {
   position: fixed;
   top: 0;
@@ -741,6 +761,23 @@ input[type="color"] {
   padding: 18px;
   border-bottom: 1px solid rgba(244, 234, 214, 0.16);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.tutorial-drawer-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 184px;
+}
+
+.tutorial-drawer-actions button {
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 1;
 }
 
 .tutorial-eyebrow {
@@ -785,6 +822,12 @@ input[type="color"] {
   border: 1px solid rgba(244, 234, 214, 0.18);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.055);
+  cursor: pointer;
+}
+
+.tutorial-card.is-active {
+  border-color: rgba(223, 180, 93, 0.7);
+  background: rgba(223, 180, 93, 0.09);
 }
 
 .tutorial-card h3 {
@@ -805,9 +848,99 @@ input[type="color"] {
   line-height: 1.35;
 }
 
+.tutorial-card li {
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+.tutorial-card li.is-active {
+  background: rgba(223, 180, 93, 0.18);
+  color: var(--text);
+}
+
 .tutorial-card b {
   color: var(--text);
   font-weight: 800;
+}
+
+.tutorial-card-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.tutorial-card-editor[hidden] {
+  display: none;
+}
+
+.tutorial-card-editor label {
+  display: grid;
+  gap: 4px;
+}
+
+.tutorial-card-editor span {
+  color: var(--gold);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tutorial-card-editor input,
+.tutorial-card-editor textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(244, 234, 214, 0.22);
+  background: rgba(0, 0, 0, 0.26);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+
+.tutorial-card-editor input {
+  min-height: 30px;
+  padding: 0 8px;
+}
+
+.tutorial-card-editor textarea {
+  min-height: 104px;
+  padding: 8px;
+  resize: vertical;
+  line-height: 1.35;
+}
+
+.tutorial-card.is-editing {
+  cursor: default;
+}
+
+.tutorial-card.is-editing > h3,
+.tutorial-card.is-editing > ol {
+  display: none;
+}
+
+.tutorial-highlight-target {
+  outline: 2px solid rgba(255, 216, 128, 0.98);
+  outline-offset: 3px;
+  box-shadow:
+    0 0 0 5px rgba(16, 21, 26, 0.82),
+    0 0 24px rgba(223, 180, 93, 0.62);
+  scroll-margin: 84px;
+  animation: tutorial-highlight-pulse 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes tutorial-highlight-pulse {
+  from {
+    outline-color: rgba(255, 216, 128, 0.82);
+    box-shadow:
+      0 0 0 4px rgba(16, 21, 26, 0.72),
+      0 0 14px rgba(223, 180, 93, 0.42);
+  }
+
+  to {
+    outline-color: rgba(255, 239, 186, 1);
+    box-shadow:
+      0 0 0 6px rgba(16, 21, 26, 0.86),
+      0 0 30px rgba(223, 180, 93, 0.78);
+  }
 }
 
 .texture-brush-cursor {
@@ -1396,6 +1529,10 @@ button.is-active {
 .weight-editor-app .viewer-logo {
   width: 34px;
   height: 34px;
+}
+
+.weight-editor-app .viewer-brand-copy span {
+  font-size: 8px;
 }
 
 .weight-editor-app .viewer-panel .tutorials-toggle {
@@ -2849,8 +2986,10 @@ button.is-active {
 
 @media (prefers-reduced-motion: reduce) {
   .tutorial-backdrop,
-  .tutorial-drawer {
+  .tutorial-drawer,
+  .tutorial-highlight-target {
     transition: none;
+    animation: none;
   }
 }
 
@@ -2861,6 +3000,16 @@ button.is-active {
 
   .tutorial-drawer-header {
     padding: 14px;
+  }
+
+  .tutorial-drawer-actions {
+    max-width: 140px;
+  }
+
+  .tutorial-drawer-actions button {
+    min-height: 28px;
+    padding: 0 6px;
+    font-size: 10px;
   }
 
   .tutorial-drawer h2 {

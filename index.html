@@ -3,9 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Fourth Temple Cleanup</title>
+    <title>Fourth Temple Model Cleanup</title>
     <link rel="icon" href="./assets/fourth-temple-logo.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=tutorial-drawer-20260605a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=editable-tutorials-20260605a" />
     <script type="importmap">
       {
         "imports": {
@@ -17,14 +17,17 @@
   </head>
   <body>
     <main class="viewer-app editor-app weight-editor-app is-side-panel-open is-timeline-compact">
-      <aside class="viewer-panel editor-control-panel" aria-label="Fourth Temple Cleanup controls">
+      <aside class="viewer-panel editor-control-panel" aria-label="Fourth Temple Model Cleanup controls">
         <div class="viewer-panel-scroll">
           <header class="viewer-header">
             <button id="side-panel-toggle" class="panel-collapse-toggle" type="button" aria-label="Hide panel" title="Hide panel" aria-pressed="true"></button>
             <button id="tutorials-toggle" class="tutorials-toggle" type="button" aria-controls="tutorial-drawer" aria-expanded="false" aria-label="Open tutorials" title="Tutorials">?</button>
             <div class="viewer-brand">
               <img class="viewer-logo" src="./assets/fourth-temple-logo.svg" alt="" aria-hidden="true" />
-              <h1>Fourth Temple Cleanup</h1>
+              <div class="viewer-brand-copy">
+                <span>Fourth Temple</span>
+                <h1>Model Cleanup</h1>
+              </div>
             </div>
           </header>
 
@@ -580,66 +583,72 @@
     <aside id="tutorial-drawer" class="tutorial-drawer" aria-labelledby="tutorial-title" aria-hidden="true" tabindex="-1" hidden>
       <header class="tutorial-drawer-header">
         <div>
-          <p class="tutorial-eyebrow">Fourth Temple Cleanup</p>
-          <h2 id="tutorial-title">Feature Recipes</h2>
+          <p class="tutorial-eyebrow">Fourth Temple</p>
+          <h2 id="tutorial-title">Model Cleanup Recipes</h2>
         </div>
-        <button id="tutorial-close" class="tutorial-close" type="button" aria-label="Close tutorials" title="Close tutorials">×</button>
+        <div class="tutorial-drawer-actions">
+          <button id="tutorial-edit" type="button" hidden>Edit</button>
+          <button id="tutorial-save" type="button" hidden>Save</button>
+          <button id="tutorial-cancel" type="button" hidden>Cancel</button>
+          <button id="tutorial-reset" type="button" hidden>Reset</button>
+          <button id="tutorial-close" class="tutorial-close" type="button" aria-label="Close tutorials" title="Close tutorials">×</button>
+        </div>
       </header>
       <div class="tutorial-drawer-body">
-        <section class="tutorial-card">
+        <section class="tutorial-card" data-tutorial-targets="#animation-library-import-button,#animation-library-list,#timeline-play-toggle,#save-patch,#animation-library-save-as">
           <h3>Quick Start</h3>
           <ol>
-            <li>Use <b>Import To Folder</b> to add an FBX, GLB, or GLTF file.</li>
-            <li>Pick the file in <b>Animation Library</b>, then press <b>Play</b>.</li>
-            <li>Make edits, then use <b>Save</b> or <b>Save As</b> to keep the cleanup in browser storage.</li>
+            <li data-tutorial-targets="#animation-library-import-button">Use <b>Import To Folder</b> to add an FBX, GLB, or GLTF file.</li>
+            <li data-tutorial-targets="#animation-library-list,#timeline-play-toggle">Pick the file in <b>Animation Library</b>, then press <b>Play</b>.</li>
+            <li data-tutorial-targets="#save-patch,#animation-library-save-as">Make edits, then use <b>Save</b> or <b>Save As</b> to keep the cleanup in browser storage.</li>
           </ol>
         </section>
-        <section class="tutorial-card">
+        <section class="tutorial-card" data-tutorial-targets=".select-tool-panel,#tool-pen,#brush-radius,#through-selection-toggle,.airbrush-tool-panel,#texture-airbrush-tool,#clear-selection,#clear-all-selection,#invert-selection">
           <h3>Painting And Selection</h3>
           <ol>
-            <li>Choose <b>Pen</b>, then paint vertices on the character.</li>
-            <li>Adjust <b>Selection radius</b>; enable <b>Through</b> when you want the brush to pass through the mesh.</li>
-            <li>Use <b>Airbrush</b> for color work, or <b>Clear Selection</b>, <b>Reset All</b>, and <b>Invert Selection</b> to reshape the selected region.</li>
+            <li data-tutorial-targets=".select-tool-panel,#tool-pen">Choose <b>Pen</b>, then paint vertices on the character.</li>
+            <li data-tutorial-targets="#brush-radius,#through-selection-toggle">Adjust <b>Selection radius</b>; enable <b>Through</b> when you want the brush to pass through the mesh.</li>
+            <li data-tutorial-targets=".airbrush-tool-panel,#texture-airbrush-tool,#clear-selection,#clear-all-selection,#invert-selection">Use <b>Airbrush</b> for color work, or <b>Clear Selection</b>, <b>Reset All</b>, and <b>Invert Selection</b> to reshape the selected region.</li>
           </ol>
         </section>
-        <section class="tutorial-card">
+        <section class="tutorial-card" data-tutorial-targets=".weight-timeline-panel,#pose-bone-select,#bone-gizmo,#fk-gizmo-mode-control,#ik-gizmo,#key-current-pose">
           <h3>FK/IK Posing And Keys</h3>
           <ol>
-            <li>Select a bone from <b>Bone</b> in the timeline.</li>
-            <li>Use <b>FK</b> with <b>Rotate</b> or <b>Move</b> for direct posing.</li>
-            <li>Use <b>IK</b> to drag a limb target, then press <b>Key</b> to bake the pose at the current frame.</li>
+            <li data-tutorial-targets="#pose-bone-select">Select a bone from <b>Bone</b> in the timeline.</li>
+            <li data-tutorial-targets="#bone-gizmo,#fk-gizmo-mode-control">Use <b>FK</b> with <b>Rotate</b> or <b>Move</b> for direct posing.</li>
+            <li data-tutorial-targets="#ik-gizmo,#key-current-pose">Use <b>IK</b> to drag a limb target, then press <b>Key</b> to bake the pose at the current frame.</li>
           </ol>
         </section>
-        <section class="tutorial-card">
+        <section class="tutorial-card" data-tutorial-targets=".rig-bone-panel,#add-bone-chain-members,#add-bone-chain,#bone-chain-select,#redistribute-chain-weights">
           <h3>Bone Chains And Distribution</h3>
           <ol>
-            <li>Open <b>Rig</b>, select ordered items in <b>Chain bones</b>, then click <b>Add Chain</b>.</li>
-            <li>Choose that chain in <b>Assign Weight</b> and paint the region it should control.</li>
-            <li>Press <b>Distribute Chain</b> to spread the selected vertices across the chain.</li>
+            <li data-tutorial-targets=".rig-bone-panel,#add-bone-chain-members,#add-bone-chain">Open <b>Rig</b>, select ordered items in <b>Chain bones</b>, then click <b>Add Chain</b>.</li>
+            <li data-tutorial-targets="#bone-chain-select,.select-tool-panel,#tool-pen">Choose that chain in <b>Assign Weight</b> and paint the region it should control.</li>
+            <li data-tutorial-targets="#redistribute-chain-weights">Press <b>Distribute Chain</b> to spread the selected vertices across the chain.</li>
           </ol>
         </section>
-        <section class="tutorial-card">
+        <section class="tutorial-card" data-tutorial-targets=".rig-bone-panel,.joint-constraint-panel,#joint-constraint-enabled,[data-joint-constraint-capture='min'],[data-joint-constraint-capture='max'],#joint-constraint-clear">
           <h3>Joint Constraints</h3>
           <ol>
-            <li>Select the joint you want to limit and turn <b>Joint Constraints</b> <b>On</b>.</li>
-            <li>Pose the joint at its lower limit and click <b>Min Pose</b>.</li>
-            <li>Pose the joint at its upper limit and click <b>Max Pose</b>; use <b>Clear</b> to remove the limit.</li>
+            <li data-tutorial-targets="#pose-bone-select,.rig-bone-panel,#joint-constraint-enabled">Select the joint you want to limit and turn <b>Joint Constraints</b> <b>On</b>.</li>
+            <li data-tutorial-targets=".weight-timeline-panel,[data-joint-constraint-capture='min']">Pose the joint at its lower limit and click <b>Min Pose</b>.</li>
+            <li data-tutorial-targets=".weight-timeline-panel,[data-joint-constraint-capture='max'],#joint-constraint-clear">Pose the joint at its upper limit and click <b>Max Pose</b>; use <b>Clear</b> to remove the limit.</li>
           </ol>
         </section>
-        <section class="tutorial-card">
+        <section class="tutorial-card" data-tutorial-targets="#unbake-root-motion,#save-patch,#fbx-export-target">
           <h3>Root Motion Cleanup</h3>
           <ol>
-            <li>Load an animation where the hips carry travel motion.</li>
-            <li>Click <b>Unbake Root</b> to separate root travel from hip posing.</li>
-            <li>Preview the result, then <b>Save</b> before exporting for Unreal or Unity workflows.</li>
+            <li data-tutorial-targets="#animation-library-import-button,#animation-library-list">Load an animation where the hips carry travel motion.</li>
+            <li data-tutorial-targets="#unbake-root-motion">Click <b>Unbake Root</b> to separate root travel from hip posing.</li>
+            <li data-tutorial-targets="#save-patch,#fbx-export-target,#export-fbx-button">Preview the result, then <b>Save</b> before exporting for Unreal or Unity workflows.</li>
           </ol>
         </section>
-        <section class="tutorial-card">
+        <section class="tutorial-card" data-tutorial-targets="#fbx-export-target,#export-fbx-button,#export-glb-button">
           <h3>Export</h3>
           <ol>
-            <li>Choose an <b>FBX Target</b> such as Three.js/Web, Blender, Unity, Unreal, or Maya.</li>
-            <li>Use <b>Export FBX</b> for rigged animation pipelines.</li>
-            <li>Use <b>Export GLB</b> when you want a web-friendly scene export.</li>
+            <li data-tutorial-targets="#fbx-export-target">Choose an <b>FBX Target</b> such as Three.js/Web, Blender, Unity, Unreal, or Maya.</li>
+            <li data-tutorial-targets="#export-fbx-button">Use <b>Export FBX</b> for rigged animation pipelines.</li>
+            <li data-tutorial-targets="#export-glb-button">Use <b>Export GLB</b> when you want a web-friendly scene export.</li>
           </ol>
         </section>
       </div>
@@ -652,6 +661,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/bird-weight-editor.js?v=tutorial-drawer-20260605a"></script>
+    <script type="module" src="./src/bird-weight-editor.js?v=editable-tutorials-20260605a"></script>
   </body>
 </html>
