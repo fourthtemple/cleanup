@@ -13,7 +13,7 @@ import {
 } from "./animation/animation-clip-utils.js";
 import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
 import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=root-unbake-20260604b";
-import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=demo-cat-20260605a";
+import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=blank-start-tutorial-load-20260605a";
 import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=root-unbake-20260604c";
 import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=safari-picker-webgl-20260602b";
 import { installClonePaintReplayMethods } from "./weight-editor/clone-paint-replay.js?v=airbrush-command-20260602a";
@@ -31,7 +31,7 @@ import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=root-unbake-20260604d";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=editable-tutorials-20260605a";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=blank-start-tutorial-load-20260605a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=safari-picker-webgl-20260602b";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=root-unbake-20260604b";
@@ -483,6 +483,9 @@ class BirdWeightEditor {
     this.syncPatchJson();
     this.syncPoseClipboardControls?.();
     this.syncExportButtons?.();
+    if (this.source) {
+      this.source.textContent = this.actorTarget?.sourceLabel || "Import a raw Mixamo FBX to begin";
+    }
     this.setStatus("Import a raw Mixamo FBX to begin");
     this.animate();
   }

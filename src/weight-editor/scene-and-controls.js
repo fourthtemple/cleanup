@@ -1014,6 +1014,25 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return;
       }
       this.highlightTutorialTargets(source);
+      void this.runTutorialAction(source);
+    },
+
+    async runTutorialAction(source) {
+      const action = source?.dataset?.tutorialAction || "";
+      if (action !== "load-demo-cat") {
+        return false;
+      }
+      if (this.model || this.activeClipEntry) {
+        return false;
+      }
+      const item = this.demoAnimationLibraryFile?.("cat");
+      if (!item) {
+        this.setStatus("Cat demo is not available");
+        return false;
+      }
+      return this.restoreAnimationLibraryFile?.(item, {
+        statusVerb: "Loaded demo"
+      }) || false;
     },
 
     setTutorialDrawerOpen(open) {

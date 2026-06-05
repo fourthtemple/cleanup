@@ -241,9 +241,6 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         this.setAnimationLibraryFoldersFromPayload(payload);
         this.renderAnimationLibrary();
         this.renderCharacterOptions?.();
-        if (!this.model && !this.activeClipEntry) {
-          void this.restoreStartupAnimationLibraryFile({ silent: true });
-        }
         if (!silent) {
           this.setStatus("Animation library refreshed");
         }
@@ -255,9 +252,6 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
             this.setAnimationLibraryFoldersFromPayload(payload);
             this.renderAnimationLibrary();
             this.renderCharacterOptions?.();
-            if (!this.model && !this.activeClipEntry) {
-              void this.restoreStartupAnimationLibraryFile({ silent: true });
-            }
             if (!silent) {
               this.setStatus("Using browser project storage");
             }
@@ -613,9 +607,7 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       } catch {
         storedKey = "";
       }
-      return (storedKey && this.findAnimationLibraryFile(storedKey))
-        || this.firstAvailableAnimationLibraryFile()
-        || null;
+      return storedKey ? this.findAnimationLibraryFile(storedKey) : null;
     },
 
     storedAnimationLibraryFile() {
@@ -698,14 +690,6 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       return candidates[0]?.file || null;
     },
 
-    startupAnimationLibraryFile() {
-      const tutorialDemoName = this.tutorialDemoAnimationLibraryName();
-      return (tutorialDemoName && this.demoAnimationLibraryFile(tutorialDemoName))
-        || this.storedAnimationLibraryFile()
-        || this.demoAnimationLibraryFile("cat")
-        || this.firstAvailableAnimationLibraryFile();
-    },
-
     syncAnimationLibrarySelectionToFile(item) {
       const folderName = item?.folder || "";
       if (!folderName) {
@@ -737,17 +721,6 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       } finally {
         this.restoringAnimationLibraryFile = false;
       }
-    },
-
-    async restoreStartupAnimationLibraryFile({ silent = false } = {}) {
-      const item = this.startupAnimationLibraryFile();
-      if (!item) {
-        return false;
-      }
-      return this.restoreAnimationLibraryFile(item, {
-        silent,
-        statusVerb: item.demo ? "Loaded demo" : "Restored"
-      });
     },
 
     async restoreLastAnimationLibraryFile({ silent = false } = {}) {
