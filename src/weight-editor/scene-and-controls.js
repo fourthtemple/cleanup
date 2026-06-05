@@ -306,6 +306,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.transformHelper.visible = false;
       this.scene.add(this.transformHelper);
       this.configureTransformControlHitAreas?.();
+      this.canvas.addEventListener("pointermove", (event) => this.updateProjectedTransformGizmoAxis?.(event), { capture: true });
+      this.canvas.addEventListener("pointerdown", (event) => this.tryProjectedTransformGizmoPointerDown?.(event), { capture: true });
 
       this.scene.add(this.modelRoot);
       this.resize();
@@ -314,20 +316,182 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     configureTransformControlHitAreas() {
       const picker = this.transformControls?._gizmo?.picker?.translate;
-      if (!picker || picker.userData.mixamoCleanupHitAreaAdjusted) {
+      if (!picker || picker.userData.mixamoCleanupHitAreaVersion === 3) {
         return;
       }
-      const scale = new THREE.Matrix4().makeScale(0.72, 0.72, 0.72);
       for (const handle of picker.children || []) {
-        if (!["X", "Y", "Z"].includes(handle.name) || !handle.geometry) {
+        if (!["X", "Y", "Z"].includes(handle.name)) {
           continue;
         }
-        handle.geometry = handle.geometry.clone();
-        handle.geometry.applyMatrix4(scale);
-        handle.geometry.computeBoundingSphere?.();
-        handle.geometry.computeBoundingBox?.();
+        handle.raycast = () => {};
       }
-      picker.userData.mixamoCleanupHitAreaAdjusted = true;
+      picker.userData.mixamoCleanupHitAreaVersion = 3;
+    },
+
+    transformPointerFromEvent(event) {
+      const rect = this.renderer?.domElement?.getBoundingClientRect?.();
+      if (!rect?.width || !rect?.height) {
+        return null;
+      }
+      return {
+        x: ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        y: -((event.clientY - rect.top) / rect.height) * 2 + 1,
+        button: event.button
+      };
+    },
+
+    transformControlProjectedAxisHit(event) {
+      const controls = this.transformControls;
+      const object = controls?.object;
+      if (!controls?.enabled || !object || controls.dragging || controls.mode !== "translate") {
+        return null;
+      }
+      const rect = this.renderer?.domElement?.getBoundingClientRect?.();
+      if (!rect?.width || !rect?.height || !this.camera) {
+        return null;
+      }
+
+      this.transformHelper?.updateMatrixWorld?.(true);
+      const gizmo = controls._gizmo?.gizmo?.translate;
+      if (!gizmo?.children?.length) {
+        return null;
+      }
+
+      const pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      const edgeTolerance = 2.5;
+      let best = null;
+      const projectVertex = (position, index, matrixWorld) => {
+        const projected = new THREE.Vector3()
+          .fromBufferAttribute(position, index)
+          .applyMatrix4(matrixWorld)
+          .project(this.camera);
+        if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y) || !Number.isFinite(projected.z)) {
+          return null;
+        }
+        return {
+          x: (projected.x * 0.5 + 0.5) * rect.width,
+          y: (-projected.y * 0.5 + 0.5) * rect.height,
+          z: projected.z
+        };
+      };
+      const signedArea = (a, b, c) => (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y);
+      const distanceToSegment = (point, a, b) => {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const lengthSq = dx * dx + dy * dy;
+        if (lengthSq <= 0.0001) {
+          return Math.hypot(point.x - a.x, point.y - a.y);
+        }
+        const t = THREE.MathUtils.clamp(((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq, 0, 1);
+        return Math.hypot(point.x - (a.x + dx * t), point.y - (a.y + dy * t));
+      };
+      const triangleHitScore = (point, a, b, c) => {
+        if (Math.abs(signedArea(a, b, c)) < 0.01) {
+          return null;
+        }
+        const d1 = signedArea(point, a, b);
+        const d2 = signedArea(point, b, c);
+        const d3 = signedArea(point, c, a);
+        const inside = !(d1 < 0 || d2 < 0 || d3 < 0) || !(d1 > 0 || d2 > 0 || d3 > 0);
+        if (inside) {
+          return 0;
+        }
+        const edgeDistance = Math.min(
+          distanceToSegment(point, a, b),
+          distanceToSegment(point, b, c),
+          distanceToSegment(point, c, a)
+        );
+        return edgeDistance <= edgeTolerance ? edgeDistance : null;
+      };
+      const testTriangle = (axis, position, matrixWorld, aIndex, bIndex, cIndex) => {
+        const a = projectVertex(position, aIndex, matrixWorld);
+        const b = projectVertex(position, bIndex, matrixWorld);
+        const c = projectVertex(position, cIndex, matrixWorld);
+        if (!a || !b || !c) {
+          return;
+        }
+        const hitScore = triangleHitScore(pointer, a, b, c);
+        if (hitScore === null) {
+          return;
+        }
+        const depthScore = (a.z + b.z + c.z) / 3;
+        const score = hitScore * 0.001 + depthScore;
+        if (!best || score < best.score) {
+          best = { axis, score };
+        }
+      };
+
+      for (const handle of gizmo.children) {
+        if (!["X", "Y", "Z"].includes(handle.name) || handle.visible === false || !handle.geometry?.attributes?.position) {
+          continue;
+        }
+        const position = handle.geometry.attributes.position;
+        const index = handle.geometry.index;
+        if (index) {
+          for (let i = 0; i + 2 < index.count; i += 3) {
+            testTriangle(handle.name, position, handle.matrixWorld, index.getX(i), index.getX(i + 1), index.getX(i + 2));
+          }
+        } else {
+          for (let i = 0; i + 2 < position.count; i += 3) {
+            testTriangle(handle.name, position, handle.matrixWorld, i, i + 1, i + 2);
+          }
+        }
+      }
+      return best;
+    },
+
+    updateProjectedTransformGizmoAxis(event) {
+      const controls = this.transformControls;
+      if (!controls?.enabled || controls.dragging) {
+        return false;
+      }
+      const hit = this.transformControlProjectedAxisHit(event);
+      if (!hit?.axis) {
+        return false;
+      }
+      controls.axis = hit.axis;
+      this.transformHelper?.updateMatrixWorld?.(true);
+      event.stopPropagation?.();
+      event.stopImmediatePropagation?.();
+      return true;
+    },
+
+    tryProjectedTransformGizmoPointerDown(event) {
+      if (event.button !== 0) {
+        return false;
+      }
+      const controls = this.transformControls;
+      if (!controls?.enabled || !controls.object || controls.dragging) {
+        return false;
+      }
+      const hit = this.transformControlProjectedAxisHit(event);
+      if (!hit?.axis) {
+        return false;
+      }
+      const pointer = this.transformPointerFromEvent(event);
+      if (!pointer) {
+        return false;
+      }
+      controls.axis = hit.axis;
+      this.transformHelper?.updateMatrixWorld?.(true);
+      if (!document.pointerLockElement) {
+        try {
+          this.canvas.setPointerCapture?.(event.pointerId);
+        } catch (error) {
+          // Pointer capture can fail if the pointer was already released by the browser.
+        }
+      }
+      if (typeof controls._onPointerMove === "function") {
+        this.canvas.addEventListener("pointermove", controls._onPointerMove);
+      }
+      controls.pointerDown(pointer);
+      if (controls.dragging) {
+        event.preventDefault();
+        event.stopPropagation?.();
+        event.stopImmediatePropagation?.();
+        return true;
+      }
+      return false;
     },
 
     currentOrbitViewSetting() {
@@ -418,7 +582,78 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return this.applyOrbitViewSetting(this.savedOrbitViewSetting(), options);
     },
 
+    panelSectionTitle(section) {
+      return section?.querySelector?.(".viewer-label")?.textContent?.trim() || "Panel";
+    },
+
+    bindPanelSectionCollapseControls() {
+      if (this.panelSectionCollapseControlsBound) {
+        return;
+      }
+      this.panelSectionCollapseControlsBound = true;
+      const sections = Array.from(document.querySelectorAll(".viewer-panel .viewer-section"));
+      for (const section of sections) {
+        const title = this.panelSectionTitle(section);
+        const label = section.querySelector(":scope > .viewer-label");
+        let heading = section.querySelector(":scope > .panel-section-heading, :scope > .rig-bone-heading");
+        if (!heading && label) {
+          heading = document.createElement("div");
+          heading.className = "panel-section-heading";
+          section.insertBefore(heading, label);
+          heading.append(label);
+        }
+        if (!heading) {
+          continue;
+        }
+        heading.classList.add("panel-section-heading");
+        let button = heading.querySelector(":scope > .panel-section-toggle");
+        if (!button && section === this.rigPanel && this.rigPanelToggle) {
+          button = this.rigPanelToggle;
+        }
+        if (!button) {
+          button = document.createElement("button");
+          button.type = "button";
+          heading.append(button);
+        }
+        button.textContent = "";
+        button.classList.add("panel-section-toggle");
+        button.setAttribute("aria-expanded", "true");
+        button.setAttribute("aria-label", `Minimize ${title}`);
+        button.title = `Minimize ${title}`;
+        if (button.dataset.panelSectionToggleBound === "true") {
+          continue;
+        }
+        button.dataset.panelSectionToggleBound = "true";
+        button.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          this.setPanelSectionOpen(section, section.classList.contains("is-panel-section-collapsed"));
+        });
+      }
+    },
+
+    setPanelSectionOpen(section, open) {
+      if (!section) {
+        return;
+      }
+      const title = this.panelSectionTitle(section);
+      section.classList.toggle("is-panel-section-collapsed", !open);
+      if (section === this.rigPanel) {
+        section.classList.toggle("is-collapsed", !open);
+      }
+      const button = section.querySelector(":scope > .panel-section-heading > .panel-section-toggle")
+        || (section === this.rigPanel ? this.rigPanelToggle : null);
+      if (!button) {
+        return;
+      }
+      button.textContent = "";
+      button.setAttribute("aria-expanded", String(open));
+      button.setAttribute("aria-label", `${open ? "Minimize" : "Restore"} ${title}`);
+      button.title = `${open ? "Minimize" : "Restore"} ${title}`;
+    },
+
     bindControls() {
+      this.bindPanelSectionCollapseControls?.();
       this.characterSelect?.addEventListener("change", () => {
         void this.selectActor(this.characterSelect.value);
       });
@@ -448,7 +683,6 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.transferCleanupToBlendButton?.addEventListener("click", () => {
         void this.transferCleanupToBlendAction?.();
       });
-      this.rigPanelToggle?.addEventListener("click", () => this.setRigPanelOpen(this.rigPanel?.classList.contains("is-collapsed")));
       this.rigBoneSearch?.addEventListener("input", () => {
         this.rigBoneSearchText = this.rigBoneSearch.value.trim().toLowerCase();
         this.updateRigBoneList();
@@ -2112,7 +2346,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return;
       }
       this.app.classList.toggle("is-side-panel-open", open);
-      this.sidePanelToggle.textContent = "-";
+      this.sidePanelToggle.textContent = "";
       this.sidePanelToggle.setAttribute("aria-label", "Hide panel");
       this.sidePanelToggle.title = "Hide panel";
       this.sidePanelToggle.setAttribute("aria-pressed", String(open));
@@ -2128,7 +2362,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return;
       }
       this.app.classList.toggle("is-timeline-compact", compact);
-      this.timelineCompactToggle.textContent = compact ? "+" : "v";
+      this.timelineCompactToggle.textContent = compact ? "^" : "_";
       this.timelineCompactToggle.setAttribute("aria-label", compact ? "Expand timeline" : "Compact timeline");
       this.timelineCompactToggle.title = compact ? "Expand timeline" : "Compact timeline";
       this.timelineCompactToggle.setAttribute("aria-pressed", String(compact));
@@ -2144,10 +2378,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       this.app.classList.toggle("is-timeline-hidden", hidden);
       this.timelineShowToggle.hidden = !hidden;
-      this.timelineShowToggle.textContent = "+";
+      this.timelineShowToggle.textContent = "^";
       this.timelineShowToggle.setAttribute("aria-label", "Show timeline");
       this.timelineShowToggle.title = "Show timeline";
-      this.timelineHideToggle.textContent = "-";
+      this.timelineHideToggle.textContent = "v";
       this.timelineHideToggle.setAttribute("aria-label", "Hide timeline");
       this.timelineHideToggle.title = "Hide timeline";
       this.timelineHideToggle.setAttribute("aria-pressed", String(hidden));
@@ -2158,12 +2392,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     setRigPanelOpen(open) {
-      if (!this.rigPanel || !this.rigPanelToggle) {
-        return;
-      }
-      this.rigPanel.classList.toggle("is-collapsed", !open);
-      this.rigPanelToggle.textContent = open ? "-" : "+";
-      this.rigPanelToggle.setAttribute("aria-expanded", String(open));
+      this.setPanelSectionOpen(this.rigPanel, open);
     },
 
     pausePlayback() {

@@ -261,6 +261,33 @@ export function installJointConstraintMethods(BirdWeightEditor, deps) {
       return ROTATION_CHANNELS.filter((channel) => Math.abs(finitePoseValue(pose[channel])) >= 0.0001);
     },
 
+    currentJointConstraintPoseForBone(boneName) {
+      const emptyPose = { x: 0, y: 0, z: 0, px: 0, py: 0, pz: 0 };
+      const hasRotation = (pose = {}) => ROTATION_CHANNELS.some((channel) => (
+        Math.abs(finitePoseValue(pose[channel])) >= 0.0001
+      ));
+      const cleanPose = (pose = {}) => ({
+        ...emptyPose,
+        ...pose
+      });
+      const manualPose = this.manualPose?.get?.(boneName);
+      if (hasRotation(manualPose)) {
+        return cleanPose(manualPose);
+      }
+      if (this.poseBoneSelect?.value === boneName) {
+        const controlsPose = this.readPoseControls?.();
+        if (hasRotation(controlsPose)) {
+          return cleanPose(controlsPose);
+        }
+      }
+      const keyedPose = this.interpolatedPoseForFrame?.(this.progress * this.timelineFrames)?.[boneName];
+      if (hasRotation(keyedPose)) {
+        return cleanPose(keyedPose);
+      }
+      const relativePose = this.getBoneRelativePose?.(boneName);
+      return cleanPose(relativePose);
+    },
+
     captureCurrentJointConstraintPoseLimit(side = "max") {
       const boneName = this.poseBoneSelect?.value || this.activeBoneName || "";
       if (!boneName || !this.bones?.has?.(boneName)) {
@@ -269,7 +296,7 @@ export function installJointConstraintMethods(BirdWeightEditor, deps) {
       }
       const targetSide = side === "min" ? "min" : "max";
       const oppositeSide = targetSide === "min" ? "max" : "min";
-      const pose = this.readPoseControls?.() || {};
+      const pose = this.currentJointConstraintPoseForBone?.(boneName) || this.readPoseControls?.() || {};
       const current = this.jointConstraintForBone(boneName);
       const defaults = current.enabled ? current : this.defaultJointConstraint();
       const next = {

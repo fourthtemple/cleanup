@@ -20,10 +20,18 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
   const LAST_LIBRARY_FILE_KEY = "mixamo-cleanup-editor:last-library-file";
 
   Object.assign(BirdWeightEditor.prototype, {
+    canUseAnimationLibraryServer() {
+      const host = window.location.hostname;
+      return host === "localhost" || host === "127.0.0.1" || host === "::1";
+    },
+
     animationLibraryStartupMode() {
       const params = new URLSearchParams(window.location.search || "");
       const requested = String(params.get("library") || params.get("storage") || "").toLowerCase();
-      if (["browser", "server", "auto"].includes(requested)) {
+      if (requested === "browser") {
+        return "browser";
+      }
+      if (["server", "auto"].includes(requested) && this.canUseAnimationLibraryServer()) {
         return requested;
       }
       return "browser";
@@ -277,7 +285,7 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
             deleteButton.type = "button";
             deleteButton.className = "animation-library-file-delete";
             deleteButton.dataset.animationLibraryDeleteKey = file.key || file.path;
-            deleteButton.textContent = "-";
+            deleteButton.textContent = "x";
             deleteButton.title = `Delete ${file.name}`;
             deleteButton.setAttribute("aria-label", `Delete ${file.name}`);
             row.append(deleteButton);
