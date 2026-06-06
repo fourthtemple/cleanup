@@ -170,6 +170,7 @@ export function installPoseClipboardMethods(BirdWeightEditor, deps) {
       this.syncPatchJson?.();
       this.updateTimelineKeyMarkers?.();
       this.updateCounts?.();
+      this.syncPoseClipboardControls?.();
       const label = entries.length === 1
         ? this.boneDisplayName(entries[0].targetName)
         : `${entries.length}-bone chain`;
@@ -177,6 +178,14 @@ export function installPoseClipboardMethods(BirdWeightEditor, deps) {
       return true;
     },
 
-    syncPoseClipboardControls() {}
+    syncPoseClipboardControls() {
+      const hasClipboard = Boolean(this.poseClipboard?.boneNames?.length);
+      if (this.copyPoseButton) {
+        this.copyPoseButton.disabled = !this.model || !this.bones?.size;
+      }
+      if (this.pastePoseButton) {
+        this.pastePoseButton.disabled = !hasClipboard;
+      }
+    }
   });
 }

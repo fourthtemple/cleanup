@@ -2761,7 +2761,7 @@ button.is-active {
 .timeline-pose-actions {
   display: grid;
   align-self: start;
-  grid-template-columns: repeat(2, minmax(22px, 1fr));
+  grid-template-columns: minmax(42px, 1fr);
   gap: 3px;
 }
 
@@ -2776,14 +2776,6 @@ button.is-active {
   min-height: 22px;
   padding: 0 4px;
   font-size: 10px;
-}
-
-.timeline-pose-actions > button {
-  grid-column: 1 / -1;
-}
-
-.weight-editor-app .timeline-pose-actions > button {
-  grid-column: 1 / -1;
 }
 
 .weight-editor-app .timeline-pose-actions .timeline-loop-action {

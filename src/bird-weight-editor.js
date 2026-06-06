@@ -24,14 +24,14 @@ import { installJointConstraintMethods } from "./weight-editor/joint-constraints
 import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=joint-limit-min-max-20260604b";
 import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=selection-radius-sync-20260605a";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-bone-highlight-20260605a";
-import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js";
+import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=pose-copy-paste-20260605a";
 import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=ik-chain-demo-20260605a";
 import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-chain-demo-20260605a";
 import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=macro-chain-scroll-20260605a";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js?v=travel-follow-return-20260605a";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=travel-follow-return-20260605a";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=pose-copy-paste-20260605a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=selection-cursor-radius-20260605a";
 import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-chain-scroll-20260605a";
@@ -255,6 +255,8 @@ class BirdWeightEditor {
     this.posePosZValue = document.getElementById("pose-pos-z-value");
     this.clearPoseButton = document.getElementById("clear-pose");
     this.keyCurrentPoseButton = document.getElementById("key-current-pose");
+    this.copyPoseButton = document.getElementById("copy-pose");
+    this.pastePoseButton = document.getElementById("paste-pose");
     this.playToggle = document.getElementById("play-toggle");
     this.timelinePlayToggle = document.getElementById("timeline-play-toggle");
     this.restartClip = document.getElementById("restart-clip");

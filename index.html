@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fourth Temple Model Cleanup</title>
     <link rel="icon" href="./assets/fourth-temple-logo.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=macro-playback-chrome-20260605a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=pose-copy-stack-20260605a" />
     <script type="importmap">
       {
         "imports": {
@@ -537,8 +537,10 @@
                 <button id="timeline-compact-toggle" type="button" aria-label="Expand timeline" title="Expand timeline" aria-pressed="true">^</button>
                 <button id="timeline-hide-toggle" type="button" aria-label="Hide timeline" title="Hide timeline">v</button>
               </div>
-              <button id="key-current-pose" type="button" title="Key selected bone pose">Key</button>
-              <button id="loop-to-start" class="timeline-loop-action" type="button" title="Blend selected bone or chain back to frame 0 at the end">Blend Loop</button>
+              <button id="key-current-pose" type="button" title="Key selected bone pose">key</button>
+              <button id="copy-pose" type="button" title="Copy selected bone or chain pose from the current frame">copy</button>
+              <button id="paste-pose" type="button" title="Paste copied pose to the current frame" disabled>paste</button>
+              <button id="loop-to-start" class="timeline-loop-action" type="button" title="Blend selected bone or chain back to frame 0 at the end" hidden>Blend Loop</button>
             </div>
           </div>
           <div class="timeline-track-row">
@@ -682,6 +684,6 @@
         }
       }
     </script>
-    <script type="module" src="./src/bird-weight-editor.js?v=macro-chain-scroll-20260605a"></script>
+    <script type="module" src="./src/bird-weight-editor.js?v=pose-copy-paste-20260605a"></script>
   </body>
 </html>
