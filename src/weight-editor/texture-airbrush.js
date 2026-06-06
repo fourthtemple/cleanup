@@ -198,49 +198,9 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       return SELECTION_BRUSH_TOOLS.has(tool);
     },
 
-    selectionBrushUsesScreenRadius(tool = this.activeTool) {
-      return tool === "deselect"
-        || tool === "erase"
-        || (tool === "paint" && this.throughSelectionToggle?.checked);
-    },
-
-    selectionBrushScreenRadiusPixels(hit = null, tool = this.activeTool) {
+    selectionBrushScreenRadiusPixels() {
       const radius = this.selectionBrushRadiusValue();
-      if (this.selectionBrushUsesScreenRadius(tool) || !hit?.point || !this.camera || !this.canvas) {
-        return Math.max(18, radius * 720);
-      }
-      const rect = this.canvas.getBoundingClientRect();
-      const center = hit.point.clone().project(this.camera);
-      const edgeWorld = hit.point.clone();
-      const cameraRight = new THREE.Vector3()
-        .setFromMatrixColumn(this.camera.matrixWorld, 0)
-        .normalize()
-        .multiplyScalar(radius);
-      edgeWorld.add(cameraRight);
-      const edge = edgeWorld.project(this.camera);
-      const centerX = (center.x * 0.5 + 0.5) * rect.width;
-      const centerY = (-center.y * 0.5 + 0.5) * rect.height;
-      const edgeX = (edge.x * 0.5 + 0.5) * rect.width;
-      const edgeY = (-edge.y * 0.5 + 0.5) * rect.height;
-      return Math.max(4, Math.min(160, Math.hypot(edgeX - centerX, edgeY - centerY)));
-    },
-
-    selectionBrushHitForEvent(event) {
-      if (!event || !this.model || !this.canvas || !this.camera) {
-        return null;
-      }
-      const paintObjects = (this.paintRecords || [])
-        .map((record) => record.object)
-        .filter(Boolean);
-      if (!paintObjects.length) {
-        return null;
-      }
-      const rect = this.canvas.getBoundingClientRect();
-      this.pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      this.pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-      this.raycaster.setFromCamera(this.pointer, this.camera);
-      this.refreshSkinnedRaycastBounds?.();
-      return this.raycaster.intersectObjects(paintObjects, false)[0] || null;
+      return Math.max(18, Math.min(160, radius * 720));
     },
 
     hideTextureBrushCursor() {
@@ -330,8 +290,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         this.hideTextureBrushCursor();
         return false;
       }
-      const hit = this.selectionBrushHitForEvent(event);
-      const radius = this.selectionBrushScreenRadiusPixels(hit, this.activeTool);
+      const radius = this.selectionBrushScreenRadiusPixels();
       this.textureBrushCursor.hidden = false;
       this.textureBrushCursor.classList.remove("is-clone");
       this.textureBrushCursor.classList.add("is-selection");
