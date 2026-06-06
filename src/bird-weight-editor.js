@@ -24,8 +24,8 @@ import { installJointConstraintMethods } from "./weight-editor/joint-constraints
 import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=joint-limit-min-max-20260604b";
 import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=selection-radius-sync-20260605a";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-bone-highlight-20260605a";
-import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=preview-cursor-paste-undo-20260606a";
-import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=pose-weight-preserve-20260605a";
+import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=chain-paste-quat-20260606a";
+import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=chain-paste-quat-20260606a";
 import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-chain-demo-20260605a";
 import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=macro-chain-scroll-20260605a";

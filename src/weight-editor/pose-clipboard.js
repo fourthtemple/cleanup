@@ -1,8 +1,6 @@
 export function installPoseClipboardMethods(BirdWeightEditor, deps) {
   const {
-    THREE,
-    CURVE_CHANNEL_KEYS,
-    finitePoseValue
+    CURVE_CHANNEL_KEYS
   } = deps;
 
   Object.assign(BirdWeightEditor.prototype, {
@@ -115,14 +113,7 @@ export function installPoseClipboardMethods(BirdWeightEditor, deps) {
     storedPoseForPastedAbsolutePose(frame, boneName, pose) {
       const cloned = this.clonePose?.(pose) || {};
       if (this.actorTarget?.mode !== "bird-flap" && this.poseKeyframeMode !== "replace") {
-        const basePose = this.basePoseForFrame?.(frame, boneName) || {};
-        const result = {};
-        for (const channel of CURVE_CHANNEL_KEYS) {
-          if (cloned[channel] !== undefined) {
-            result[channel] = finitePoseValue(cloned[channel] - finitePoseValue(basePose[channel]));
-          }
-        }
-        return result;
+        return this.adaptivePoseFromAbsolutePose?.(frame, boneName, cloned) || cloned;
       }
       return cloned;
     },

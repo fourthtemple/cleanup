@@ -100,10 +100,28 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
       return { x: 0, y: 0, z: 0, px: 0, py: 0, pz: 0 };
     },
 
+    poseRotationQuaternion(pose = {}) {
+      return new THREE.Quaternion().setFromEuler(new THREE.Euler(
+        finitePoseValue(pose.x),
+        finitePoseValue(pose.y),
+        finitePoseValue(pose.z),
+        "XYZ"
+      ));
+    },
+
     adaptivePoseFromAbsolutePose(frame, boneName, pose = {}) {
       const basePose = this.basePoseForFrame(frame, boneName);
       const result = {};
-      for (const channel of CURVE_CHANNEL_KEYS) {
+      if (["x", "y", "z"].some((channel) => pose[channel] !== undefined)) {
+        const deltaEuler = new THREE.Euler().setFromQuaternion(
+          this.poseRotationQuaternion(basePose).invert().multiply(this.poseRotationQuaternion(pose)),
+          "XYZ"
+        );
+        result.x = finitePoseValue(deltaEuler.x);
+        result.y = finitePoseValue(deltaEuler.y);
+        result.z = finitePoseValue(deltaEuler.z);
+      }
+      for (const channel of ["px", "py", "pz"]) {
         if (pose[channel] !== undefined) {
           result[channel] = finitePoseValue(pose[channel] - finitePoseValue(basePose[channel]));
         }
