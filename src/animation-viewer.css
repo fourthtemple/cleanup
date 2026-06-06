@@ -983,6 +983,27 @@ input[type="color"] {
   }
 }
 
+.tutorial-macro-click-target {
+  outline: 2px solid rgba(255, 239, 186, 1);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 4px rgba(16, 21, 26, 0.82),
+    0 0 18px rgba(223, 180, 93, 0.7) !important;
+  animation: tutorial-macro-target-flash 420ms ease-out;
+}
+
+@keyframes tutorial-macro-target-flash {
+  from {
+    transform: scale(0.98);
+    filter: brightness(1.35);
+  }
+
+  to {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+}
+
 .tutorial-macro-pointer {
   position: fixed;
   top: 0;

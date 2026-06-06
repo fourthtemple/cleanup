@@ -586,6 +586,23 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       }
     },
 
+    flashTutorialMacroTarget(target) {
+      if (!target?.classList) {
+        return false;
+      }
+      target.classList.remove("tutorial-macro-click-target");
+      void target.offsetWidth;
+      target.classList.add("tutorial-macro-click-target");
+      if (target.tutorialMacroClickTimer) {
+        window.clearTimeout(target.tutorialMacroClickTimer);
+      }
+      target.tutorialMacroClickTimer = window.setTimeout(() => {
+        target.classList.remove("tutorial-macro-click-target");
+        target.tutorialMacroClickTimer = null;
+      }, 520);
+      return true;
+    },
+
     tutorialMacroSyntheticPointerEvent(event) {
       const point = this.tutorialMacroCanvasPoint(event);
       return {
@@ -661,6 +678,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
             x: rect.left + rect.width / 2,
             y: rect.top + rect.height / 2
           }, { click: true });
+          this.flashTutorialMacroTarget(target);
           await delay(140 / this.tutorialMacroPlaybackSpeed());
         }
         this.setTool?.(event.tool || "orbit");
@@ -674,6 +692,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
             x: rect.left + rect.width / 2,
             y: rect.top + rect.height / 2
           }, { click: true });
+          this.flashTutorialMacroTarget(target);
           await delay(120 / this.tutorialMacroPlaybackSpeed());
         }
         if (!target || target.disabled) {
@@ -699,7 +718,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         return;
       }
       if (event.type === "state") {
-        this.restoreEditorState?.(event.state, "Demo");
+        this.restoreEditorState?.(event.state, "Demo", { restoreEditorChrome: false });
         return;
       }
       if (event.type !== "pointer") {

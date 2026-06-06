@@ -2289,13 +2289,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
     },
 
-    restoreEditorState(state, statusPrefix) {
+    restoreEditorState(state, statusPrefix, options = {}) {
       this.poseControlUndoActive = false;
       this.boneMoveDrag = null;
       this.ikDrag = null;
       if (!state) {
         return false;
       }
+      const restoreEditorChrome = options.restoreEditorChrome !== false;
       const patch = state.patch || JSON.parse(state.patchText);
       this.setPatchJsonFromPatch?.(patch);
       this.lastClipSampleTime = null;
@@ -2329,17 +2330,19 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         )));
         this.updateRecordColors(record);
       });
-      if (state.activeBoneName && this.bones.has(state.activeBoneName)) {
+      if (restoreEditorChrome && state.activeBoneName && this.bones.has(state.activeBoneName)) {
         this.setActiveBone(state.activeBoneName);
       }
-      if (state.poseBoneName && this.bones.has(state.poseBoneName)) {
+      if (restoreEditorChrome && state.poseBoneName && this.bones.has(state.poseBoneName)) {
         this.poseBoneSelect.value = state.poseBoneName;
         this.setActiveBone(state.poseBoneName);
       }
-      this.selectedBoneChainRootName = state.selectedBoneChainRootName || "";
-      this.renderBoneChainOptions?.();
-      this.renderAddBoneChainMemberOptions?.();
-      this.restoreRigEditorUndoState?.(state.rigEditor);
+      if (restoreEditorChrome) {
+        this.selectedBoneChainRootName = state.selectedBoneChainRootName || "";
+        this.renderBoneChainOptions?.();
+        this.renderAddBoneChainMemberOptions?.();
+        this.restoreRigEditorUndoState?.(state.rigEditor);
+      }
       if (Number.isFinite(state.progress)) {
         this.progress = THREE.MathUtils.clamp(state.progress, 0, 1);
         this.timeScrub.value = String(this.progress);
@@ -2353,7 +2356,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       this.syncPoseControlsToCurrentBone();
       this.flushPoseUpdates?.();
-      this.restorePoseGizmoMode?.(state.poseGizmoMode || "");
+      if (restoreEditorChrome) {
+        this.restorePoseGizmoMode?.(state.poseGizmoMode || "");
+      }
       this.syncPatchJson();
       this.updateCounts();
       this.updateUndoButton();
