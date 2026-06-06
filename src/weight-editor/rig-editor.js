@@ -81,6 +81,9 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         addBoneName: this.addBoneNameInput?.value || "",
         editingBone: this.addBoneNameInput?.dataset?.editingBone || "",
         addBoneParent: this.addBoneParentSelect?.value || "",
+        selectedChainMembers: Array.from(this.addBoneChainMembersSelect?.selectedOptions || [])
+          .map((option) => option.value)
+          .filter((name) => this.bones?.has?.(name)),
         position: transform.position,
         rotation: transform.rotation
       };
@@ -102,6 +105,13 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.renderAddBoneParentOptions(state.addBoneParent);
       if (this.addBoneParentSelect && state.addBoneParent && [...this.addBoneParentSelect.options].some((option) => option.value === state.addBoneParent)) {
         this.addBoneParentSelect.value = state.addBoneParent;
+      }
+      if (this.addBoneChainMembersSelect && Array.isArray(state.selectedChainMembers)) {
+        const selected = new Set(state.selectedChainMembers.filter((name) => this.bones?.has?.(name)));
+        for (const option of Array.from(this.addBoneChainMembersSelect.options || [])) {
+          option.selected = selected.has(option.value);
+        }
+        this.syncSelectedBoneChainFromMemberSelect?.();
       }
       this.setBoneEditorTransform(state.position || [0, -0.12, 0], state.rotation || [0, 0, 0]);
       this.setBonePlacementPending(Boolean(state.pendingBonePlacement));

@@ -533,10 +533,14 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if (kind === "input") {
         this.tutorialMacroRecording.lastUiInputTime = time;
       }
+      const selectedValues = tag === "select" && target.multiple
+        ? Array.from(target.selectedOptions || []).map((option) => option.value)
+        : null;
       const recorded = this.recordTutorialMacroEvent("ui", {
         action: kind,
         selector: macroElementSelector(target),
         value: target.value ?? "",
+        ...(selectedValues ? { selectedValues } : {}),
         checked: Boolean(target.checked),
         tag,
         inputType: type
@@ -715,12 +719,27 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
           this.flashTutorialMacroTarget(target);
           return;
         }
+        if (target.id === "bone-gizmo") {
+          this.toggleActiveBoneMoveGizmo?.();
+          this.flashTutorialMacroTarget(target);
+          return;
+        }
+        if (target.id === "ik-gizmo") {
+          this.toggleIkMoveGizmo?.();
+          this.flashTutorialMacroTarget(target);
+          return;
+        }
         if (event.tag === "select" || event.tag === "input") {
+          if (event.tag === "select" && target.multiple && Array.isArray(event.selectedValues)) {
+            const selected = new Set(event.selectedValues.map((value) => String(value)));
+            for (const option of Array.from(target.options || [])) {
+              option.selected = selected.has(String(option.value));
+            }
+          } else if (event.value !== undefined) {
+            target.value = String(event.value);
+          }
           if (event.inputType === "checkbox" || event.inputType === "radio") {
             target.checked = Boolean(event.checked);
-          }
-          if (event.value !== undefined) {
-            target.value = String(event.value);
           }
           target.dispatchEvent(new Event("input", { bubbles: true }));
           target.dispatchEvent(new Event("change", { bubbles: true }));

@@ -28,13 +28,13 @@ import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js";
 import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=ik-chain-demo-20260605a";
 import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-chain-demo-20260605a";
 import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
-import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=fk-key-additive-20260605a";
+import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=macro-gizmo-select-20260605a";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
 import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=macro-playback-chrome-20260605a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=selection-cursor-radius-20260605a";
-import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-bone-highlight-20260605a";
+import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-gizmo-select-20260605a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=tutorial-macro-reset-20260605a";
 import { installWeightMethods } from "./weight-editor/weights.js";
 
