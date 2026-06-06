@@ -82,11 +82,15 @@ export function installWeightMethods(BirdWeightEditor, deps) {
           : -1;
         let reattached = 0;
         let blocked = 0;
+        let recordPositionChanged = false;
+        this.model?.updateMatrixWorld(true);
+        record.object.updateMatrixWorld(true);
 
         for (const target of targets.values()) {
           const fallbackTargetBoneIndex = target.mirrored && mirrorFallbackBoneIndex >= 0
             ? mirrorFallbackBoneIndex
             : fallbackBoneIndex;
+          const worldBeforeWeights = this.vertexWorldPosition(record, target.vertexIndex);
           const result = this.setVertexBoneWeight(record, target.vertexIndex, target.boneIndex, weight, {
             fallbackBoneIndex: fallbackTargetBoneIndex
           });
@@ -107,10 +111,21 @@ export function installWeightMethods(BirdWeightEditor, deps) {
             if (target.mirrored) {
               mirroredChanged += 1;
             }
+            const positionChanged = this.setVertexRawPositionForWorld(record, target.vertexIndex, worldBeforeWeights);
+            recordPositionChanged = recordPositionChanged || positionChanged;
+            if (positionChanged) {
+              record.weightCompensated?.add(target.vertexIndex);
+            } else if (!this.getVertexPositionDelta(record, target.vertexIndex)) {
+              record.weightCompensated?.delete(target.vertexIndex);
+            }
           }
         }
         options.reattachedCount = (options.reattachedCount || 0) + reattached;
         options.blockedCount = (options.blockedCount || 0) + blocked;
+        if (recordPositionChanged) {
+          record.geometry.attributes.position.needsUpdate = true;
+          this.preserveImportedNormals(record);
+        }
         record.geometry.attributes.skinIndex.needsUpdate = true;
         record.geometry.attributes.skinWeight.needsUpdate = true;
         if (options.clearSelection) {

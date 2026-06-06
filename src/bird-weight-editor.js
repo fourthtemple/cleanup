@@ -25,7 +25,7 @@ import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-ren
 import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=selection-radius-sync-20260605a";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-bone-highlight-20260605a";
 import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=pose-copy-paste-20260605a";
-import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=ik-chain-demo-20260605a";
+import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=pose-weight-preserve-20260605a";
 import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-chain-demo-20260605a";
 import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=macro-chain-scroll-20260605a";
@@ -36,7 +36,7 @@ import { installSequencePlaybackMethods } from "./weight-editor/sequence-playbac
 import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=selection-cursor-stable-20260605a";
 import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-chain-scroll-20260605a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=tutorial-macro-reset-20260605a";
-import { installWeightMethods } from "./weight-editor/weights.js";
+import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
 
 const BIRD_WEIGHT_PATCH_FILE_NAME = "mixamo-cleanup-weight-patch.json";
 const ADDITIVE_POSE_EASE_FRAMES = 8;
