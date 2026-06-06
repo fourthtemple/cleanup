@@ -43,6 +43,28 @@ function safeJsonParse(text, fallback) {
   }
 }
 
+function escapeSelectorValue(value) {
+  return typeof CSS !== "undefined" && typeof CSS.escape === "function"
+    ? CSS.escape(String(value))
+    : String(value).replace(/["\\]/g, "\\$&");
+}
+
+function macroElementSelector(element) {
+  if (!element) {
+    return "";
+  }
+  if (element.id) {
+    return `#${escapeSelectorValue(element.id)}`;
+  }
+  for (const attribute of ["data-tool", "data-view-mode", "data-viewport-layer"]) {
+    const value = element.getAttribute?.(attribute);
+    if (value) {
+      return `[${attribute}="${escapeSelectorValue(value)}"]`;
+    }
+  }
+  return "";
+}
+
 function demoNameLabel(name) {
   if (name === "fk-ik") {
     return "FK/IK";
@@ -257,6 +279,15 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       this.controls?.addEventListener?.("change", () => {
         this.recordTutorialMacroCameraSample("camera");
       });
+      document.addEventListener("click", (event) => {
+        this.recordTutorialMacroUiEvent("click", event);
+      }, { capture: true });
+      document.addEventListener("change", (event) => {
+        this.recordTutorialMacroUiEvent("change", event);
+      }, { capture: true });
+      document.addEventListener("input", (event) => {
+        this.recordTutorialMacroUiEvent("input", event);
+      }, { capture: true });
     },
 
     tutorialMacroCameraSnapshot() {
@@ -426,6 +457,58 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       });
     },
 
+    tutorialMacroUiTarget(event) {
+      if (!this.tutorialMacroRecording || this.tutorialMacroPlaying || !event?.target) {
+        return null;
+      }
+      const target = event.target.closest?.("button, select, input, [data-tool], [data-view-mode], [data-viewport-layer]");
+      if (!target || target.disabled || target.closest?.("#tutorial-drawer")) {
+        return null;
+      }
+      if (target === this.canvas || target.closest?.("canvas")) {
+        return null;
+      }
+      const selector = macroElementSelector(target);
+      if (!selector) {
+        return null;
+      }
+      return target;
+    },
+
+    recordTutorialMacroUiEvent(kind, event) {
+      const target = this.tutorialMacroUiTarget(event);
+      if (!target) {
+        return false;
+      }
+      const tag = target.tagName?.toLowerCase?.() || "";
+      const type = target.getAttribute?.("type") || "";
+      const isFormControl = tag === "select" || tag === "input";
+      if (kind === "click" && isFormControl) {
+        return false;
+      }
+      if ((kind === "change" || kind === "input") && !isFormControl) {
+        return false;
+      }
+      if (kind === "input" && type !== "range") {
+        return false;
+      }
+      const time = nowMs();
+      if (kind === "input" && time - (this.tutorialMacroRecording.lastUiInputTime || 0) < 80) {
+        return false;
+      }
+      if (kind === "input") {
+        this.tutorialMacroRecording.lastUiInputTime = time;
+      }
+      return this.recordTutorialMacroEvent("ui", {
+        action: kind,
+        selector: macroElementSelector(target),
+        value: target.value ?? "",
+        checked: Boolean(target.checked),
+        tag,
+        inputType: type
+      }, time);
+    },
+
     ensureTutorialMacroPointer() {
       if (this.tutorialMacroPointer) {
         return this.tutorialMacroPointer;
@@ -556,6 +639,33 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
           await delay(140 / this.tutorialMacroPlaybackSpeed());
         }
         this.setTool?.(event.tool || "orbit");
+        return;
+      }
+      if (event.type === "ui") {
+        const target = event.selector ? document.querySelector(event.selector) : null;
+        const rect = target?.getBoundingClientRect?.();
+        if (rect) {
+          this.moveTutorialMacroPointerTo({
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
+          }, { click: true });
+          await delay(120 / this.tutorialMacroPlaybackSpeed());
+        }
+        if (!target || target.disabled) {
+          return;
+        }
+        if (event.tag === "select" || event.tag === "input") {
+          if (event.inputType === "checkbox" || event.inputType === "radio") {
+            target.checked = Boolean(event.checked);
+          }
+          if (event.value !== undefined) {
+            target.value = String(event.value);
+          }
+          target.dispatchEvent(new Event("input", { bubbles: true }));
+          target.dispatchEvent(new Event("change", { bubbles: true }));
+          return;
+        }
+        target.click?.();
         return;
       }
       if (event.type === "camera") {

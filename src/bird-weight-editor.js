@@ -34,7 +34,7 @@ import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unba
 import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=ik-chain-demo-20260605a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=safari-picker-webgl-20260602b";
-import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=ik-chain-demo-20260605a";
+import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-ui-record-20260605a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=tutorial-macro-reset-20260605a";
 import { installWeightMethods } from "./weight-editor/weights.js";
 
