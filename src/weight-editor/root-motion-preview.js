@@ -51,12 +51,14 @@ export function installRootMotionPreviewMethods(BirdWeightEditor, deps) {
       }
       if (!visible) {
         this.rootMotionCameraFollowPoint = null;
+        this.rootMotionCameraFollowHomeTarget = null;
       }
     },
 
     resetRootMotionPreview({ clearProfile = false, refreshGround = false } = {}) {
       this.rootMotionLoopCycles = 0;
       this.rootMotionCameraFollowPoint = null;
+      this.rootMotionCameraFollowHomeTarget = null;
       if (clearProfile) {
         this.rootMotionLoopProfileCache = null;
       }
@@ -69,6 +71,7 @@ export function installRootMotionPreviewMethods(BirdWeightEditor, deps) {
       this.rootMotionLoopProfileCache = null;
       this.rootMotionLoopCycles = 0;
       this.rootMotionCameraFollowPoint = null;
+      this.rootMotionCameraFollowHomeTarget = null;
     },
 
     rootMotionPreviewRootBone() {
@@ -141,6 +144,33 @@ export function installRootMotionPreviewMethods(BirdWeightEditor, deps) {
       };
       this.rootMotionLoopProfileCache = { key: cacheKey, profile };
       return profile;
+    },
+
+    currentModelViewFraming() {
+      if (!this.model) {
+        return null;
+      }
+      this.model.visible = true;
+      this.model.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(this.model);
+      if (
+        bounds.isEmpty()
+        || !Number.isFinite(bounds.min.x)
+        || !Number.isFinite(bounds.min.y)
+        || !Number.isFinite(bounds.min.z)
+        || !Number.isFinite(bounds.max.x)
+        || !Number.isFinite(bounds.max.y)
+        || !Number.isFinite(bounds.max.z)
+      ) {
+        return null;
+      }
+      const size = bounds.getSize(new THREE.Vector3());
+      const center = bounds.getCenter(new THREE.Vector3());
+      const height = Math.max(size.y, this.actorTarget?.displayHeight || 1.8, 0.001);
+      const distance = Math.max(5.8, height * 3.2);
+      const target = center.clone();
+      target.y = bounds.min.y + height * 0.45;
+      return { bounds, center, distance, height, size, target };
     },
 
     rootMotionTransformForCycles(cycles, profile = this.rootMotionLoopProfile()) {
@@ -231,6 +261,9 @@ export function installRootMotionPreviewMethods(BirdWeightEditor, deps) {
       if (!nextPoint) {
         return false;
       }
+      if (!this.rootMotionCameraFollowPoint && !this.rootMotionCameraFollowHomeTarget) {
+        this.rootMotionCameraFollowHomeTarget = this.controls.target.clone();
+      }
       if (this.rootMotionCameraFollowPoint) {
         const delta = nextPoint.clone().sub(this.rootMotionCameraFollowPoint);
         if (delta.lengthSq() > 0.0000001) {
@@ -243,47 +276,94 @@ export function installRootMotionPreviewMethods(BirdWeightEditor, deps) {
       return true;
     },
 
-    refocusCameraOnCurrentPose({ preserveView = true } = {}) {
+    animateCameraPanToTarget(target, { duration = 260, onComplete = null } = {}) {
+      if (!target || !this.camera || !this.controls) {
+        return false;
+      }
+      const startTarget = this.controls.target.clone();
+      const endTarget = target.clone();
+      const viewOffset = this.camera.position.clone().sub(startTarget);
+      if (startTarget.distanceToSquared(endTarget) < 0.0000001) {
+        onComplete?.();
+        return true;
+      }
+      const token = Symbol("camera-pan");
+      this.cameraPanToken = token;
+      const startTime = performance.now();
+      const tick = () => {
+        if (this.cameraPanToken !== token) {
+          return;
+        }
+        const elapsed = performance.now() - startTime;
+        const alpha = Math.min(1, elapsed / Math.max(1, duration));
+        const smooth = alpha * alpha * (3 - 2 * alpha);
+        const nextTarget = startTarget.clone().lerp(endTarget, smooth);
+        this.controls.target.copy(nextTarget);
+        this.camera.position.copy(nextTarget).add(viewOffset);
+        this.camera.lookAt(nextTarget);
+        this.controls.update();
+        this.updateCameraRelativeLights?.();
+        if (alpha < 1) {
+          window.requestAnimationFrame(tick);
+          return;
+        }
+        this.cameraPanToken = null;
+        onComplete?.();
+      };
+      tick();
+      return true;
+    },
+
+    refocusCameraOnCurrentPose({ preserveView = true, animate = false, duration = 260 } = {}) {
       if (!this.model || !this.camera || !this.controls) {
         return false;
       }
-      this.model.visible = true;
-      this.model.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(this.model);
-      if (
-        bounds.isEmpty()
-        || !Number.isFinite(bounds.min.x)
-        || !Number.isFinite(bounds.min.y)
-        || !Number.isFinite(bounds.min.z)
-        || !Number.isFinite(bounds.max.x)
-        || !Number.isFinite(bounds.max.y)
-        || !Number.isFinite(bounds.max.z)
-      ) {
+      const framing = this.currentModelViewFraming();
+      if (!framing) {
         return false;
       }
-      const size = bounds.getSize(new THREE.Vector3());
-      const center = bounds.getCenter(new THREE.Vector3());
-      const height = Math.max(size.y, this.actorTarget?.displayHeight || 1.8, 0.001);
-      const target = center.clone();
-      target.y = bounds.min.y + height * 0.45;
-
+      const { bounds, center, distance: framedDistance, height, target } = framing;
       const previousOffset = this.camera.position.clone().sub(this.controls.target);
       let distance = previousOffset.length();
+      const updateFraming = () => {
+        this.camera.near = Math.max(0.01, distance / 100);
+        this.camera.far = Math.max(220, distance * 100);
+        this.camera.updateProjectionMatrix();
+        this.controls.maxDistance = Math.max(120, distance * 4);
+        this.updateSceneDepthForModelView?.(distance);
+      };
+      if (animate && preserveView && Number.isFinite(distance) && distance >= 0.001) {
+        return this.animateCameraPanToTarget(target, { duration, onComplete: updateFraming });
+      }
       if (!preserveView || !Number.isFinite(distance) || distance < 0.001) {
-        distance = Math.max(5.8, height * 3.2);
+        distance = framedDistance;
         this.camera.position.set(center.x, bounds.min.y + height * 0.82, center.z + distance);
       } else {
         this.camera.position.copy(target).add(previousOffset);
       }
       this.controls.target.copy(target);
       this.camera.lookAt(target);
-      this.camera.near = Math.max(0.01, distance / 100);
-      this.camera.far = Math.max(220, distance * 100);
-      this.camera.updateProjectionMatrix();
-      this.controls.maxDistance = Math.max(120, distance * 4);
-      this.updateSceneDepthForModelView?.(distance);
+      updateFraming();
       this.controls.update();
       return true;
+    },
+
+    returnCameraFromTravelFollow({ target = null, duration = 260 } = {}) {
+      if (!this.camera || !this.controls) {
+        this.rootMotionCameraFollowPoint = null;
+        this.rootMotionCameraFollowHomeTarget = null;
+        return false;
+      }
+      const returnTarget = target?.clone?.()
+        || this.rootMotionCameraFollowHomeTarget?.clone?.()
+        || this.currentModelViewFraming()?.target
+        || null;
+      this.rootMotionCameraFollowPoint = null;
+      this.rootMotionCameraFollowHomeTarget = null;
+      if (!returnTarget) {
+        return false;
+      }
+      return this.animateCameraPanToTarget(returnTarget, { duration });
     },
 
     updateTravelGroundReference(profile, transform = this.rootMotionTransformForCycles(this.rootMotionLoopCycles, profile)) {

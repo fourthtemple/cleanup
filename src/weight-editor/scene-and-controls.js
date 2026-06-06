@@ -1631,7 +1631,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.timelinePlayToggle.addEventListener("click", () => {
         void this.toggleBlendAwarePlayback();
       });
+      const travelFollowReturnTarget = () => this.rootMotionCameraFollowHomeTarget?.clone?.() || null;
+      const shouldReturnTravelFollowCamera = () => Boolean(this.rootMotionCameraFollowHomeTarget || this.rootMotionCameraFollowPoint);
+      const returnTravelFollowCamera = (target) => {
+        this.returnCameraFromTravelFollow?.({ target, duration: 280 });
+      };
       this.restartClip?.addEventListener("click", () => {
+        const returnTarget = travelFollowReturnTarget();
+        const shouldReturnCamera = shouldReturnTravelFollowCamera();
         this.stopSequencePreview({ applyPose: false, resetElapsed: true });
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
         this.resetRootMotionPreview?.();
@@ -1642,6 +1649,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.applyPose(this.progress);
         this.refreshGroundReferenceForCurrentPose?.();
         this.syncPoseControlsToCurrentBone();
+        if (shouldReturnCamera) {
+          returnTravelFollowCamera(returnTarget);
+        }
         this.setPlayback(true);
       });
       this.timeScrub?.addEventListener("pointerdown", () => {
@@ -1651,6 +1661,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.draggingScrub = false;
       });
       this.timeScrub?.addEventListener("input", () => {
+        const returnTarget = travelFollowReturnTarget();
+        const shouldReturnCamera = shouldReturnTravelFollowCamera();
         this.stopSequencePreview({ applyPose: false, resetElapsed: true });
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
         this.resetRootMotionPreview?.();
@@ -1660,8 +1672,13 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.refreshGroundReferenceForCurrentPose?.();
         this.syncPoseControlsToCurrentBone();
         this.updateBoneLayerValues({ force: true });
+        if (shouldReturnCamera) {
+          returnTravelFollowCamera(returnTarget);
+        }
       });
       this.timelineScrub.addEventListener("input", () => {
+        const returnTarget = travelFollowReturnTarget();
+        const shouldReturnCamera = shouldReturnTravelFollowCamera();
         this.stopSequencePreview({ applyPose: false, resetElapsed: true });
         this.pausePlayback();
         this.discardUnkeyedPosePreview({ applyPose: false, syncControls: false });
@@ -1675,6 +1692,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.refreshGroundReferenceForCurrentPose?.();
         this.syncPoseControlsToCurrentBone();
         this.updateBoneLayerValues({ force: true });
+        if (shouldReturnCamera) {
+          returnTravelFollowCamera(returnTarget);
+        }
       });
       this.timelinePlayBothButton?.addEventListener("click", () => {
         if (this.sequencePlaying || this.timelinePlayBothButton.textContent === "Stop Sequence") {
@@ -1702,15 +1722,21 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           this.activeClipAction.clampWhenFinished = !this.loopToggle.checked;
         }
         if (!this.loopToggle.checked) {
+          const returnTarget = travelFollowReturnTarget();
+          const shouldReturnCamera = shouldReturnTravelFollowCamera();
           this.resetRootMotionPreview?.();
           this.applyPose(this.progress);
           this.refreshGroundReferenceForCurrentPose?.();
+          if (shouldReturnCamera) {
+            returnTravelFollowCamera(returnTarget);
+          }
         }
       });
       this.travelLoopToggle?.addEventListener("change", () => {
         const turningTravelOff = !this.travelLoopToggle.checked;
         const shouldRefocusTravelCamera = turningTravelOff
-          && (this.rootMotionLoopCycles > 0 || Boolean(this.rootMotionCameraFollowPoint));
+          && (this.rootMotionLoopCycles > 0 || shouldReturnTravelFollowCamera());
+        const returnTarget = travelFollowReturnTarget();
         if (this.travelLoopToggle.checked && this.loopToggle && !this.loopToggle.checked) {
           this.loopToggle.checked = true;
           if (this.activeClipAction) {
@@ -1722,16 +1748,30 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.resetRootMotionPreview?.({ clearProfile: true });
         this.applyPose(this.progress);
         this.refreshGroundReferenceForCurrentPose?.();
-        const cameraRefocused = shouldRefocusTravelCamera && this.refocusCameraOnCurrentPose?.();
+        const cameraRefocused = shouldRefocusTravelCamera && (
+          this.returnCameraFromTravelFollow?.({ target: returnTarget, duration: 280 })
+          || this.refocusCameraOnCurrentPose?.({ animate: true, duration: 280 })
+        );
         this.setStatus(this.travelLoopToggle.checked
           ? "Travel loop preview: hips/root motion continues across loops"
           : cameraRefocused
-            ? "Travel loop preview off; camera refocused"
+            ? "Travel loop preview off; camera panning back"
             : "Travel loop preview off");
       });
       this.travelFollowToggle?.addEventListener("change", () => {
-        this.rootMotionCameraFollowPoint = null;
-        this.setStatus(this.travelFollowToggle.checked ? "Travel camera follow on" : "Travel camera follow off");
+        const turningFollowOff = !this.travelFollowToggle.checked;
+        const cameraReturned = turningFollowOff && (
+          this.returnCameraFromTravelFollow?.({ duration: 280 }) || false
+        );
+        if (!turningFollowOff) {
+          this.rootMotionCameraFollowPoint = null;
+          this.rootMotionCameraFollowHomeTarget = null;
+        }
+        this.setStatus(this.travelFollowToggle.checked
+          ? "Travel camera follow on"
+          : cameraReturned
+            ? "Travel camera follow off; camera panning back"
+            : "Travel camera follow off");
       });
       this.prevKeyButton.addEventListener("click", () => this.goToAdjacentKey(-1));
       this.nextKeyButton.addEventListener("click", () => this.goToAdjacentKey(1));
