@@ -340,6 +340,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         return false;
       }
       this.recordTutorialMacroCameraSample("end", { force: true });
+      this.recordTutorialMacroStateCheckpoint("final");
       this.tutorialMacroRecording = null;
       if (discard) {
         this.setStatus("Tutorial macro recording discarded");
@@ -359,11 +360,13 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       };
       const macros = this.loadTutorialMacros();
       macros[macro.name] = macro;
-      this.storeTutorialMacros(macros);
+      const stored = this.storeTutorialMacros(macros);
       const restored = await this.restoreTutorialMacroRecordingBaseline(recording, { status: false });
-      this.setStatus(`Saved ${demoNameLabel(macro.name)} tutorial macro (${events.length} events)${restored ? "; scene reset to the macro start" : ""}`);
+      this.setStatus(stored
+        ? `Saved ${demoNameLabel(macro.name)} tutorial macro (${events.length} events)${restored ? "; scene reset to the macro start" : ""}`
+        : `Could not save ${demoNameLabel(macro.name)} tutorial macro; browser storage is full`);
       this.updateTutorialMacroControls?.();
-      return true;
+      return stored;
     },
 
     async restoreTutorialMacroRecordingBaseline(recording, { status = false } = {}) {
@@ -414,6 +417,28 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       }
       recording.lastCameraTime = time;
       return this.recordTutorialMacroEvent("camera", { reason, camera }, time);
+    },
+
+    tutorialMacroStateCheckpoint(label = "Tutorial macro checkpoint") {
+      const state = this.captureUndoState?.(label, { includeClip: false });
+      if (!state) {
+        return null;
+      }
+      delete state.clipState;
+      state.includeClip = false;
+      return state;
+    },
+
+    recordTutorialMacroStateCheckpoint(reason = "checkpoint") {
+      const recording = this.tutorialMacroRecording;
+      if (!recording || this.tutorialMacroPlaying) {
+        return false;
+      }
+      const state = this.tutorialMacroStateCheckpoint(`Tutorial ${reason}`);
+      if (!state) {
+        return false;
+      }
+      return this.recordTutorialMacroEvent("state", { reason, state });
     },
 
     recordTutorialMacroPointer(kind, event) {
@@ -671,6 +696,10 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if (event.type === "camera") {
         const duration = Math.min(140, Math.max(40, (nextEvent?.t || event.t + 90) - event.t));
         await this.animateTutorialMacroCameraTo(event.camera, duration / this.tutorialMacroPlaybackSpeed());
+        return;
+      }
+      if (event.type === "state") {
+        this.restoreEditorState?.(event.state, "Demo");
         return;
       }
       if (event.type !== "pointer") {
