@@ -152,6 +152,8 @@ export function installPoseClipboardMethods(BirdWeightEditor, deps) {
         const storedPose = this.storedPoseForPastedAbsolutePose(frame, targetName, pose);
         framePose[targetName] = storedPose;
         this.manualPose?.delete(targetName);
+        this.manualPoseAdditiveNames?.delete?.(targetName);
+        this.manualPoseEditedChannels?.delete?.(targetName);
         if (this.actorTarget?.mode !== "bird-flap" && this.poseKeyframeMode !== "replace") {
           this.ensureAdditivePoseAnchors?.(targetName, frame, CURVE_CHANNEL_KEYS);
         }

@@ -1605,8 +1605,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.copyPoseButton?.addEventListener("click", () => this.copyCurrentPoseToClipboard?.());
       this.pastePoseButton?.addEventListener("click", () => this.withUndo(
         "Paste pose",
-        () => this.pastePoseClipboardToCurrentFrame?.(),
-        { clearManualPose: true }
+        () => this.pastePoseClipboardToCurrentFrame?.()
       ));
       this.useTimelineKeysToggle?.addEventListener("change", () => {
         this.normalizeTimelineEditMode?.(this.useTimelineKeysToggle.checked ? "solved" : "adaptive");

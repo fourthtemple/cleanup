@@ -286,7 +286,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         return false;
       }
       this.rememberBrushCursorEvent(event);
-      if (!this.usesSelectionBrushCursor?.(this.activeTool) || this.cleanPreview) {
+      if (!this.usesSelectionBrushCursor?.(this.activeTool)) {
         this.hideTextureBrushCursor();
         return false;
       }
