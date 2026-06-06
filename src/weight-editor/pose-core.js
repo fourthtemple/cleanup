@@ -151,6 +151,7 @@ export function installPoseCoreMethods(BirdWeightEditor, deps) {
         const inSelectedChain = activeChain.has(name);
         button.className = `rig-bone-item${name === activeBone ? " is-active" : ""}${inSelectedChain ? " is-chain-selected" : ""}`;
         button.title = name;
+        button.dataset.rigBoneName = name;
         button.addEventListener("click", () => this.setActiveBone(name));
 
         const label = document.createElement("span");

@@ -56,7 +56,16 @@ function macroElementSelector(element) {
   if (element.id) {
     return `#${escapeSelectorValue(element.id)}`;
   }
-  for (const attribute of ["data-tool", "data-view-mode", "data-viewport-layer"]) {
+  for (const attribute of [
+    "data-tool",
+    "data-view-mode",
+    "data-viewport-layer",
+    "data-rig-bone-group",
+    "data-rig-bone-name",
+    "data-camera",
+    "data-camera-axis",
+    "data-joint-constraint-capture"
+  ]) {
     const value = element.getAttribute?.(attribute);
     if (value) {
       return `[${attribute}="${escapeSelectorValue(value)}"]`;
@@ -486,7 +495,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if (!this.tutorialMacroRecording || this.tutorialMacroPlaying || !event?.target) {
         return null;
       }
-      const target = event.target.closest?.("button, select, input, [data-tool], [data-view-mode], [data-viewport-layer]");
+      const target = event.target.closest?.("button, select, input, [data-tool], [data-view-mode], [data-viewport-layer], [data-rig-bone-group], [data-rig-bone-name], [data-camera], [data-camera-axis], [data-joint-constraint-capture]");
       if (!target || target.disabled || target.closest?.("#tutorial-drawer")) {
         return null;
       }
@@ -524,7 +533,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if (kind === "input") {
         this.tutorialMacroRecording.lastUiInputTime = time;
       }
-      return this.recordTutorialMacroEvent("ui", {
+      const recorded = this.recordTutorialMacroEvent("ui", {
         action: kind,
         selector: macroElementSelector(target),
         value: target.value ?? "",
@@ -532,6 +541,10 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         tag,
         inputType: type
       }, time);
+      if (recorded && kind === "click") {
+        this.flashTutorialMacroTarget?.(target);
+      }
+      return recorded;
     },
 
     ensureTutorialMacroPointer() {
@@ -600,6 +613,20 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         target.classList.remove("tutorial-macro-click-target");
         target.tutorialMacroClickTimer = null;
       }, 520);
+      return true;
+    },
+
+    async showTutorialMacroTargetClick(target, duration = 120) {
+      const rect = target?.getBoundingClientRect?.();
+      if (!rect) {
+        return false;
+      }
+      this.moveTutorialMacroPointerTo({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      }, { click: true });
+      this.flashTutorialMacroTarget(target);
+      await delay(duration / this.tutorialMacroPlaybackSpeed());
       return true;
     },
 
@@ -672,30 +699,20 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       }
       if (event.type === "tool") {
         const target = event.selector ? document.querySelector(event.selector) : null;
-        const rect = target?.getBoundingClientRect?.();
-        if (rect) {
-          this.moveTutorialMacroPointerTo({
-            x: rect.left + rect.width / 2,
-            y: rect.top + rect.height / 2
-          }, { click: true });
-          this.flashTutorialMacroTarget(target);
-          await delay(140 / this.tutorialMacroPlaybackSpeed());
-        }
-        this.setTool?.(event.tool || "orbit");
+        await this.showTutorialMacroTargetClick(target, 140);
+        this.setTool?.(event.tool || "orbit", { preserveViewportLayers: true });
         return;
       }
       if (event.type === "ui") {
         const target = event.selector ? document.querySelector(event.selector) : null;
-        const rect = target?.getBoundingClientRect?.();
-        if (rect) {
-          this.moveTutorialMacroPointerTo({
-            x: rect.left + rect.width / 2,
-            y: rect.top + rect.height / 2
-          }, { click: true });
-          this.flashTutorialMacroTarget(target);
-          await delay(120 / this.tutorialMacroPlaybackSpeed());
-        }
+        await this.showTutorialMacroTargetClick(target, 120);
         if (!target || target.disabled) {
+          return;
+        }
+        const tool = target.dataset?.tool || "";
+        if (tool) {
+          this.setTool?.(tool, { preserveViewportLayers: true });
+          this.flashTutorialMacroTarget(target);
           return;
         }
         if (event.tag === "select" || event.tag === "input") {
@@ -725,12 +742,15 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         return;
       }
       const point = this.tutorialMacroCanvasPoint(event);
-      this.moveTutorialMacroPointerTo(point, { down: event.kind !== "up" && event.kind !== "wheel" });
+      this.moveTutorialMacroPointerTo(point, {
+        down: event.kind !== "up" && event.kind !== "wheel",
+        click: event.kind === "down" || event.kind === "up"
+      });
       if (event.kind === "wheel" || event.tool === "orbit") {
         return;
       }
       if (event.tool && this.activeTool !== event.tool) {
-        this.setTool?.(event.tool);
+        this.setTool?.(event.tool, { preserveViewportLayers: true });
       }
       const synthetic = this.tutorialMacroSyntheticPointerEvent(event);
       if (event.kind === "down") {
