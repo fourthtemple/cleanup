@@ -299,6 +299,18 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       }, { capture: true });
     },
 
+    tutorialMacroScrollTargetIntoView(target) {
+      if (!target) {
+        return false;
+      }
+      const section = target.closest?.(".viewer-section");
+      if (section) {
+        this.setPanelSectionOpen?.(section, true);
+      }
+      target.scrollIntoView?.({ block: "center", inline: "nearest", behavior: "auto" });
+      return true;
+    },
+
     tutorialMacroCameraSnapshot() {
       if (!this.camera || !this.controls) {
         return null;
@@ -349,6 +361,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         return false;
       }
       this.recordTutorialMacroCameraSample("end", { force: true });
+      this.recordTutorialMacroChainSelection(this.selectedBoneChainMemberNamesFromControl?.() || [], { force: true });
       this.recordTutorialMacroStateCheckpoint("final");
       this.tutorialMacroRecording = null;
       if (discard) {
@@ -491,6 +504,32 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       });
     },
 
+    recordTutorialMacroChainSelection(names = this.selectedBoneChainMemberNamesFromControl?.() || [], { force = false } = {}) {
+      const recording = this.tutorialMacroRecording;
+      if (!recording || this.tutorialMacroPlaying) {
+        return false;
+      }
+      const selectedValues = [...new Set(names)]
+        .filter((name) => this.bones?.has?.(name));
+      if (!selectedValues.length) {
+        return false;
+      }
+      const key = selectedValues.join("|");
+      if (!force && recording.lastChainSelectionKey === key) {
+        return false;
+      }
+      recording.lastChainSelectionKey = key;
+      const recorded = this.recordTutorialMacroEvent("chain-selection", {
+        selector: "#add-bone-chain-members",
+        selectedValues,
+        activeBoneName: this.activeBoneName || ""
+      });
+      if (recorded) {
+        this.flashTutorialMacroTarget?.(this.addBoneChainMembersSelect);
+      }
+      return recorded;
+    },
+
     tutorialMacroUiTarget(event) {
       if (!this.tutorialMacroRecording || this.tutorialMacroPlaying || !event?.target) {
         return null;
@@ -523,7 +562,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if ((kind === "change" || kind === "input") && !isFormControl) {
         return false;
       }
-      if (kind === "input" && type !== "range") {
+      if (kind === "input" && type !== "range" && tag !== "select") {
         return false;
       }
       const time = nowMs();
@@ -621,6 +660,10 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
     },
 
     async showTutorialMacroTargetClick(target, duration = 120) {
+      if (target) {
+        this.tutorialMacroScrollTargetIntoView(target);
+        await delay(45 / this.tutorialMacroPlaybackSpeed());
+      }
       const rect = target?.getBoundingClientRect?.();
       if (!rect) {
         return false;
@@ -746,6 +789,20 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
           return;
         }
         target.click?.();
+        return;
+      }
+      if (event.type === "chain-selection") {
+        const target = event.selector ? document.querySelector(event.selector) : this.addBoneChainMembersSelect;
+        await this.showTutorialMacroTargetClick(target, 120);
+        if (!target || target.disabled || !Array.isArray(event.selectedValues)) {
+          return;
+        }
+        const selected = new Set(event.selectedValues.map((value) => String(value)));
+        for (const option of Array.from(target.options || [])) {
+          option.selected = selected.has(String(option.value));
+        }
+        this.syncSelectedBoneChainFromMemberSelect?.();
+        this.flashTutorialMacroTarget(target);
         return;
       }
       if (event.type === "camera") {

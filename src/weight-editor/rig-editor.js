@@ -697,6 +697,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       this.updateSelectedBoneHighlight?.();
       this.updateBonePickerOverlay?.();
       this.updateRigBoneList?.();
+      this.recordTutorialMacroChainSelection?.(names);
       return names;
     },
 
