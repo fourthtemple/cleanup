@@ -1483,6 +1483,38 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       };
     },
 
+    additivePoseFromRestRelativePose(name, pose = {}) {
+      const bone = this.bones.get(name);
+      const rest = this.bindPose.find((entry) => entry.object === bone);
+      if (!bone || !rest || typeof this.ikPoseMapFromSolvedTransforms !== "function") {
+        return null;
+      }
+      const solvedTransforms = new Map([[
+        name,
+        {
+          position: new THREE.Vector3(
+            rest.position.x + finitePoseValue(pose.px),
+            rest.position.y + finitePoseValue(pose.py),
+            rest.position.z + finitePoseValue(pose.pz)
+          ),
+          quaternion: rest.quaternion.clone().multiply(
+            new THREE.Quaternion().setFromEuler(new THREE.Euler(
+              finitePoseValue(pose.x),
+              finitePoseValue(pose.y),
+              finitePoseValue(pose.z),
+              "XYZ"
+            ))
+          )
+        }
+      ]]);
+      const additivePose = this.ikPoseMapFromSolvedTransforms([name], solvedTransforms).get(name);
+      if (!additivePose) {
+        return null;
+      }
+      const channels = Object.keys(pose).filter((channel) => CURVE_CHANNEL_KEYS.includes(channel));
+      return Object.fromEntries(channels.map((channel) => [channel, finitePoseValue(additivePose[channel])]));
+    },
+
     applyPoseBoneMove() {
       const drag = this.boneMoveDrag;
       if (!drag?.bone || drag.mode !== "pose") {
@@ -1499,10 +1531,10 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
           z: finitePoseValue(relativePose.z ?? drag.startPose?.z)
         }
         : {
-          ...drag.startPose,
-          px: finitePoseValue((drag.startPose?.px || 0) + drag.bone.position.x - drag.startPosition.x),
-          py: finitePoseValue((drag.startPose?.py || 0) + drag.bone.position.y - drag.startPosition.y),
-          pz: finitePoseValue((drag.startPose?.pz || 0) + drag.bone.position.z - drag.startPosition.z)
+          ...(drag.startManualPose || {}),
+          px: finitePoseValue((drag.startManualPose?.px || 0) + drag.bone.position.x - drag.startPosition.x),
+          py: finitePoseValue((drag.startManualPose?.py || 0) + drag.bone.position.y - drag.startPosition.y),
+          pz: finitePoseValue((drag.startManualPose?.pz || 0) + drag.bone.position.z - drag.startPosition.z)
         };
       const constrainedPose = this.clampPoseWithJointConstraint?.(drag.name, nextPose) || nextPose;
       if (drag.gizmoMode === "rotate") {
@@ -1512,9 +1544,26 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
           }
         }
       }
+      const replaceBaseClip = this.poseKeyframeMode === "replace" && this.poseKeyframes.size > 0 && !this.poseKeyframesGenerated;
+      const storeAsAdditive = this.actorTarget?.mode !== "bird-flap" && !replaceBaseClip;
+      const frame = this.currentFrame?.() ?? Math.round((this.progress || 0) * (this.timelineFrames || 0));
+      const convertRotationToAdditive = storeAsAdditive && drag.gizmoMode === "rotate";
       for (const [name, pose] of this.mirroredBoneEntries(drag.name, constrainedPose)) {
-        this.manualPose.set(name, { ...pose });
-        this.manualPoseAdditiveNames?.delete?.(name);
+        const rotationPose = { x: pose.x, y: pose.y, z: pose.z };
+        const additiveRotationPose = convertRotationToAdditive
+          ? this.additivePoseFromRestRelativePose(name, rotationPose)
+            || this.adaptivePoseFromAbsolutePose?.(frame, name, rotationPose)
+            || null
+          : null;
+        const storedPose = additiveRotationPose
+          ? { ...pose, ...additiveRotationPose }
+          : pose;
+        this.manualPose.set(name, { ...storedPose });
+        if (storeAsAdditive) {
+          this.manualPoseAdditiveNames?.add?.(name);
+        } else {
+          this.manualPoseAdditiveNames?.delete?.(name);
+        }
         this.manualPoseEditedChannels?.set?.(name, new Set(Object.keys(constrainedPose)));
       }
       if (this.poseBoneSelect?.value === drag.name) {

@@ -28,7 +28,7 @@ import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js";
 import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=ik-chain-demo-20260605a";
 import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-chain-demo-20260605a";
 import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
-import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=ik-chain-demo-20260605a";
+import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=fk-key-additive-20260605a";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
 import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=ik-chain-demo-20260605a";
