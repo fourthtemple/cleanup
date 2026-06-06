@@ -1460,10 +1460,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.withUndo("Adjust influence", () => this.adjustSelectionInfluenceFromControl(slider.dataset.adjustInfluence, Number(slider.value)));
       });
       this.updateRangeOutputs();
-      this.brushRadius?.addEventListener("input", () => {
+      const syncSelectionBrushRadius = () => {
         this.updateRangeOutputs();
         this.updateBrushCursorForLastPointer?.();
-      });
+      };
+      this.brushRadius?.addEventListener("input", syncSelectionBrushRadius);
+      this.brushRadius?.addEventListener("change", syncSelectionBrushRadius);
       this.throughSelectionToggle?.addEventListener("change", () => {
         this.setStatus(this.throughSelectionToggle.checked ? "Through selection on" : "Through selection off");
         this.updateBrushCursorForLastPointer?.();

@@ -1417,7 +1417,8 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       const rect = this.canvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      const radius = Math.max(18, Number(this.brushRadius.value) * 720);
+      const radiusValue = this.selectionBrushRadiusValue?.() ?? Math.max(0.004, Number(this.brushRadius?.value || 0.035));
+      const radius = Math.max(18, radiusValue * 720);
       const radiusSq = radius * radius;
       const fallbackRadiusSq = radiusSq * 3.1;
       let changed = 0;
@@ -1480,7 +1481,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     paintVerticesNear(record, hit, action) {
-      const radius = Number(this.brushRadius.value);
+      const radius = this.selectionBrushRadiusValue?.() ?? Math.max(0.004, Number(this.brushRadius?.value || 0.035));
       const radiusSq = radius * radius;
       const position = record.geometry.attributes.position;
       let changed = 0;
@@ -1588,7 +1589,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     sculptVerticesNear(record, hit, direction) {
-      const radius = Number(this.brushRadius.value);
+      const radius = this.selectionBrushRadiusValue?.() ?? Math.max(0.004, Number(this.brushRadius?.value || 0.035));
       const strength = Number(this.sculptStrength.value) * direction;
       const radiusSq = radius * radius;
       const position = record.geometry.attributes.position;
