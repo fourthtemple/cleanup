@@ -144,7 +144,7 @@ export function installPoseCoreMethods(BirdWeightEditor, deps) {
         return;
       }
       const activeBone = this.activeBoneName;
-      const activeChain = new Set(this.selectedBoneChainNames?.() || []);
+      const activeChain = new Set(this.visibleSelectedBoneChainNames?.() || this.selectedBoneChainNames?.() || []);
       this.rigBoneList.replaceChildren(...names.map((name) => {
         const button = document.createElement("button");
         button.type = "button";

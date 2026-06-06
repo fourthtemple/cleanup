@@ -23,7 +23,7 @@ import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js?
 import { installJointConstraintMethods } from "./weight-editor/joint-constraints.js?v=joint-limit-capture-20260604a";
 import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=joint-limit-min-max-20260604b";
 import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=selection-radius-sync-20260605a";
-import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-bone-highlight-20260605a";
+import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-replay-state-20260606a";
 import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=chain-paste-quat-20260606a";
 import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=chain-paste-quat-20260606a";
 import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-chain-demo-20260605a";
@@ -34,7 +34,7 @@ import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unba
 import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=preview-cursor-paste-undo-20260606a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=preview-cursor-paste-undo-20260606a";
-import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-chain-scroll-20260605a";
+import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-replay-state-20260606a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=tutorial-macro-reset-20260605a";
 import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
 
