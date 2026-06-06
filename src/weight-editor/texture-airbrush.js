@@ -331,10 +331,6 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         return false;
       }
       const hit = this.selectionBrushHitForEvent(event);
-      if (!hit) {
-        this.hideTextureBrushCursor();
-        return false;
-      }
       const radius = this.selectionBrushScreenRadiusPixels(hit, this.activeTool);
       this.textureBrushCursor.hidden = false;
       this.textureBrushCursor.classList.remove("is-clone");

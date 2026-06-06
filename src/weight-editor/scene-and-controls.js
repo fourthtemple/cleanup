@@ -2491,6 +2491,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (tool !== "airbrush") {
         this.canvas?.classList.remove("is-texture-airbrush");
       }
+      if (!this.usesSelectionBrushCursor?.(tool)) {
+        this.canvas?.classList.remove("is-selection-brush");
+      }
       if (tool !== "clone" && tool !== "airbrush" && !this.usesSelectionBrushCursor?.(tool)) {
         this.hideTextureBrushCursor?.();
       }
@@ -2506,6 +2509,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.canvas?.classList.toggle("is-texture-eyedropper", tool === "eyedropper");
       this.app?.classList.toggle("is-texture-airbrush", tool === "airbrush");
       this.canvas?.classList.toggle("is-texture-airbrush", tool === "airbrush");
+      const isSelectionBrush = this.usesSelectionBrushCursor?.(tool) === true;
+      this.app?.classList.toggle("is-selection-brush", isSelectionBrush);
+      this.canvas?.classList.toggle("is-selection-brush", isSelectionBrush);
       if (this.selectionMarkers) {
         this.selectionMarkers.visible = tool === "clone" || this.cloneSpotlightActive
           ? false

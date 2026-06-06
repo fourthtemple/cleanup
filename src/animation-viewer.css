@@ -1534,7 +1534,9 @@ button.is-active {
 }
 
 .weight-editor-app.is-texture-airbrush #viewer-canvas,
-#viewer-canvas.is-texture-airbrush {
+#viewer-canvas.is-texture-airbrush,
+.weight-editor-app.is-selection-brush #viewer-canvas,
+#viewer-canvas.is-selection-brush {
   cursor: none;
 }
 
