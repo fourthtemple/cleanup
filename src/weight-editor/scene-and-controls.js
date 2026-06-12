@@ -39,6 +39,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
   const TIMELINE_DRAWER_SNAP_HEIGHT = 280;
   const TIMELINE_DRAWER_DEFAULT_HEIGHT = 560;
   const TIMELINE_DRAWER_MAX_HEIGHT = 620;
+  const TIMELINE_DRAWER_COMPACT_MAX_HEIGHT = 218;
+  const TIMELINE_DRAWER_COMPACT_VIEWPORT_RATIO = 0.4;
   const TIMELINE_DRAWER_GESTURE_THRESHOLD = 5;
   const TIMELINE_DRAWER_EDGE_GRAB_HEIGHT = 12;
   const TIMELINE_DRAWER_CLOSE_RATIO = 1 / 3;
@@ -443,9 +445,44 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
       this.scene.add(this.modelRoot);
       this.resize();
+      this.installViewportResizeObserver?.();
+      this.queueViewportResize?.({ settle: true });
       window.addEventListener("resize", () => {
-        this.resize();
+        this.queueViewportResize?.({ settle: true });
         this.queueTutorialViewportResize?.();
+      });
+    },
+
+    installViewportResizeObserver() {
+      if (this.viewportResizeObserver || typeof ResizeObserver === "undefined" || !this.canvas) {
+        return;
+      }
+      const observer = new ResizeObserver(() => {
+        this.queueViewportResize?.();
+      });
+      const stage = this.canvas.closest?.(".viewer-stage") || this.canvas.parentElement;
+      if (stage) {
+        observer.observe(stage);
+      }
+      observer.observe(this.canvas);
+      this.viewportResizeObserver = observer;
+    },
+
+    queueViewportResize(options = {}) {
+      if (!this.canvas || !this.camera || !this.renderer) {
+        return;
+      }
+      window.cancelAnimationFrame?.(this.viewportResizeFrame);
+      this.viewportResizeFrame = window.requestAnimationFrame?.(() => {
+        this.viewportResizeFrame = null;
+        this.resize();
+        if (options.settle === true) {
+          window.cancelAnimationFrame?.(this.viewportResizeSettleFrame);
+          this.viewportResizeSettleFrame = window.requestAnimationFrame?.(() => {
+            this.viewportResizeSettleFrame = null;
+            this.resize();
+          });
+        }
       });
     },
 
@@ -1169,6 +1206,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.tutorialEditorInitialized = true;
       this.tutorialDefaultRecipes = this.tutorialRecipesFromDom();
       this.tutorialEditorEnabled = this.tutorialEditorEnabledForBrowser();
+      this.app?.classList.toggle("is-tutorial-editor-enabled", Boolean(this.tutorialEditorEnabled));
       const storedRecipes = this.storedTutorialRecipes();
       if (storedRecipes) {
         this.renderTutorialRecipes(storedRecipes);
@@ -2024,6 +2062,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           preserveBoneChainMemberSelection: true
         });
         this.selectSingleBoneChainMember?.(this.poseBoneSelect.value);
+        this.pendingCurveScrollBoneName = this.poseBoneSelect.value;
         this.syncPoseControls();
         this.syncJointConstraintControls?.();
         this.clearJointConstraintEditedPoseChannels?.(this.poseBoneSelect.value);
@@ -3969,7 +4008,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return rowStyles?.display !== "none";
       });
       const rowHeight = rows.reduce((total, row) => total + row.getBoundingClientRect().height, 0);
-      return Math.max(1, Math.ceil(paddingTop + paddingBottom + borderTop + borderBottom + rowHeight + Math.max(0, rows.length - 1) * gap));
+      const naturalHeight = Math.ceil(paddingTop + paddingBottom + borderTop + borderBottom + rowHeight + Math.max(0, rows.length - 1) * gap);
+      const viewportHeight = typeof window !== "undefined" ? Number(window.innerHeight) || 0 : 0;
+      const compactMaxHeight = viewportHeight > 0
+        ? Math.min(viewportHeight * TIMELINE_DRAWER_COMPACT_VIEWPORT_RATIO, TIMELINE_DRAWER_COMPACT_MAX_HEIGHT)
+        : TIMELINE_DRAWER_COMPACT_MAX_HEIGHT;
+      return Math.max(1, Math.min(naturalHeight, compactMaxHeight));
     },
 
     timelineDrawerContentHeight() {

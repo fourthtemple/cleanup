@@ -1941,7 +1941,7 @@ button.is-active {
 
 .weight-editor-app .viewer-panel .tutorials-toggle {
   top: 0;
-  right: 24px;
+  right: 3px;
   width: 20px;
   min-width: 20px;
   min-height: 20px;
@@ -2176,6 +2176,11 @@ button.is-active {
   left: 0;
   right: 0;
   z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 6px;
   pointer-events: none;
 }
 
@@ -2183,22 +2188,26 @@ button.is-active {
   display: flex;
   flex-wrap: nowrap;
   justify-content: flex-end;
+  align-content: flex-start;
   gap: 3px;
-  padding: 3px;
-  border: 1px solid rgba(244, 234, 214, 0.24);
-  background: rgba(11, 15, 18, 0.86);
+  padding: 0;
+  border: 0;
+  background: transparent;
   box-shadow: none;
   contain: layout paint style;
+  min-width: 0;
   pointer-events: auto;
 }
 
 .viewport-edit-dock {
-  position: absolute;
-  left: 0;
-  top: 0;
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 6px;
+  align-items: flex-start;
+  justify-self: start;
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
   pointer-events: none;
 }
 
@@ -2206,32 +2215,42 @@ button.is-active {
   pointer-events: auto;
 }
 
-.weight-editor-app:not(.is-side-panel-open) .viewport-edit-dock,
-.animation-editor-app:not(.is-side-panel-open) .viewport-edit-dock {
-  left: 34px;
+.weight-editor-app:not(.is-side-panel-open) .weight-viewport-tools,
+.animation-editor-app:not(.is-side-panel-open) .weight-viewport-tools {
+  padding-left: 34px;
 }
 
 .viewport-mode-group {
-  position: absolute;
-  right: 0;
-  top: 0;
+  flex: 1 1 330px;
+  justify-self: end;
+  margin-left: auto;
+  max-width: 100%;
+  flex-wrap: wrap;
+  overflow: visible;
 }
 
 .viewport-mode-group button {
+  max-width: 100%;
   min-width: 0;
 }
 
 .viewport-clean-preview-pair {
   display: inline-flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   gap: 4px;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .weight-viewport-tools button {
+  max-width: 100%;
   min-width: 0;
   min-height: 22px;
+  overflow: hidden;
   padding: 0 5px;
   font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .weight-viewport-tools .viewport-edit-only {
@@ -2242,6 +2261,20 @@ button.is-active {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+@media (max-width: 980px) {
+  .weight-viewport-tools {
+    gap: 4px;
+  }
+
+  .viewport-edit-dock {
+    gap: 4px;
+  }
+
+  .viewport-mode-group {
+    max-width: 100%;
+  }
 }
 
 .camera-gizmo {
@@ -2371,6 +2404,13 @@ button.is-active {
   overscroll-behavior: contain;
 }
 
+.weight-editor-app.is-timeline-compact .weight-timeline-panel {
+  max-height: min(40vh, 218px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .weight-editor-app.is-timeline-drawer-dragging:not(.is-timeline-closing):not(.is-timeline-opening) .weight-timeline-panel {
   transition: none;
 }
@@ -2431,8 +2471,7 @@ button.is-active {
   padding: 0 8px;
 }
 
-.animation-editor-app.is-timeline-compact .bone-layer-list,
-.weight-editor-app.is-timeline-compact .bone-layer-list {
+.animation-editor-app.is-timeline-compact .bone-layer-list {
   display: none;
 }
 
@@ -3517,8 +3556,8 @@ button.is-active {
   flex-direction: column;
   gap: 5px;
   min-height: 0;
-  max-height: min(22vh, 188px);
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   padding-top: 2px;
 }
 
@@ -3526,7 +3565,6 @@ button.is-active {
   align-self: stretch;
   grid-row: 4 / 5;
   height: auto;
-  max-height: none;
   overflow: visible;
 }
 
@@ -4312,6 +4350,7 @@ button.is-active {
     top: 0;
     left: 0;
     right: 0;
+    gap: 3px;
   }
 
   .viewport-tool-group {
@@ -4320,13 +4359,11 @@ button.is-active {
   }
 
   .viewport-edit-dock {
-    gap: 5px;
+    gap: 3px;
   }
 
   .viewport-mode-group {
-    max-width: calc(100% - 150px);
-    overflow-x: auto;
-    overflow-y: hidden;
+    max-width: 100%;
   }
 
   .animation-editor-app .timeline-global-row {

@@ -803,6 +803,8 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
         return;
       }
       this.setActiveBone(name);
+      this.pendingCurveScrollBoneName = name;
+      this.updateBoneLayerList();
     },
 
     boneLayerTrackBackground(frames = []) {
@@ -914,10 +916,19 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
       this.boneLayerList.replaceChildren(...rows);
       this.boneLayerList.scrollTop = scrollTop;
       this.boneLayerValueNodes = [...this.boneLayerList.querySelectorAll("[data-bone-values]")];
+      const scrollBoneName = this.pendingCurveScrollBoneName;
+      this.pendingCurveScrollBoneName = "";
       this.updateRigBoneList();
       this.updateBoneLayerValues({ force: true });
       if (timelineExpanded) {
         requestAnimationFrame(() => this.fitTimelineDrawerToContent?.({ persist: false }));
+      }
+      if (scrollBoneName && scrollBoneName === expandedBone) {
+        requestAnimationFrame(() => {
+          this.boneLayerList
+            ?.querySelector?.(".bone-layer-row.is-expanded")
+            ?.scrollIntoView?.({ block: "nearest" });
+        });
       }
       if (this.curveCanvas) {
         requestAnimationFrame(() => {
@@ -949,7 +960,7 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
       if (!this.app || !this.boneLayerList) {
         return false;
       }
-      if (this.app.classList.contains("is-timeline-hidden") || this.app.classList.contains("is-timeline-compact")) {
+      if (this.app.classList.contains("is-timeline-hidden")) {
         return false;
       }
       return this.boneLayerList.getClientRects().length > 0;
