@@ -1,30 +1,67 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
   <title id="title">Fourth Temple logo</title>
-  <desc id="desc">A gold and ivory temple mark with four columns on a dark field.</desc>
+  <desc id="desc">A stylized gold leaf with F and T monogram letters in the surrounding shaded spherical field.</desc>
   <defs>
-    <linearGradient id="stone" x1="64" y1="42" x2="198" y2="219" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#f7df95" />
-      <stop offset="0.48" stop-color="#dfb45d" />
-      <stop offset="1" stop-color="#9f7435" />
+    <radialGradient id="orb" cx="34%" cy="23%" r="82%">
+      <stop offset="0" stop-color="#2e3b43" />
+      <stop offset="0.36" stop-color="#182228" />
+      <stop offset="0.78" stop-color="#10151a" />
+      <stop offset="1" stop-color="#05070a" />
+    </radialGradient>
+    <radialGradient id="rim" cx="32%" cy="20%" r="86%">
+      <stop offset="0" stop-color="#fff0b8" />
+      <stop offset="0.5" stop-color="#dfb45d" />
+      <stop offset="1" stop-color="#7d5528" />
+    </radialGradient>
+    <radialGradient id="shine" cx="31%" cy="18%" r="56%">
+      <stop offset="0" stop-color="#fff7df" stop-opacity="0.22" />
+      <stop offset="0.5" stop-color="#fff7df" stop-opacity="0.07" />
+      <stop offset="1" stop-color="#fff7df" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="leaf" x1="70" y1="195" x2="200" y2="57" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9c6b2f" />
+      <stop offset="0.44" stop-color="#dfb45d" />
+      <stop offset="1" stop-color="#ffe8a6" />
     </linearGradient>
-    <linearGradient id="light" x1="80" y1="78" x2="174" y2="192" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#fff7df" />
-      <stop offset="1" stop-color="#e7d4a5" />
+    <linearGradient id="leaf-shadow" x1="73" y1="201" x2="186" y2="72" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#56351b" stop-opacity="0.72" />
+      <stop offset="1" stop-color="#10151a" stop-opacity="0" />
     </linearGradient>
+    <clipPath id="orb-clip">
+      <circle cx="128" cy="128" r="103" />
+    </clipPath>
   </defs>
   <rect width="256" height="256" rx="34" fill="#10151a" />
-  <circle cx="128" cy="128" r="103" fill="#141b20" stroke="#dfb45d" stroke-width="5" />
-  <path d="M50 92 128 44l78 48v16H50Z" fill="url(#stone)" />
-  <path d="M128 58 69 94h118Z" fill="#f4ead6" opacity="0.24" />
-  <rect x="58" y="116" width="140" height="14" rx="3" fill="url(#light)" />
-  <rect x="64" y="186" width="128" height="14" rx="3" fill="url(#light)" />
-  <rect x="52" y="207" width="156" height="15" rx="4" fill="url(#stone)" />
-  <rect x="74" y="131" width="20" height="72" rx="4" fill="url(#stone)" />
-  <rect x="104" y="131" width="18" height="72" rx="4" fill="url(#stone)" />
-  <rect x="134" y="131" width="18" height="72" rx="4" fill="url(#stone)" />
-  <rect x="164" y="131" width="20" height="72" rx="4" fill="url(#stone)" />
-  <path d="M101 94h13l14-18 14 18h13l-27-34Z" fill="#10151a" opacity="0.84" />
-  <path d="M84 142h11v40H84Zm36 0h11v40h-11Zm36 0h11v40h-11Z" fill="#f4ead6" opacity="0.16" />
-  <path d="M70 96h116" stroke="#10151a" stroke-width="4" stroke-linecap="round" opacity="0.35" />
-  <path d="M69 222h118" stroke="#f4ead6" stroke-width="3" stroke-linecap="round" opacity="0.45" />
+  <g clip-path="url(#orb-clip)">
+    <circle cx="128" cy="128" r="103" fill="url(#orb)" />
+    <circle cx="85" cy="66" r="92" fill="url(#shine)" />
+    <path d="M225 98c-4 62-55 111-117 111-28 0-55-10-75-28 17 31 50 52 88 52 56 0 102-46 102-102 0-11-2-22-5-32Z" fill="#000" opacity="0.22" />
+  </g>
+  <circle cx="128" cy="128" r="103" fill="none" stroke="url(#rim)" stroke-width="5" />
+  <circle cx="128" cy="128" r="96" fill="none" stroke="#fff7df" stroke-width="2" opacity="0.12" />
+
+  <g clip-path="url(#orb-clip)" opacity="0.72">
+    <g fill="#05070a" opacity="0.32" transform="translate(3 3)">
+      <rect x="66" y="64" width="13" height="50" rx="4" />
+      <rect x="66" y="64" width="45" height="12" rx="4" />
+      <rect x="66" y="86" width="34" height="11" rx="4" />
+      <rect x="158" y="171" width="48" height="12" rx="4" />
+      <rect x="177" y="171" width="12" height="52" rx="4" />
+    </g>
+    <g fill="#f7df95">
+      <rect x="66" y="64" width="13" height="50" rx="4" />
+      <rect x="66" y="64" width="45" height="12" rx="4" />
+      <rect x="66" y="86" width="34" height="11" rx="4" />
+      <rect x="158" y="171" width="48" height="12" rx="4" />
+      <rect x="177" y="171" width="12" height="52" rx="4" />
+    </g>
+  </g>
+
+  <path d="M62 198c16-78 74-134 141-139-5 70-54 128-128 143 20-36 52-74 99-116-52 27-88 63-112 112Z" fill="url(#leaf-shadow)" opacity="0.55" />
+  <path d="M58 194C76 111 134 58 205 52c-4 73-54 132-129 148 23-43 62-86 113-130-57 29-99 70-131 124Z" fill="url(#leaf)" />
+  <path d="M60 196c32-54 75-96 132-126" fill="none" stroke="#fff7df" stroke-width="9" stroke-linecap="round" opacity="0.28" />
+  <path d="M100 151c-1-16 4-31 16-45" fill="none" stroke="#fff7df" stroke-width="7" stroke-linecap="round" opacity="0.18" />
+  <path d="M119 133c3-17 12-31 27-42" fill="none" stroke="#fff7df" stroke-width="7" stroke-linecap="round" opacity="0.18" />
+  <path d="M139 113c8-15 20-26 36-33" fill="none" stroke="#fff7df" stroke-width="7" stroke-linecap="round" opacity="0.18" />
+  <path d="M83 178c13-4 27-5 42-1" fill="none" stroke="#5d3b1d" stroke-width="7" stroke-linecap="round" opacity="0.26" />
 </svg>

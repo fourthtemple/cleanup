@@ -1,7 +1,7 @@
 import {
   BrowserAnimationLibraryStorage,
   browserLibraryDefaultFolderName
-} from "./browser-library-storage.js?v=tutorial-folder-flow-20260605b";
+} from "./browser-library-storage.js?v=folder-delete-20260607a";
 
 function animationLibraryActionIdFromFileName(value) {
   return String(value || "")
@@ -123,15 +123,6 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         }))
         : [];
       const demoName = this.tutorialDemoAnimationLibraryName();
-      if (demoName === "cat") {
-        if (!this.tutorialDemoLibraryFolderName) {
-          return {
-            ...payload,
-            folders: []
-          };
-        }
-        folders = folders.filter((folder) => folder.name === this.tutorialDemoLibraryFolderName);
-      }
       if (!demoName || !this.tutorialDemoLibraryImported || !this.tutorialDemoLibraryFolderName) {
         return {
           ...payload,
@@ -187,14 +178,21 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       });
       this.animationLibraryFolderSelect?.addEventListener("change", () => {
         this.animationLibrarySelectedFolder = this.animationLibraryFolderSelect.value;
+        this.hideDeleteAnimationLibraryFolderConfirm?.();
         this.renderAnimationLibrary();
+      });
+      this.deleteAnimationLibraryFolderButton?.addEventListener("click", () => {
+        this.showDeleteAnimationLibraryFolderConfirm();
+      });
+      this.confirmDeleteAnimationLibraryFolderButton?.addEventListener("click", () => {
+        void this.deleteSelectedAnimationLibraryFolder({ confirmed: true });
+      });
+      this.cancelDeleteAnimationLibraryFolderButton?.addEventListener("click", () => {
+        this.hideDeleteAnimationLibraryFolderConfirm({ status: true });
       });
       this.animationLibraryImportButton?.addEventListener("click", () => {
         if (!this.selectedAnimationLibraryFolderName()) {
           this.setStatus("Create an animation folder first");
-          return;
-        }
-        if (this.seedTutorialDemoAnimationLibraryFile?.("cat")) {
           return;
         }
         if (this.animationLibraryFileInput) {
@@ -326,6 +324,12 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       if (this.animationLibraryImportButton) {
         this.animationLibraryImportButton.disabled = !this.selectedAnimationLibraryFolderName();
       }
+      if (this.deleteAnimationLibraryFolderButton) {
+        this.deleteAnimationLibraryFolderButton.disabled = !this.selectedAnimationLibraryFolderName();
+      }
+      if (!this.selectedAnimationLibraryFolderName()) {
+        this.hideDeleteAnimationLibraryFolderConfirm?.();
+      }
       if (!this.animationLibraryList) {
         return;
       }
@@ -430,6 +434,105 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         console.error(error);
         this.setStatus("Could not create animation folder");
         return false;
+      }
+    },
+
+    animationLibraryFolderDeleteDetails(folder) {
+      const fileCount = Array.isArray(folder?.files) ? folder.files.filter((file) => !file.engine).length : 0;
+      const label = folder?.label || folder?.name || "folder";
+      const detail = fileCount
+        ? ` and ${fileCount} ${fileCount === 1 ? "animation/cleanup" : "animations/cleanups"}`
+        : "";
+      return { fileCount, label, detail };
+    },
+
+    showDeleteAnimationLibraryFolderConfirm() {
+      const folderName = this.selectedAnimationLibraryFolderName();
+      const folder = this.animationLibraryFolders.find((item) => item.name === folderName);
+      if (!folderName || !folder) {
+        this.setStatus("Choose an animation folder first");
+        return false;
+      }
+      const { label, detail } = this.animationLibraryFolderDeleteDetails(folder);
+      this.pendingAnimationLibraryFolderDelete = { folderName, label };
+      if (!this.deleteAnimationLibraryFolderConfirm) {
+        return this.deleteSelectedAnimationLibraryFolder({ confirmed: true });
+      }
+      if (this.deleteAnimationLibraryFolderConfirmMessage) {
+        this.deleteAnimationLibraryFolderConfirmMessage.textContent = `Delete ${label}${detail}?`;
+      }
+      this.deleteAnimationLibraryFolderConfirm.hidden = false;
+      this.deleteAnimationLibraryFolderButton?.setAttribute("aria-expanded", "true");
+      this.confirmDeleteAnimationLibraryFolderButton?.focus?.({ preventScroll: true });
+      this.setStatus(`Confirm delete folder ${label}`);
+      return true;
+    },
+
+    hideDeleteAnimationLibraryFolderConfirm({ status = false } = {}) {
+      this.pendingAnimationLibraryFolderDelete = null;
+      if (this.deleteAnimationLibraryFolderConfirm) {
+        this.deleteAnimationLibraryFolderConfirm.hidden = true;
+      }
+      this.deleteAnimationLibraryFolderButton?.setAttribute("aria-expanded", "false");
+      if (status) {
+        this.setStatus("Folder delete canceled");
+      }
+      return true;
+    },
+
+    async deleteSelectedAnimationLibraryFolder({ confirmed = false } = {}) {
+      const folderName = this.selectedAnimationLibraryFolderName();
+      const folder = this.animationLibraryFolders.find((item) => item.name === folderName);
+      if (!folderName || !folder) {
+        this.setStatus("Choose an animation folder first");
+        return false;
+      }
+      if (!confirmed) {
+        return this.showDeleteAnimationLibraryFolderConfirm();
+      }
+      const { label } = this.animationLibraryFolderDeleteDetails(folder);
+      const pendingFolder = this.pendingAnimationLibraryFolderDelete?.folderName || "";
+      if (pendingFolder && pendingFolder !== folderName) {
+        this.hideDeleteAnimationLibraryFolderConfirm();
+        this.setStatus("Choose the folder again before deleting");
+        return false;
+      }
+      try {
+        if (this.deleteAnimationLibraryFolderButton) {
+          this.deleteAnimationLibraryFolderButton.disabled = true;
+        }
+        if (this.animationLibraryStorageMode === "browser") {
+          await this.ensureBrowserAnimationLibraryStorage().deleteFolder({ folder: folderName });
+        } else {
+          const response = await fetch("/api/animation-library/folder/delete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ folder: folderName })
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.error || `HTTP ${response.status}`);
+          }
+        }
+        if (this.animationLibrarySelectedFolder === folderName) {
+          this.animationLibrarySelectedFolder = "";
+        }
+        if (this.tutorialDemoLibraryFolderName === folderName) {
+          this.tutorialDemoLibraryFolderName = "";
+          this.tutorialDemoLibraryImported = false;
+        }
+        this.hideDeleteAnimationLibraryFolderConfirm();
+        await this.refreshAnimationLibrary({ silent: true });
+        this.setStatus(`Deleted folder ${label}`);
+        return true;
+      } catch (error) {
+        console.error(error);
+        this.setStatus(`Could not delete folder ${label}`);
+        return false;
+      } finally {
+        if (this.deleteAnimationLibraryFolderButton) {
+          this.deleteAnimationLibraryFolderButton.disabled = !this.selectedAnimationLibraryFolderName();
+        }
       }
     },
 
@@ -660,14 +763,14 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       return null;
     },
 
-    tutorialDemoAnimationLibraryName() {
+    tutorialDemoAnimationLibraryQueryName() {
       const params = new URLSearchParams(window.location.search || "");
       const requested = params.get("tutorial-demo")
         ?? params.get("tutorialDemo")
         ?? params.get("demo-character")
         ?? params.get("demo");
       if (requested === null) {
-        return "";
+        return null;
       }
       const normalized = normalizedDemoLibraryName(requested);
       if (!normalized || ["1", "true", "yes", "on"].includes(normalized)) {
@@ -677,6 +780,17 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
         return "";
       }
       return normalized;
+    },
+
+    tutorialDemoAnimationLibraryName() {
+      const requested = this.tutorialDemoAnimationLibraryQueryName?.();
+      if (requested === "") {
+        return "";
+      }
+      if (this.tutorialSessionActive || this.tutorialDrawerOpen) {
+        return requested || "cat";
+      }
+      return "";
     },
 
     demoAnimationLibraryFile(demoName = "cat") {

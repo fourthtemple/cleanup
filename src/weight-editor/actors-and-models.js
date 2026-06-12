@@ -282,9 +282,18 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         option.disabled = entry.available === false;
         return option;
       });
+      if (!options.length) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No clip loaded";
+        option.disabled = true;
+        option.selected = true;
+        options.push(option);
+      }
       this.actionSelect.replaceChildren(
         ...options.map((option) => option.cloneNode(true))
       );
+      this.actionSelect.disabled = !actionEntries.length;
       if (this.timelineBlendActionSelect) {
         const none = document.createElement("option");
         none.value = "";
@@ -459,6 +468,10 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         const nextActionId = entry.id || entry.name || "";
         if (previousActionId && previousActionId !== nextActionId) {
           this.poseKeyframes.clear();
+          this.adaptiveGuideKeyframes = new Map();
+          this.adaptiveGuideDeltaKeyframes = new Map();
+          this.adaptiveGuideCurveHandles = new Map();
+          this.poseKeyframeKinds?.clear?.();
           this.manualPose.clear();
           this.manualPoseAdditiveNames?.clear?.();
           this.poseKeyframeMode = "additive";
@@ -577,6 +590,10 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.manualPose.clear();
       this.manualPoseAdditiveNames?.clear?.();
       this.poseKeyframes.clear();
+      this.adaptiveGuideKeyframes = new Map();
+      this.adaptiveGuideDeltaKeyframes = new Map();
+      this.adaptiveGuideCurveHandles = new Map();
+      this.poseKeyframeKinds?.clear?.();
       this.poseClipboard = null;
       this.poseKeyframesGenerated = false;
       this.virtualBones = [];
@@ -983,6 +1000,10 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       const nextActionId = entry.id || entry.name || "";
       if (previousActionId && previousActionId !== nextActionId) {
         this.poseKeyframes.clear();
+        this.adaptiveGuideKeyframes = new Map();
+        this.adaptiveGuideDeltaKeyframes = new Map();
+        this.adaptiveGuideCurveHandles = new Map();
+        this.poseKeyframeKinds?.clear?.();
         this.manualPose.clear();
         this.manualPoseAdditiveNames?.clear?.();
         this.poseKeyframeMode = "additive";

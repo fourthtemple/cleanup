@@ -269,7 +269,11 @@ export function installRootMotionPreviewMethods(BirdWeightEditor, deps) {
         if (delta.lengthSq() > 0.0000001) {
           this.camera.position.add(delta);
           this.controls.target.add(delta);
+          const previousSuppressCameraSample = this.tutorialMacroSuppressControlsCameraSample;
+          this.tutorialMacroSuppressControlsCameraSample = true;
           this.controls.update();
+          this.tutorialMacroSuppressControlsCameraSample = previousSuppressCameraSample;
+          this.recordTutorialMacroCameraSample?.("travel-follow", { minInterval: 33 });
         }
       }
       this.rootMotionCameraFollowPoint = nextPoint;
@@ -301,8 +305,12 @@ export function installRootMotionPreviewMethods(BirdWeightEditor, deps) {
         this.controls.target.copy(nextTarget);
         this.camera.position.copy(nextTarget).add(viewOffset);
         this.camera.lookAt(nextTarget);
+        const previousSuppressCameraSample = this.tutorialMacroSuppressControlsCameraSample;
+        this.tutorialMacroSuppressControlsCameraSample = true;
         this.controls.update();
+        this.tutorialMacroSuppressControlsCameraSample = previousSuppressCameraSample;
         this.updateCameraRelativeLights?.();
+        this.recordTutorialMacroCameraSample?.("camera-pan", { minInterval: 33 });
         if (alpha < 1) {
           window.requestAnimationFrame(tick);
           return;

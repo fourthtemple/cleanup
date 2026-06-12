@@ -31,7 +31,14 @@ export function installCurveHandleMethods(BirdWeightEditor, deps) {
 
     curveHandleFor(boneName, channel, frame) {
       const handles = this.curveHandleMapFor(boneName, channel);
-      return handles?.get(Math.round(frame)) || null;
+      const handle = handles?.get(Math.round(frame)) || null;
+      if (handle) {
+        return handle;
+      }
+      if (this.shouldUseAdaptiveEdits?.() && !this.shouldUseAdditiveKinematics?.()) {
+        return this.adaptiveGuideCurveHandleFor?.(frame, boneName, channel) || null;
+      }
+      return null;
     },
 
     setCurveHandleFor(boneName, channel, frame, handle = {}) {

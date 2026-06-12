@@ -22,8 +22,31 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     writeJsonFile
   } = deps;
   const ORBIT_VIEW_STORAGE_KEY = "mixamo-cleanup-editor:orbit-view:v1";
+  const CAMERA_CONFIGURATION_STORAGE_KEY = "fourth-temple-model-cleanup:camera-configuration:v1";
+  const SIDE_PANEL_WIDTH_STORAGE_KEY = "fourth-temple-model-cleanup:side-panel-width:v1";
+  const SIDE_PANEL_DEFAULT_WIDTH = 220;
+  const SIDE_PANEL_MIN_WIDTH = 150;
+  const SIDE_PANEL_MAX_WIDTH = 320;
+  const SIDE_PANEL_NARROW_WIDTH = 196;
+  const SIDE_PANEL_TIGHT_WIDTH = 174;
+  const SIDE_PANEL_SNAP_BACK_RATIO = 1 / 3;
+  const SIDE_PANEL_ELASTIC_MIN_WIDTH = 96;
+  const SIDE_PANEL_ELASTIC_RESISTANCE = 0.2;
+  const SIDE_PANEL_TRANSITION_MS = 180;
+  const SIDE_PANEL_EDGE_GESTURE_THRESHOLD = 5;
+  const TIMELINE_DRAWER_HEIGHT_STORAGE_KEY = "fourth-temple-model-cleanup:timeline-drawer-height:v1";
+  const TIMELINE_DRAWER_MIN_HEIGHT = 430;
+  const TIMELINE_DRAWER_SNAP_HEIGHT = 280;
+  const TIMELINE_DRAWER_DEFAULT_HEIGHT = 560;
+  const TIMELINE_DRAWER_MAX_HEIGHT = 620;
+  const TIMELINE_DRAWER_GESTURE_THRESHOLD = 5;
+  const TIMELINE_DRAWER_EDGE_GRAB_HEIGHT = 12;
+  const TIMELINE_DRAWER_CLOSE_RATIO = 1 / 3;
+  const TIMELINE_DRAWER_ELASTIC_RESISTANCE = 0.2;
+  const TIMELINE_DRAWER_CLOSE_MS = 180;
   const TUTORIAL_EDITOR_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-editor-enabled:v1";
   const TUTORIAL_RECIPES_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-recipes:v1";
+  const TUTORIAL_RECIPES_ASSET_URL = "./assets/tutorial-recipes.json?v=20260609a";
 
   function tutorialLocalStorageGet(key) {
     try {
@@ -170,6 +193,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         TWO: THREE.TOUCH.DOLLY_PAN
       };
       this.controls.screenSpacePanning = true;
+      this.controls.addEventListener("start", () => this.flushTextureAirbrushScreenStroke?.());
       this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
       this.ambientSceneLight = new THREE.HemisphereLight(0xf4dec4, 0x25303b, 1);
@@ -307,7 +331,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.scene.add(this.vertexMarkers);
 
       this.meshWireOverlayMaterial = new THREE.MeshBasicMaterial({
-        color: 0x80d8ff,
+        color: this.meshColor || "#80d8ff",
         wireframe: true,
         transparent: true,
         opacity: 0.42,
@@ -637,6 +661,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (this.restoreOrbitViewButton) {
         this.restoreOrbitViewButton.disabled = !this.savedOrbitViewSetting();
       }
+      this.updateCameraConfigurationControls?.();
     },
 
     saveOrbitViewSetting() {
@@ -691,6 +716,109 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     restoreSavedOrbitView(options = {}) {
       return this.applyOrbitViewSetting(this.savedOrbitViewSetting(), options);
+    },
+
+    defaultCameraConfigurationSetting() {
+      return {
+        backgroundColor: "#11171c",
+        meshColor: "#80d8ff",
+        ambient: 0.75,
+        key: 1.25,
+        rim: 0.35,
+        texture: 1
+      };
+    },
+
+    currentCameraConfigurationSetting() {
+      const fallback = this.defaultCameraConfigurationSetting();
+      const numberValue = (input, fallbackValue) => {
+        const value = Number(input?.value);
+        return Number.isFinite(value) ? value : fallbackValue;
+      };
+      return {
+        backgroundColor: this.backgroundColor || this.cameraBackgroundColor?.value || fallback.backgroundColor,
+        meshColor: this.meshColor || this.cameraMeshColor?.value || fallback.meshColor,
+        ambient: numberValue(this.cameraAmbientLight, fallback.ambient),
+        key: numberValue(this.cameraKeyLight, fallback.key),
+        rim: numberValue(this.cameraRimLight, fallback.rim),
+        texture: numberValue(this.cameraTextureGain, fallback.texture)
+      };
+    },
+
+    savedCameraConfigurationSetting() {
+      if (typeof window === "undefined") {
+        return null;
+      }
+      try {
+        const text = window.localStorage?.getItem(CAMERA_CONFIGURATION_STORAGE_KEY);
+        return text ? JSON.parse(text) : null;
+      } catch {
+        return null;
+      }
+    },
+
+    updateCameraConfigurationControls() {
+      if (this.resetCameraSettingsButton) {
+        this.resetCameraSettingsButton.disabled = !this.savedCameraConfigurationSetting();
+      }
+    },
+
+    saveCameraConfigurationSetting() {
+      const setting = this.currentCameraConfigurationSetting();
+      if (!setting || typeof window === "undefined") {
+        this.setStatus("No configuration to save");
+        return false;
+      }
+      try {
+        window.localStorage?.setItem(CAMERA_CONFIGURATION_STORAGE_KEY, JSON.stringify(setting));
+        this.updateCameraConfigurationControls();
+        this.setStatus("Saved configuration");
+        return true;
+      } catch {
+        this.setStatus("Could not save configuration");
+        return false;
+      }
+    },
+
+    applyCameraConfigurationSetting(setting = this.savedCameraConfigurationSetting(), options = {}) {
+      if (!setting || typeof setting !== "object") {
+        if (options.status !== false) {
+          this.setStatus("No saved configuration");
+        }
+        return false;
+      }
+      const fallback = this.defaultCameraConfigurationSetting();
+      const colorValue = (value, fallbackValue) => (
+        /^#[0-9a-f]{6}$/i.test(String(value || "")) ? String(value) : fallbackValue
+      );
+      const numberValue = (value, fallbackValue) => {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : fallbackValue;
+      };
+      if (this.cameraAmbientLight) {
+        this.cameraAmbientLight.value = String(numberValue(setting.ambient, fallback.ambient));
+      }
+      if (this.cameraKeyLight) {
+        this.cameraKeyLight.value = String(numberValue(setting.key, fallback.key));
+      }
+      if (this.cameraRimLight) {
+        this.cameraRimLight.value = String(numberValue(setting.rim, fallback.rim));
+      }
+      if (this.cameraTextureGain) {
+        this.cameraTextureGain.value = String(numberValue(setting.texture, fallback.texture));
+      }
+      this.applyBackgroundColor(colorValue(setting.backgroundColor, fallback.backgroundColor));
+      this.applyMeshColor(colorValue(setting.meshColor, fallback.meshColor));
+      this.applySceneLighting();
+      this.updateCameraConfigurationControls();
+      if (options.status !== false) {
+        this.setStatus("Restored configuration");
+      }
+      return true;
+    },
+
+    resetCameraConfigurationSetting(options = {}) {
+      return this.applyCameraConfigurationSetting(this.savedCameraConfigurationSetting(), options);
     },
 
     panelSectionTitle(section) {
@@ -795,6 +923,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     storedTutorialRecipes() {
+      if (this.tutorialRecipePackagedCache) {
+        return this.tutorialRecipePackagedCache;
+      }
       const raw = tutorialLocalStorageGet(TUTORIAL_RECIPES_STORAGE_KEY);
       if (!raw) {
         return null;
@@ -811,11 +942,57 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
     },
 
-    storeTutorialRecipes(cards) {
-      return tutorialLocalStorageSet(TUTORIAL_RECIPES_STORAGE_KEY, JSON.stringify({
+    async loadPackagedTutorialRecipes() {
+      if (this.tutorialRecipePackagedLoaded) {
+        return this.tutorialRecipePackagedCache || null;
+      }
+      this.tutorialRecipePackagedLoaded = true;
+      try {
+        const response = await fetch(TUTORIAL_RECIPES_ASSET_URL, { cache: "no-store" });
+        if (!response.ok) {
+          return null;
+        }
+        const payload = await response.json();
+        const cards = Array.isArray(payload) ? payload : payload?.cards;
+        if (!Array.isArray(cards)) {
+          return null;
+        }
+        this.tutorialRecipePackagedCache = normalizeTutorialRecipeMacros(
+          cards.map((card, index) => normalizedTutorialCard(card, this.tutorialDefaultRecipes?.[index]))
+        );
+        return this.tutorialRecipePackagedCache;
+      } catch (error) {
+        console.warn("Could not load tutorial recipes from disk", error);
+        return null;
+      }
+    },
+
+    async storeTutorialRecipes(cards) {
+      const normalizedCards = normalizeTutorialRecipeMacros(
+        (cards || []).map((card, index) => normalizedTutorialCard(card, this.tutorialDefaultRecipes?.[index]))
+      );
+      try {
+        const response = await fetch("/api/tutorial-recipes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cards: normalizedCards })
+        });
+        if (!response.ok) {
+          const payload = await response.json().catch(() => ({}));
+          throw new Error(payload.error || "Could not save tutorial recipes to disk");
+        }
+        this.tutorialRecipePackagedCache = normalizedCards;
+        this.tutorialRecipePackagedLoaded = true;
+        tutorialLocalStorageRemove(TUTORIAL_RECIPES_STORAGE_KEY);
+        return "disk";
+      } catch (error) {
+        console.warn("Could not save tutorial recipes to disk", error);
+      }
+      tutorialLocalStorageSet(TUTORIAL_RECIPES_STORAGE_KEY, JSON.stringify({
         version: 1,
-        cards
+        cards: normalizedCards
       }));
+      return "browser";
     },
 
     renderTutorialRecipes(cards = []) {
@@ -960,12 +1137,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.updateTutorialEditControls();
     },
 
-    saveTutorialEdits() {
+    async saveTutorialEdits() {
       const cards = this.tutorialRecipesFromEditors();
       this.renderTutorialRecipes(cards);
-      this.storeTutorialRecipes(cards);
+      const mode = await this.storeTutorialRecipes(cards);
       this.setTutorialEditing(false);
-      this.setStatus("Tutorial recipes saved in this browser");
+      this.setStatus(mode === "disk" ? "Tutorial recipes saved to disk" : "Tutorial recipes saved in this browser");
     },
 
     cancelTutorialEdits() {
@@ -976,9 +1153,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.setStatus("Tutorial edits canceled");
     },
 
-    resetTutorialRecipes() {
+    async resetTutorialRecipes() {
       tutorialLocalStorageRemove(TUTORIAL_RECIPES_STORAGE_KEY);
-      this.renderTutorialRecipes(this.tutorialDefaultRecipes || []);
+      const cards = this.tutorialDefaultRecipes || [];
+      this.renderTutorialRecipes(cards);
+      await this.storeTutorialRecipes(cards);
       this.setTutorialEditing(false);
       this.setStatus("Tutorial recipes reset");
     },
@@ -994,6 +1173,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (storedRecipes) {
         this.renderTutorialRecipes(storedRecipes);
       }
+      void this.loadPackagedTutorialRecipes?.().then((recipes) => {
+        if (recipes) {
+          this.renderTutorialRecipes(recipes);
+        }
+      });
       this.bindTutorialMacroControls?.();
       this.updateTutorialEditControls();
     },
@@ -1151,6 +1335,304 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return cards.indexOf(card) > 0;
     },
 
+    tutorialMacroModeActive() {
+      return Boolean(this.tutorialDrawerOpen || this.tutorialSessionActive);
+    },
+
+    captureTutorialSessionState() {
+      const cloneMap = (map, mapper = (value) => value) => new Map(
+        Array.from(map?.entries?.() || [], ([key, value]) => [key, mapper(value, key)])
+      );
+      const cloneFolder = (folder) => ({
+        ...folder,
+        files: Array.isArray(folder.files) ? folder.files.map((file) => ({ ...file })) : []
+      });
+      const cloneChainSetting = (value) => ({ ...value });
+      const cloneConstraint = (value) => ({
+        ...value,
+        min: { ...(value?.min || {}) },
+        max: { ...(value?.max || {}) }
+      });
+      return {
+        hasModel: Boolean(this.model),
+        actorTarget: this.actorTarget,
+        model: this.model,
+        modelRootChildren: Array.from(this.modelRoot?.children || []),
+        modelRootVisible: this.modelRoot?.visible !== false,
+        baseModelScale: this.baseModelScale,
+        actorScaleMultiplier: this.actorScaleMultiplier,
+        mixer: this.mixer,
+        activeClipAction: this.activeClipAction,
+        activeClipEntry: this.activeClipEntry,
+        blendClipAction: this.blendClipAction,
+        blendClipEntry: this.blendClipEntry,
+        blendActionId: this.blendActionId,
+        clipEntries: Array.isArray(this.clipEntries) ? [...this.clipEntries] : [],
+        clipCleanupEdits: cloneMap(this.clipCleanupEdits, (value) => ({ ...value })),
+        rootMotionUnbakeActions: cloneMap(this.rootMotionUnbakeActions, (value) => ({ ...value })),
+        bindPose: Array.isArray(this.bindPose) ? [...this.bindPose] : [],
+        bones: cloneMap(this.bones),
+        paintRecords: Array.isArray(this.paintRecords) ? [...this.paintRecords] : [],
+        virtualBones: Array.isArray(this.virtualBones) ? [...this.virtualBones] : [],
+        manualBoneChains: Array.isArray(this.manualBoneChains) ? this.manualBoneChains.map((chain) => ({ ...chain })) : [],
+        ikChainSettings: cloneMap(this.ikChainSettings, cloneChainSetting),
+        jointConstraints: cloneMap(this.jointConstraints, cloneConstraint),
+        jointConstraintTemplates: this.jointConstraintTemplates ? cloneMap(this.jointConstraintTemplates) : this.jointConstraintTemplates,
+        jointConstraintEditedPoseBone: this.jointConstraintEditedPoseBone || "",
+        jointConstraintEditedPoseChannels: new Set(this.jointConstraintEditedPoseChannels || []),
+        boneLayerNames: Array.isArray(this.boneLayerNames) ? [...this.boneLayerNames] : [],
+        bonePickerNames: Array.isArray(this.bonePickerNames) ? [...this.bonePickerNames] : [],
+        activeBoneName: this.activeBoneName || "",
+        selectedBoneChainRootName: this.selectedBoneChainRootName || "",
+        rigBoneGroup: this.rigBoneGroup || "all",
+        rigBoneSearchText: this.rigBoneSearchText || "",
+        viewMode: this.viewMode || "rendered",
+        showRenderedLayer: this.showRenderedLayer !== false,
+        showMeshLayer: Boolean(this.showMeshLayer),
+        showSelectionLayer: this.showSelectionLayer !== false,
+        showBonesLayer: Boolean(this.showBonesLayer),
+        cleanPreview: Boolean(this.cleanPreview),
+        gizmoOnlyPreview: Boolean(this.gizmoOnlyPreview),
+        backgroundColor: this.backgroundColor || "#11171c",
+        meshColor: this.meshColor || "#80d8ff",
+        activeTool: this.activeTool || "paint",
+        progress: Number(this.progress) || 0,
+        playing: Boolean(this.playing),
+        undoStack: Array.isArray(this.undoStack) ? [...this.undoStack] : [],
+        redoStack: Array.isArray(this.redoStack) ? [...this.redoStack] : [],
+        animationLibraryFolders: Array.isArray(this.animationLibraryFolders)
+          ? this.animationLibraryFolders.map(cloneFolder)
+          : [],
+        animationLibrarySelectedFolder: this.animationLibrarySelectedFolder || "",
+        animationLibraryStorageMode: this.animationLibraryStorageMode || "",
+        tutorialDemoLibraryFolderName: this.tutorialDemoLibraryFolderName || "",
+        tutorialDemoLibraryImported: Boolean(this.tutorialDemoLibraryImported),
+        editorState: this.captureUndoState?.("Tutorial session", { includeClip: true }) || null,
+        sourceText: this.source?.textContent || "",
+        statusText: this.status?.textContent || "",
+        characterSelectValue: this.characterSelect?.value || "",
+        actionSelectValue: this.actionSelect?.value || "",
+        folderSelectValue: this.animationLibraryFolderSelect?.value || ""
+      };
+    },
+
+    resetTutorialSessionWorkspace() {
+      this.loadToken = (this.loadToken || 0) + 1;
+      this.pausePlayback?.();
+      this.stopSequencePreview?.({ applyPose: false, resetElapsed: false });
+      this.clearActorModel?.();
+      this.actorTarget = ACTOR_TARGETS[0];
+      this.activeTool = "paint";
+      this.viewMode = "rendered";
+      this.showRenderedLayer = true;
+      this.showMeshLayer = false;
+      this.showSelectionLayer = true;
+      this.showBonesLayer = false;
+      this.cleanPreview = false;
+      this.gizmoOnlyPreview = false;
+      this.applyBackgroundColor?.("#11171c");
+      this.applyMeshColor?.("#80d8ff");
+      this.animationLibrarySelectedFolder = this.animationLibraryFolderSelect?.value || this.animationLibrarySelectedFolder || "";
+      this.renderCharacterOptions?.();
+      this.renderActionOptions?.();
+      this.populateBoneSelect?.();
+      this.renderBoneChainOptions?.();
+      this.renderAddBoneChainMemberOptions?.();
+      this.syncTimelineControls?.();
+      this.updateTimelineKeyMarkers?.();
+      this.syncPatchJson?.();
+      this.syncExportButtons?.();
+      this.setViewMode?.("rendered", { silent: true });
+      if (this.source) {
+        this.source.textContent = "Import a raw Mixamo FBX to begin";
+      }
+      this.setStatus("Tutorial workspace ready");
+    },
+
+    beginTutorialSession() {
+      if (this.tutorialSessionActive) {
+        return false;
+      }
+      this.tutorialSessionState = this.captureTutorialSessionState();
+      this.tutorialSessionActive = true;
+      this.resetTutorialSessionWorkspace();
+      this.updateTutorialMacroControls?.();
+      return true;
+    },
+
+    restoreTutorialSessionToolState(state) {
+      this.activeTool = state?.activeTool || "paint";
+      if (this.controls) {
+        this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
+      }
+      this.toolButtons?.forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.tool === this.activeTool);
+      });
+      this.app?.classList.toggle("is-texture-airbrush", this.activeTool === "airbrush");
+      this.canvas?.classList.toggle("is-texture-airbrush", this.activeTool === "airbrush");
+      const isSelectionBrush = this.usesSelectionBrushCursor?.(this.activeTool) === true;
+      this.app?.classList.toggle("is-selection-brush", isSelectionBrush);
+      this.canvas?.classList.toggle("is-selection-brush", isSelectionBrush);
+    },
+
+    restoreTutorialSessionChrome(state) {
+      this.renderAnimationLibrary?.();
+      this.renderCharacterOptions?.();
+      this.renderActionOptions?.();
+      this.populateBoneSelect?.();
+      this.renderBoneChainOptions?.();
+      this.renderAddBoneChainMemberOptions?.();
+      this.syncScaleControls?.();
+      this.syncTimelineControls?.();
+      this.updateTimelineKeyMarkers?.();
+      this.syncPoseClipboardControls?.();
+      this.syncExportButtons?.();
+      this.syncPatchJson?.();
+      this.updateCounts?.();
+      this.updateUndoButton?.();
+      this.updateSkeletonHelper?.();
+      this.updateSelectionMarkers?.();
+      this.updateMoveGizmo?.();
+      this.updateBoneMoveGizmo?.();
+      this.updateIkMoveGizmo?.();
+      this.updateSelectedBoneHighlight?.();
+      this.updateBonePickerOverlay?.();
+      this.updateBoneLabels?.();
+      if (this.characterSelect && state?.characterSelectValue) {
+        this.characterSelect.value = state.characterSelectValue;
+      }
+      if (this.actionSelect && state?.actionSelectValue) {
+        this.actionSelect.value = state.actionSelectValue;
+      }
+      if (this.animationLibraryFolderSelect && state?.folderSelectValue) {
+        this.animationLibraryFolderSelect.value = state.folderSelectValue;
+      }
+      if (this.source) {
+        this.source.textContent = state?.sourceText || this.actorTarget?.sourceLabel || "Import a raw Mixamo FBX to begin";
+      }
+      this.setStatus(state?.statusText || "Tutorial closed");
+    },
+
+    async restoreTutorialSessionState(state) {
+      this.pausePlayback?.();
+      this.stopSequencePreview?.({ applyPose: false, resetElapsed: false });
+      this.loadToken = (this.loadToken || 0) + 1;
+      this.clearActorModel?.();
+      if (!state) {
+        this.actorTarget = ACTOR_TARGETS[0];
+        this.renderCharacterOptions?.();
+        this.renderActionOptions?.();
+        this.setStatus("Tutorial closed");
+        return false;
+      }
+      this.actorTarget = state.actorTarget || ACTOR_TARGETS[0];
+      this.animationLibraryFolders = Array.isArray(state.animationLibraryFolders)
+        ? state.animationLibraryFolders
+        : [];
+      this.animationLibrarySelectedFolder = state.animationLibrarySelectedFolder || "";
+      this.animationLibraryStorageMode = state.animationLibraryStorageMode || this.animationLibraryStorageMode;
+      this.tutorialDemoLibraryFolderName = state.tutorialDemoLibraryFolderName || "";
+      this.tutorialDemoLibraryImported = Boolean(state.tutorialDemoLibraryImported);
+      if (!state.hasModel || !state.model) {
+        this.restoreTutorialSessionToolState(state);
+        this.showRenderedLayer = state.showRenderedLayer !== false;
+        this.showMeshLayer = Boolean(state.showMeshLayer);
+        this.showSelectionLayer = state.showSelectionLayer !== false;
+        this.showBonesLayer = Boolean(state.showBonesLayer);
+        this.cleanPreview = Boolean(state.cleanPreview);
+        this.gizmoOnlyPreview = Boolean(state.gizmoOnlyPreview);
+        this.applyBackgroundColor?.(state.backgroundColor || "#11171c");
+        this.applyMeshColor?.(state.meshColor || "#80d8ff");
+        this.setViewMode?.(state.viewMode || "rendered", { silent: true, preserveViewportLayers: true });
+        this.restoreTutorialSessionChrome(state);
+        this.setPlayback?.(Boolean(state.playing));
+        return true;
+      }
+
+      this.model = state.model;
+      this.baseModelScale = state.baseModelScale || 1;
+      this.actorScaleMultiplier = state.actorScaleMultiplier || 1;
+      this.mixer = state.mixer || (this.model ? new THREE.AnimationMixer(this.model) : null);
+      this.activeClipAction = state.activeClipAction || null;
+      this.activeClipEntry = state.activeClipEntry || null;
+      this.blendClipAction = state.blendClipAction || null;
+      this.blendClipEntry = state.blendClipEntry || null;
+      this.blendActionId = state.blendActionId || "";
+      this.clipEntries = Array.isArray(state.clipEntries) ? [...state.clipEntries] : [];
+      this.clipCleanupEdits = state.clipCleanupEdits || new Map();
+      this.rootMotionUnbakeActions = state.rootMotionUnbakeActions || new Map();
+      this.bindPose = Array.isArray(state.bindPose) ? [...state.bindPose] : [];
+      this.bones = state.bones || new Map();
+      this.paintRecords = Array.isArray(state.paintRecords) ? [...state.paintRecords] : [];
+      this.virtualBones = Array.isArray(state.virtualBones) ? [...state.virtualBones] : [];
+      this.manualBoneChains = Array.isArray(state.manualBoneChains) ? [...state.manualBoneChains] : [];
+      this.ikChainSettings = state.ikChainSettings || new Map();
+      this.jointConstraints = state.jointConstraints || new Map();
+      this.jointConstraintTemplates = state.jointConstraintTemplates || this.jointConstraintTemplates;
+      this.jointConstraintEditedPoseBone = state.jointConstraintEditedPoseBone || "";
+      this.jointConstraintEditedPoseChannels = state.jointConstraintEditedPoseChannels || new Set();
+      this.boneLayerNames = Array.isArray(state.boneLayerNames) ? [...state.boneLayerNames] : [];
+      this.bonePickerNames = Array.isArray(state.bonePickerNames) ? [...state.bonePickerNames] : [];
+      this.activeBoneName = state.activeBoneName || "";
+      this.selectedBoneChainRootName = state.selectedBoneChainRootName || "";
+      this.rigBoneGroup = state.rigBoneGroup || "all";
+      this.rigBoneSearchText = state.rigBoneSearchText || "";
+      this.progress = THREE.MathUtils.clamp(Number(state.progress) || 0, 0, 1);
+      this.showRenderedLayer = state.showRenderedLayer !== false;
+      this.showMeshLayer = Boolean(state.showMeshLayer);
+      this.showSelectionLayer = state.showSelectionLayer !== false;
+      this.showBonesLayer = Boolean(state.showBonesLayer);
+      this.cleanPreview = Boolean(state.cleanPreview);
+      this.gizmoOnlyPreview = Boolean(state.gizmoOnlyPreview);
+      this.applyBackgroundColor?.(state.backgroundColor || "#11171c");
+      this.applyMeshColor?.(state.meshColor || "#80d8ff");
+      this.undoStack = Array.isArray(state.undoStack) ? [...state.undoStack] : [];
+      this.redoStack = Array.isArray(state.redoStack) ? [...state.redoStack] : [];
+
+      this.modelRoot?.clear();
+      const children = state.modelRootChildren?.length ? state.modelRootChildren : [state.model];
+      for (const child of children) {
+        if (child) {
+          this.modelRoot?.add(child);
+        }
+      }
+      if (this.modelRoot) {
+        this.modelRoot.visible = state.modelRootVisible !== false;
+      }
+
+      this.restoreTutorialSessionToolState(state);
+      this.setViewMode?.(state.viewMode || "rendered", { silent: true, preserveViewportLayers: true });
+      if (state.editorState) {
+        this.restoreEditorState?.(state.editorState, "Restored");
+      } else if (this.activeClipEntry) {
+        await this.playClipEntry?.(this.activeClipEntry);
+      } else {
+        this.applyPose?.(this.progress);
+      }
+      this.restoreTutorialSessionChrome(state);
+      this.setPlayback?.(Boolean(state.playing));
+      return true;
+    },
+
+    async endTutorialSession() {
+      if (!this.tutorialSessionActive && !this.tutorialSessionState) {
+        this.updateTutorialMacroControls?.();
+        return false;
+      }
+      const state = this.tutorialSessionState;
+      this.tutorialSessionActive = false;
+      this.tutorialSessionState = null;
+      if (this.tutorialMacroRecording) {
+        await this.stopTutorialMacroRecording?.();
+      }
+      if (this.tutorialMacroPlaying) {
+        this.stopTutorialMacroPlayback?.();
+      }
+      const restored = await this.restoreTutorialSessionState(state);
+      this.updateTutorialMacroControls?.();
+      return restored;
+    },
+
     queueTutorialViewportResize() {
       if (!this.canvas || typeof window === "undefined") {
         return;
@@ -1175,6 +1657,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.tutorialsToggle?.setAttribute("aria-expanded", String(nextOpen));
       this.tutorialDrawer.setAttribute("aria-hidden", String(!nextOpen));
       if (nextOpen) {
+        this.beginTutorialSession?.();
         this.tutorialDrawer.hidden = false;
         if (this.tutorialBackdrop) {
           this.tutorialBackdrop.hidden = false;
@@ -1190,8 +1673,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return;
       }
       this.clearTutorialHighlights?.();
+      void this.endTutorialSession?.();
       this.tutorialDrawer.classList.remove("is-open");
-      this.tutorialBackdrop?.classList.remove("is-open");
+      this.tutorialBackdrop?.classList.remove("is-open", "is-macro-recording");
       this.queueTutorialViewportResize();
       this.tutorialDrawerHideTimer = window.setTimeout(() => {
         this.tutorialDrawer.hidden = true;
@@ -1335,6 +1819,19 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.ikCounterRotation?.addEventListener("change", () => {
         this.withUndo("IK settings", () => this.updateSelectedIkSettingsFromControls?.());
       });
+      this.convertAdaptiveKeyButton?.addEventListener("click", () => {
+        const frame = this.currentAdaptiveConvertFrame;
+        if (!Number.isInteger(frame)) {
+          return;
+        }
+        const convert = () => this.convertAdaptiveMarkerToKeyframe?.(frame);
+        if (typeof this.withUndo === "function") {
+          this.withUndo("Convert adaptive key", convert);
+        } else {
+          convert();
+        }
+        this.syncAdaptiveConvertButton?.();
+      });
       this.jointConstraintEnabled?.addEventListener("change", () => {
         this.withUndo("Joint constraint", () => this.updateSelectedJointConstraintFromControls?.());
       });
@@ -1384,6 +1881,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.mirrorModeButton?.addEventListener("click", () => this.setMirrorMode(!this.mirrorMode));
       this.saveOrbitViewButton?.addEventListener("click", () => this.saveOrbitViewSetting());
       this.restoreOrbitViewButton?.addEventListener("click", () => this.restoreSavedOrbitView());
+      this.saveCameraSettingsButton?.addEventListener("click", () => this.saveCameraConfigurationSetting());
+      this.resetCameraSettingsButton?.addEventListener("click", () => this.resetCameraConfigurationSetting());
       this.updateOrbitViewControls();
       this.setViewMode("rendered", { silent: true });
 
@@ -1477,6 +1976,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.updateBrushCursorForLastPointer?.();
       });
       this.textureBrushOpacity?.addEventListener("input", () => this.updateRangeOutputs());
+      this.textureBrushHardness?.addEventListener("input", () => this.updateRangeOutputs());
       this.textureBrushScatter?.addEventListener("input", () => this.updateRangeOutputs());
       this.clonePaintSourceButton?.addEventListener("click", () => {
         this.captureClonePaintSource?.();
@@ -1607,24 +2107,38 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         "Paste pose",
         () => this.pastePoseClipboardToCurrentFrame?.()
       ));
-      this.useTimelineKeysToggle?.addEventListener("change", () => {
-        this.normalizeTimelineEditMode?.(this.useTimelineKeysToggle.checked ? "solved" : "adaptive");
-        const enabled = this.useTimelineKeysToggle.checked;
+      const timelineEditModeLabels = {
+        solved: "solved keys",
+        adaptive: "adaptive keys",
+        additive: "additive kinematics"
+      };
+      this.motionConversionModeSelect?.addEventListener("change", () => {
+        const mode = ["solved", "adaptive", "additive"].includes(this.motionConversionModeSelect.value)
+          ? this.motionConversionModeSelect.value
+          : "additive";
+        this.normalizeTimelineEditMode?.(mode);
         this.withUndo(
-          enabled ? "Use timeline keys" : "Use adaptive edits",
-          () => this.setTimelineKeysSourceEnabled(enabled),
+          `Use ${timelineEditModeLabels[mode]}`,
+          () => this.setTimelineEditMode?.(mode),
           { clearManualPose: true }
         );
       });
-      this.adaptiveEditToggle?.addEventListener("change", () => {
-        this.normalizeTimelineEditMode?.(this.adaptiveEditToggle.checked ? "adaptive" : "solved");
-        const useSolvedKeys = this.useTimelineKeysToggle?.checked !== false;
-        this.withUndo(
-          useSolvedKeys ? "Use timeline keys" : "Use adaptive edits",
-          () => this.setTimelineKeysSourceEnabled(useSolvedKeys),
-          { clearManualPose: true }
-        );
-      });
+      const bindTimelineEditModeToggle = (toggle, mode, label) => {
+        toggle?.addEventListener("change", () => {
+          if (!toggle.checked) {
+            return;
+          }
+          this.normalizeTimelineEditMode?.(mode);
+          this.withUndo(
+            `Use ${label}`,
+            () => this.setTimelineEditMode?.(mode),
+            { clearManualPose: true }
+          );
+        });
+      };
+      bindTimelineEditModeToggle(this.useTimelineKeysToggle, "solved", "solved keys");
+      bindTimelineEditModeToggle(this.adaptiveEditToggle, "adaptive", "adaptive edits");
+      bindTimelineEditModeToggle(this.additiveKinematicsToggle, "additive", "additive kinematics");
       this.solvedKeyDetail?.addEventListener("input", () => this.updateRangeOutputs());
       this.solvedKeyDetail?.addEventListener("change", () => {
         void this.rebuildAutoKeyedTimelineFromDetail?.({ pushUndo: true });
@@ -1818,7 +2332,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.resetVirtualBones();
         this.clearSelection();
         this.poseKeyframes.clear();
+        this.adaptiveGuideKeyframes = new Map();
+        this.adaptiveGuideDeltaKeyframes = new Map();
+        this.adaptiveGuideCurveHandles = new Map();
         this.poseCurveHandles?.clear?.();
+        this.poseKeyframeKinds?.clear?.();
         this.manualPose.clear();
         this.manualPoseAdditiveNames?.clear?.();
         this.poseKeyframeMode = "additive";
@@ -1833,11 +2351,26 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }));
       this.repairSeamsButton?.addEventListener("click", () => this.repairSeams());
       this.sidePanelToggle?.addEventListener("click", () => {
-        this.setSidePanelOpen(!this.app.classList.contains("is-side-panel-open"));
+        if (this.app.classList.contains("is-side-panel-open")) {
+          this.hideSidePanelDrawer();
+        } else {
+          this.showSidePanelDrawer();
+        }
       });
       this.sidePanelShowToggle?.addEventListener("click", () => {
-        this.setSidePanelOpen(true);
+        this.showSidePanelDrawer();
       });
+      this.sidePanelShowToggle?.addEventListener("pointerdown", (event) => this.beginSidePanelHiddenDrag(event));
+      this.sidePanelShowToggle?.addEventListener("pointermove", (event) => this.dragSidePanelHiddenDrag(event));
+      this.sidePanelShowToggle?.addEventListener("pointerup", (event) => this.endSidePanelHiddenDrag(event));
+      this.sidePanelShowToggle?.addEventListener("pointercancel", (event) => this.endSidePanelHiddenDrag(event));
+      this.sidePanelResizeHandle?.addEventListener("pointerdown", (event) => this.beginSidePanelResize(event));
+      this.sidePanelResizeHandle?.addEventListener("pointermove", (event) => this.dragSidePanelResize(event));
+      this.sidePanelResizeHandle?.addEventListener("pointerup", (event) => this.endSidePanelResize(event));
+      this.sidePanelResizeHandle?.addEventListener("pointercancel", (event) => this.endSidePanelResize(event));
+      this.sidePanelResizeHandle?.addEventListener("mousedown", (event) => this.beginSidePanelMouseResize(event));
+      this.sidePanelResizeHandle?.addEventListener("keydown", (event) => this.handleSidePanelResizeKey(event));
+      this.sidePanelResizeHandle?.addEventListener("dblclick", () => this.resetSidePanelWidth());
       this.tutorialsToggle?.addEventListener("click", () => {
         this.setTutorialDrawerOpen(!this.tutorialDrawerOpen);
       });
@@ -1855,8 +2388,23 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.timelineCompactToggle?.addEventListener("click", () => {
         this.setTimelineCompact(!this.app.classList.contains("is-timeline-compact"));
       });
-      this.timelineHideToggle?.addEventListener("click", () => this.setTimelineHidden(true));
+      this.timelineHideToggle?.addEventListener("click", () => this.hideTimelineDrawer());
       this.timelineShowToggle?.addEventListener("click", () => this.setTimelineHidden(false));
+      this.timelineDrawerHandle?.addEventListener("pointerdown", (event) => this.beginTimelineDrawerDrag(event));
+      this.timelineDrawerHandle?.addEventListener("pointermove", (event) => this.dragTimelineDrawer(event));
+      this.timelineDrawerHandle?.addEventListener("pointerup", (event) => this.endTimelineDrawerDrag(event));
+      this.timelineDrawerHandle?.addEventListener("pointercancel", (event) => this.endTimelineDrawerDrag(event));
+      this.timelineDrawerHandle?.addEventListener("keydown", (event) => this.handleTimelineDrawerKey(event));
+      this.timelineDrawerHandle?.addEventListener("dblclick", () => this.resetTimelineDrawerHeight());
+      this.timelineDrawerPanel()?.addEventListener("pointerdown", (event) => this.beginTimelineDrawerEdgeDrag(event));
+      this.timelineDrawerPanel()?.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
+      this.boundTimelineDrawerEdgePointerDown = this.boundTimelineDrawerEdgePointerDown
+        || ((event) => this.beginTimelineGlobalEdgeDrag(event));
+      window.addEventListener("pointerdown", this.boundTimelineDrawerEdgePointerDown, { capture: true });
+      this.timelineShowToggle?.addEventListener("pointerdown", (event) => this.beginTimelineHiddenDrawerDrag(event));
+      this.timelineShowToggle?.addEventListener("pointermove", (event) => this.dragTimelineHiddenDrawer(event));
+      this.timelineShowToggle?.addEventListener("pointerup", (event) => this.endTimelineHiddenDrawerDrag(event));
+      this.timelineShowToggle?.addEventListener("pointercancel", (event) => this.endTimelineHiddenDrawerDrag(event));
 
       document.querySelectorAll("[data-camera]").forEach((button) => {
         button.addEventListener("click", () => this.setCameraPreset(button.dataset.camera));
@@ -1877,6 +2425,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.cameraRollResetButton?.addEventListener("click", () => this.resetCameraRoll());
       this.cameraGizmoSpeed?.addEventListener("input", () => this.updateRangeOutputs());
       this.cameraBackgroundColor?.addEventListener("input", () => this.applyBackgroundColor(this.cameraBackgroundColor.value));
+      this.cameraMeshColor?.addEventListener("input", () => this.applyMeshColor(this.cameraMeshColor.value));
       for (const input of [
         this.cameraAmbientLight,
         this.cameraKeyLight,
@@ -1897,6 +2446,29 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (this.scene?.fog) {
         this.scene.fog.color.set(color);
       }
+    },
+
+    applyMeshColor(value) {
+      const color = /^#[0-9a-f]{6}$/i.test(String(value || "")) ? value : "#80d8ff";
+      this.meshColor = color;
+      if (this.cameraMeshColor && this.cameraMeshColor.value !== color) {
+        this.cameraMeshColor.value = color;
+      }
+      if (this.meshWireOverlayMaterial?.color) {
+        this.meshWireOverlayMaterial.color.set(color);
+        this.meshWireOverlayMaterial.needsUpdate = true;
+      }
+      for (const overlay of this.meshWireOverlays || []) {
+        const material = overlay?.material;
+        const materials = Array.isArray(material) ? material : material ? [material] : [];
+        for (const item of materials) {
+          if (item?.color) {
+            item.color.set(color);
+            item.needsUpdate = true;
+          }
+        }
+      }
+      this.updateMeshWireOverlays?.();
     },
 
     lightingControlValue(input, fallback) {
@@ -2151,8 +2723,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         poseKeyframesGenerated: Boolean(this.poseKeyframesGenerated),
         timelineKeysSourceWasAutoGenerated: Boolean(this.timelineKeysSourceWasAutoGenerated),
         poseKeyframes: this.serializePoseKeyframes?.() || [],
+        adaptiveGuideKeyframes: this.serializePoseKeyframeMap?.(this.adaptiveGuideKeyframes) || [],
+        adaptiveGuideDeltaKeyframes: this.serializePoseKeyframeMap?.(this.adaptiveGuideDeltaKeyframes) || [],
+        adaptiveGuideCurveHandles: this.serializeAdaptiveGuideCurveHandles?.() || [],
         adaptivePoseKeyframes: this.serializePoseKeyframeMap?.(this.adaptivePoseKeyframes) || [],
         poseCurveHandles: this.serializePoseCurveHandles?.() || [],
+        poseKeyframeKinds: this.serializePoseKeyframeKinds?.() || [],
         manualPoseAdditiveNames: [...(this.manualPoseAdditiveNames || [])],
         manualPose: options.clearManualPose
           ? []
@@ -2349,6 +2925,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (Array.isArray(state.poseKeyframes)) {
         this.applySerializedPoseKeyframes?.(state.poseKeyframes);
         this.applySerializedPoseCurveHandles?.(state.poseCurveHandles || []);
+        this.applySerializedPoseKeyframeKinds?.(state.poseKeyframeKinds || []);
         this.poseKeyframeMode = state.poseKeyframeMode === "replace" ? "replace" : "additive";
         this.poseKeyframesGenerated = Boolean(state.poseKeyframesGenerated);
         this.timelineKeysSourceWasAutoGenerated = Boolean(state.timelineKeysSourceWasAutoGenerated);
@@ -2356,6 +2933,13 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (Array.isArray(state.adaptivePoseKeyframes)) {
         this.adaptivePoseKeyframes = this.serializedPoseKeyframeMap?.(state.adaptivePoseKeyframes) || new Map();
       }
+      this.adaptiveGuideKeyframes = Array.isArray(state.adaptiveGuideKeyframes)
+        ? this.serializedPoseKeyframeMap?.(state.adaptiveGuideKeyframes) || new Map()
+        : new Map();
+      this.adaptiveGuideDeltaKeyframes = Array.isArray(state.adaptiveGuideDeltaKeyframes)
+        ? this.serializedPoseKeyframeMap?.(state.adaptiveGuideDeltaKeyframes) || new Map()
+        : new Map();
+      this.applySerializedAdaptiveGuideCurveHandles?.(state.adaptiveGuideCurveHandles || []);
       if (Array.isArray(state.clipCleanupEdits)) {
         this.applySerializedClipCleanupEdits?.(state.clipCleanupEdits);
       }
@@ -2521,6 +3105,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         if (this.usesTextureStrokeUndo?.(this.activeTool)) {
           this.endTexturePaintStrokeUndo?.();
         }
+        this.texturePaintStrokePoint = null;
       }
       if (tool !== "neighbor") {
         this.neighborStroke = null;
@@ -2616,6 +3201,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (!usedEraseSelectionCommand) {
         this.setStatus(labels[tool] || "Ready");
       }
+      if (tool === "airbrush") {
+        this.scheduleTextureAirbrushPrewarm?.();
+      }
       this.recordTutorialMacroToolChange?.(tool);
     },
 
@@ -2643,6 +3231,16 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       });
     },
 
+    viewModeForViewportLayers() {
+      if (this.showRenderedLayer !== false && this.showMeshLayer) {
+        return "both";
+      }
+      if (this.showMeshLayer) {
+        return "mesh";
+      }
+      return "rendered";
+    },
+
     toggleViewportLayer(layer, options = {}) {
       if (layer === "rendered") {
         this.showRenderedLayer = !this.viewportLayerState("rendered");
@@ -2655,7 +3253,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       } else {
         return;
       }
-      this.setViewMode(this.viewMode, { silent: true, preserveViewportLayers: true });
+      const nextMode = this.viewMode === "edit" ? this.viewMode : this.viewModeForViewportLayers();
+      this.setViewMode(nextMode, { silent: true, preserveViewportLayers: true });
       if (!options.silent) {
         const label = {
           rendered: "Rendered",
@@ -2690,9 +3289,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       });
 
       for (const record of this.paintRecords) {
-        record.object.visible = this.cleanPreview || mode === "edit" || this.showRenderedLayer !== false;
+        const renderedVisible = this.cleanPreview || mode === "edit" || this.showRenderedLayer !== false;
+        record.object.visible = renderedVisible || (!record.wireOverlay && Boolean(this.showMeshLayer));
         for (const material of this.getObjectMaterials(record.object.material)) {
-          material.wireframe = !this.cleanPreview && mode === "mesh" && this.showMeshLayer && this.showRenderedLayer !== false;
+          material.wireframe = !renderedVisible && !this.cleanPreview && Boolean(this.showMeshLayer);
           material.vertexColors = false;
           material.transparent = !this.cleanPreview && mode === "edit";
           material.opacity = !this.cleanPreview && mode === "edit" ? 0.88 : 1;
@@ -2772,7 +3372,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return null;
       }
       const material = this.meshWireOverlayMaterial || new THREE.MeshBasicMaterial({
-        color: 0x80d8ff,
+        color: this.meshColor || "#80d8ff",
         wireframe: true,
         transparent: true,
         opacity: 0.42,
@@ -2834,7 +3434,13 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           || (this.ikTargetGizmoArmed && (this.ikChainNames?.() || []).length >= 2)
         )
       );
-      this.gizmoOnlyPreviewButton.hidden = !hasGizmo && !this.gizmoOnlyPreview;
+      if (!hasGizmo && this.gizmoOnlyPreview) {
+        this.gizmoOnlyPreview = false;
+        this.cleanPreview = false;
+        this.cleanPreviewButton?.classList.remove("is-active");
+        this.cleanPreviewButton?.setAttribute("aria-pressed", "false");
+      }
+      this.gizmoOnlyPreviewButton.hidden = !hasGizmo;
       this.gizmoOnlyPreviewButton.disabled = !hasGizmo;
       this.gizmoOnlyPreviewButton.classList.toggle("is-active", this.gizmoOnlyPreview);
       this.gizmoOnlyPreviewButton.setAttribute("aria-pressed", String(this.gizmoOnlyPreview));
@@ -2980,11 +3586,801 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.setStatus(`Playing sequence: ${this.activeClipEntry.name || this.activeClipEntry.id} -> ${this.blendClipEntry.name || this.blendClipEntry.id}`);
     },
 
-    setSidePanelOpen(open) {
+    sidePanelWidthBounds() {
+      const viewportWidth = typeof window !== "undefined" ? Number(window.innerWidth) || 0 : 0;
+      const viewportMax = viewportWidth > 0 ? Math.max(SIDE_PANEL_MIN_WIDTH, viewportWidth - 360) : SIDE_PANEL_MAX_WIDTH;
+      return {
+        min: SIDE_PANEL_MIN_WIDTH,
+        max: Math.max(SIDE_PANEL_MIN_WIDTH, Math.min(SIDE_PANEL_MAX_WIDTH, viewportMax))
+      };
+    },
+
+    clampSidePanelWidth(width, options = {}) {
+      const value = Number(width);
+      const { min, max } = this.sidePanelWidthBounds();
+      const minWidth = Number.isFinite(options.minWidth) ? options.minWidth : min;
+      return Math.round(THREE.MathUtils.clamp(Number.isFinite(value) ? value : SIDE_PANEL_DEFAULT_WIDTH, Math.min(minWidth, max), max));
+    },
+
+    sidePanelFontSizeForWidth(width) {
+      const compactT = THREE.MathUtils.clamp((Number(width) - SIDE_PANEL_MIN_WIDTH) / (SIDE_PANEL_DEFAULT_WIDTH - SIDE_PANEL_MIN_WIDTH), 0, 1);
+      return 9.25 + compactT * 2.75;
+    },
+
+    applySidePanelWidth(width, options = {}) {
+      if (!this.app) {
+        return SIDE_PANEL_DEFAULT_WIDTH;
+      }
+      const nextWidth = this.clampSidePanelWidth(width, options);
+      const nextFontSize = this.sidePanelFontSizeForWidth(nextWidth);
+      this.app.style.setProperty("--cleanup-side-panel-width", `${nextWidth}px`);
+      this.app.style.setProperty("--cleanup-side-panel-font-size", `${nextFontSize.toFixed(2)}px`);
+      this.app.classList.toggle("is-side-panel-narrow", nextWidth <= SIDE_PANEL_NARROW_WIDTH);
+      this.app.classList.toggle("is-side-panel-tight", nextWidth <= SIDE_PANEL_TIGHT_WIDTH);
+      if (options.persist !== false) {
+        try {
+          window.localStorage?.setItem(SIDE_PANEL_WIDTH_STORAGE_KEY, String(nextWidth));
+        } catch {
+          // Ignore private browsing/storage failures.
+        }
+      }
+      return nextWidth;
+    },
+
+    applySidePanelDragOffset(offset = 0) {
+      if (!this.app) {
+        return;
+      }
+      const value = Number(offset);
+      const nextOffset = Number.isFinite(value) ? Math.round(value) : 0;
+      this.app.style.setProperty("--cleanup-side-panel-drag-x", `${nextOffset}px`);
+    },
+
+    applyTimelineDrawerDragOffset(offset = 0) {
+      if (!this.app) {
+        return;
+      }
+      const value = Number(offset);
+      const nextOffset = Number.isFinite(value) ? Math.round(value) : 0;
+      this.app.style.setProperty("--cleanup-timeline-drawer-drag-y", `${nextOffset}px`);
+    },
+
+    sidePanelSnapBackDistance(width) {
+      const panelWidth = Number(width);
+      const baseWidth = Number.isFinite(panelWidth) && panelWidth > 0 ? panelWidth : SIDE_PANEL_DEFAULT_WIDTH;
+      return Math.max(1, baseWidth * SIDE_PANEL_SNAP_BACK_RATIO);
+    },
+
+    timelineDrawerMinimumHeight(startHeight) {
+      const drawerHeight = Number(startHeight);
+      const baseHeight = Number.isFinite(drawerHeight) && drawerHeight > 0 ? drawerHeight : TIMELINE_DRAWER_SNAP_HEIGHT;
+      return Math.max(1, Math.min(baseHeight, this.timelineDrawerCompactHeight()));
+    },
+
+    timelineDrawerCloseDistance(startHeight) {
+      return Math.max(
+        TIMELINE_DRAWER_GESTURE_THRESHOLD,
+        this.timelineDrawerMinimumHeight(startHeight) * TIMELINE_DRAWER_CLOSE_RATIO
+      );
+    },
+
+    restoreSidePanelWidth() {
+      let storedWidth = SIDE_PANEL_DEFAULT_WIDTH;
+      try {
+        const value = window.localStorage?.getItem(SIDE_PANEL_WIDTH_STORAGE_KEY);
+        if (value !== null) {
+          storedWidth = Number(value);
+        }
+      } catch {
+        storedWidth = SIDE_PANEL_DEFAULT_WIDTH;
+      }
+      return this.applySidePanelWidth(storedWidth, { persist: false });
+    },
+
+    beginSidePanelResize(event) {
+      if (!this.app || !this.sidePanelResizeHandle || event.button > 0) {
+        return;
+      }
+      const panelRect = this.sidePanelResizeHandle.closest?.(".viewer-panel")?.getBoundingClientRect();
+      this.sidePanelResizeDrag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startWidth: panelRect?.width || this.restoreSidePanelWidth(),
+        latestDeltaX: 0,
+        latestWidth: panelRect?.width || this.restoreSidePanelWidth()
+      };
+      this.app.classList.add("is-side-panel-resizing");
+      this.sidePanelResizeHandle.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    },
+
+    beginSidePanelMouseResize(event) {
+      if (!this.app || !this.sidePanelResizeHandle || this.sidePanelResizeDrag || event.button > 0) {
+        return;
+      }
+      const panelRect = this.sidePanelResizeHandle.closest?.(".viewer-panel")?.getBoundingClientRect();
+      this.sidePanelResizeDrag = {
+        mouse: true,
+        startX: event.clientX,
+        startWidth: panelRect?.width || this.restoreSidePanelWidth(),
+        latestDeltaX: 0,
+        latestWidth: panelRect?.width || this.restoreSidePanelWidth()
+      };
+      this.app.classList.add("is-side-panel-resizing");
+      this.boundSidePanelMouseMove = this.boundSidePanelMouseMove || ((moveEvent) => this.dragSidePanelMouseResize(moveEvent));
+      this.boundSidePanelMouseUp = this.boundSidePanelMouseUp || ((upEvent) => this.endSidePanelMouseResize(upEvent));
+      window.addEventListener("mousemove", this.boundSidePanelMouseMove);
+      window.addEventListener("mouseup", this.boundSidePanelMouseUp);
+      event.preventDefault();
+    },
+
+    dragSidePanelResize(event) {
+      if (!this.sidePanelResizeDrag || event.pointerId !== this.sidePanelResizeDrag.pointerId) {
+        return;
+      }
+      this.updateSidePanelResizeDrag(event.clientX);
+      event.preventDefault();
+    },
+
+    endSidePanelResize(event) {
+      if (!this.sidePanelResizeDrag || event.pointerId !== this.sidePanelResizeDrag.pointerId) {
+        return;
+      }
+      const drag = this.sidePanelResizeDrag;
+      this.sidePanelResizeHandle?.releasePointerCapture?.(event.pointerId);
+      this.sidePanelResizeDrag = null;
+      this.app?.classList.remove("is-side-panel-resizing");
+      this.finishSidePanelResizeDrag(drag);
+      event.preventDefault();
+    },
+
+    dragSidePanelMouseResize(event) {
+      if (!this.sidePanelResizeDrag?.mouse) {
+        return;
+      }
+      this.updateSidePanelResizeDrag(event.clientX);
+      event.preventDefault();
+    },
+
+    endSidePanelMouseResize(event) {
+      if (!this.sidePanelResizeDrag?.mouse) {
+        return;
+      }
+      const drag = this.sidePanelResizeDrag;
+      window.removeEventListener("mousemove", this.boundSidePanelMouseMove);
+      window.removeEventListener("mouseup", this.boundSidePanelMouseUp);
+      this.sidePanelResizeDrag = null;
+      this.app?.classList.remove("is-side-panel-resizing");
+      this.finishSidePanelResizeDrag(drag);
+      event.preventDefault();
+    },
+
+    updateSidePanelResizeDrag(clientX) {
+      if (!this.sidePanelResizeDrag) {
+        return;
+      }
+      const deltaX = clientX - this.sidePanelResizeDrag.startX;
+      const pullingClosed = deltaX < 0;
+      const { min } = this.sidePanelWidthBounds();
+      const rawWidth = this.sidePanelResizeDrag.startWidth + deltaX;
+      const closeDistance = this.sidePanelSnapBackDistance(min);
+      const pullPastMinimum = pullingClosed ? Math.max(0, min - rawWidth) : 0;
+      const nextWidth = pullingClosed ? Math.max(rawWidth, min) : rawWidth;
+      const dragOffset = pullPastMinimum > 0
+        ? -Math.min(pullPastMinimum, closeDistance) * SIDE_PANEL_ELASTIC_RESISTANCE
+        : 0;
+      this.sidePanelResizeDrag.latestDeltaX = deltaX;
+      this.sidePanelResizeDrag.latestPullPastMinimum = pullPastMinimum;
+      this.sidePanelResizeDrag.latestWidth = this.applySidePanelWidth(nextWidth, {
+        persist: false
+      });
+      this.applySidePanelDragOffset(dragOffset);
+      this.app?.classList.toggle("is-side-panel-snap-ready", pullPastMinimum >= closeDistance);
+      this.resize?.();
+    },
+
+    finishSidePanelResizeDrag(drag) {
+      this.app?.classList.remove("is-side-panel-snap-ready");
+      const closeDistance = this.sidePanelSnapBackDistance(this.sidePanelWidthBounds().min);
+      const pullPastMinimum = Number(drag?.latestPullPastMinimum) || 0;
+      if (pullPastMinimum >= closeDistance) {
+        this.applySidePanelWidth(this.sidePanelWidthBounds().min, { persist: false });
+        this.hideSidePanelDrawer({ slideWidth: drag.startWidth });
+      } else {
+        this.applySidePanelDragOffset(0);
+        this.applySidePanelWidth(drag?.latestWidth ?? drag?.startWidth ?? SIDE_PANEL_DEFAULT_WIDTH);
+        this.resize?.();
+      }
+    },
+
+    adjustSidePanelWidth(delta) {
+      const panelRect = this.sidePanelResizeHandle?.closest?.(".viewer-panel")?.getBoundingClientRect();
+      const currentWidth = panelRect?.width || this.restoreSidePanelWidth();
+      this.applySidePanelWidth(currentWidth + delta);
+      this.resize?.();
+    },
+
+    handleSidePanelResizeKey(event) {
+      if (event.key === "ArrowLeft") {
+        this.adjustSidePanelWidth(event.shiftKey ? -24 : -12);
+      } else if (event.key === "ArrowRight") {
+        this.adjustSidePanelWidth(event.shiftKey ? 24 : 12);
+      } else if (event.key === "Home") {
+        this.applySidePanelWidth(SIDE_PANEL_MIN_WIDTH);
+        this.resize?.();
+      } else if (event.key === "End") {
+        this.applySidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+        this.resize?.();
+      } else {
+        return;
+      }
+      event.preventDefault();
+    },
+
+    resetSidePanelWidth() {
+      this.applySidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
+      this.resize?.();
+    },
+
+    beginSidePanelHiddenDrag(event) {
+      if (!this.app || this.app.classList.contains("is-side-panel-open") || event.button > 0) {
+        return;
+      }
+      this.sidePanelHiddenDrag = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        latestDeltaX: 0,
+        openedDuringDrag: false
+      };
+      this.boundSidePanelHiddenPointerMove = this.boundSidePanelHiddenPointerMove
+        || ((moveEvent) => this.dragSidePanelHiddenDrag(moveEvent));
+      this.boundSidePanelHiddenPointerUp = this.boundSidePanelHiddenPointerUp
+        || ((upEvent) => this.endSidePanelHiddenDrag(upEvent));
+      window.addEventListener("pointermove", this.boundSidePanelHiddenPointerMove);
+      window.addEventListener("pointerup", this.boundSidePanelHiddenPointerUp);
+      window.addEventListener("pointercancel", this.boundSidePanelHiddenPointerUp);
+      this.sidePanelShowToggle?.setPointerCapture?.(event.pointerId);
+      event.stopPropagation?.();
+      event.preventDefault();
+    },
+
+    dragSidePanelHiddenDrag(event) {
+      if (!this.sidePanelHiddenDrag || event.pointerId !== this.sidePanelHiddenDrag.pointerId) {
+        return;
+      }
+      const deltaX = event.clientX - this.sidePanelHiddenDrag.startX;
+      this.sidePanelHiddenDrag.latestDeltaX = deltaX;
+      if (deltaX >= SIDE_PANEL_EDGE_GESTURE_THRESHOLD) {
+        this.sidePanelHiddenDrag.openedDuringDrag = true;
+        this.showSidePanelDrawer();
+      }
+      event.preventDefault();
+    },
+
+    endSidePanelHiddenDrag(event) {
+      if (!this.sidePanelHiddenDrag || event.pointerId !== this.sidePanelHiddenDrag.pointerId) {
+        return;
+      }
+      this.sidePanelShowToggle?.releasePointerCapture?.(event.pointerId);
+      window.removeEventListener("pointermove", this.boundSidePanelHiddenPointerMove);
+      window.removeEventListener("pointerup", this.boundSidePanelHiddenPointerUp);
+      window.removeEventListener("pointercancel", this.boundSidePanelHiddenPointerUp);
+      const opened = this.sidePanelHiddenDrag.openedDuringDrag;
+      const deltaX = Math.abs(Number(this.sidePanelHiddenDrag.latestDeltaX) || 0);
+      this.sidePanelHiddenDrag = null;
+      if (!opened && deltaX < SIDE_PANEL_EDGE_GESTURE_THRESHOLD) {
+        this.showSidePanelDrawer();
+      }
+      event.preventDefault();
+    },
+
+    showSidePanelDrawer() {
+      if (!this.app) {
+        return;
+      }
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+      const wasOpen = this.app.classList.contains("is-side-panel-open");
+      if (wasOpen) {
+        window.clearTimeout?.(this.sidePanelHideTimer);
+        this.sidePanelHideTimer = null;
+        window.cancelAnimationFrame?.(this.sidePanelOpenFrame);
+        this.sidePanelOpenFrame = null;
+        this.app.classList.remove("is-side-panel-opening", "is-side-panel-closing");
+        this.resize?.();
+        return;
+      }
+      window.clearTimeout?.(this.sidePanelHideTimer);
+      this.sidePanelHideTimer = null;
+      window.cancelAnimationFrame?.(this.sidePanelOpenFrame);
+      this.sidePanelOpenFrame = null;
+      this.applySidePanelDragOffset(0);
+      this.app.classList.remove("is-side-panel-closing");
+      if (!reduceMotion) {
+        this.app.classList.add("is-side-panel-opening");
+      }
+      this.setSidePanelOpen(true, { preserveAnimationClass: !reduceMotion });
+      if (!reduceMotion) {
+        this.sidePanelShowToggle?.getBoundingClientRect?.();
+        this.sidePanelOpenFrame = window.requestAnimationFrame?.(() => {
+          this.sidePanelOpenFrame = window.requestAnimationFrame?.(() => {
+            this.sidePanelOpenFrame = null;
+            this.app?.classList.remove("is-side-panel-opening");
+          });
+        });
+      }
+    },
+
+    hideSidePanelDrawer(options = {}) {
+      if (!this.app || !this.app.classList.contains("is-side-panel-open")) {
+        return;
+      }
+      window.clearTimeout?.(this.sidePanelHideTimer);
+      window.cancelAnimationFrame?.(this.sidePanelOpenFrame);
+      this.applySidePanelDragOffset(0);
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+      if (reduceMotion) {
+        this.setSidePanelOpen(false);
+        return;
+      }
+      this.app.classList.remove("is-side-panel-resizing", "is-side-panel-opening");
+      const panelRect = this.sidePanelResizeHandle?.closest?.(".viewer-panel")?.getBoundingClientRect();
+      const slideWidth = Number(options.slideWidth) || panelRect?.width || this.restoreSidePanelWidth?.() || SIDE_PANEL_DEFAULT_WIDTH;
+      this.app.classList.add("is-side-panel-closing");
+      this.applySidePanelDragOffset(-(slideWidth + 12));
+      this.sidePanelHideTimer = window.setTimeout(() => {
+        this.sidePanelHideTimer = null;
+        this.applySidePanelDragOffset(0);
+        this.setSidePanelOpen(false);
+      }, SIDE_PANEL_TRANSITION_MS);
+    },
+
+    timelineDrawerHeightBounds() {
+      const viewportHeight = typeof window !== "undefined" ? Number(window.innerHeight) || 0 : 0;
+      const maxByViewport = viewportHeight > 0
+        ? Math.max(TIMELINE_DRAWER_MIN_HEIGHT, viewportHeight - 2)
+        : TIMELINE_DRAWER_MAX_HEIGHT;
+      return {
+        min: TIMELINE_DRAWER_MIN_HEIGHT,
+        snap: TIMELINE_DRAWER_SNAP_HEIGHT,
+        max: maxByViewport
+      };
+    },
+
+    timelineDrawerHasCurveContent() {
+      return Boolean(this.boneLayerNames?.length);
+    },
+
+    timelineDrawerCompactHeight() {
+      const panel = this.timelineDrawerPanel?.();
+      if (!panel) {
+        return TIMELINE_DRAWER_SNAP_HEIGHT;
+      }
+      const styles = window.getComputedStyle?.(panel);
+      const paddingTop = Number.parseFloat(styles?.paddingTop || "0") || 0;
+      const paddingBottom = Number.parseFloat(styles?.paddingBottom || "0") || 0;
+      const borderTop = Number.parseFloat(styles?.borderTopWidth || "0") || 0;
+      const borderBottom = Number.parseFloat(styles?.borderBottomWidth || "0") || 0;
+      const gap = Number.parseFloat(styles?.rowGap || styles?.gap || "0") || 0;
+      const rows = [...panel.children].filter((child) => {
+        if (child === this.timelineDrawerHandle || child === this.boneLayerList) {
+          return false;
+        }
+        const rowStyles = window.getComputedStyle?.(child);
+        return rowStyles?.display !== "none";
+      });
+      const rowHeight = rows.reduce((total, row) => total + row.getBoundingClientRect().height, 0);
+      return Math.max(1, Math.ceil(paddingTop + paddingBottom + borderTop + borderBottom + rowHeight + Math.max(0, rows.length - 1) * gap));
+    },
+
+    timelineDrawerContentHeight() {
+      if (!this.timelineDrawerHasCurveContent() || !this.boneLayerList?.children?.length) {
+        return 0;
+      }
+      const panel = this.boneLayerList.closest?.(".weight-timeline-panel");
+      if (!panel) {
+        return 0;
+      }
+      const styles = window.getComputedStyle?.(panel);
+      const listStyles = window.getComputedStyle?.(this.boneLayerList);
+      const paddingBottom = Number.parseFloat(styles?.paddingBottom || "0") || 0;
+      const borderBottom = Number.parseFloat(styles?.borderBottomWidth || "0") || 0;
+      const listPaddingTop = Number.parseFloat(listStyles?.paddingTop || "0") || 0;
+      const listPaddingBottom = Number.parseFloat(listStyles?.paddingBottom || "0") || 0;
+      const listGap = Number.parseFloat(listStyles?.rowGap || listStyles?.gap || "0") || 0;
+      const rows = [...this.boneLayerList.children];
+      const rowsHeight = rows.reduce((total, row) => total + row.getBoundingClientRect().height, 0)
+        + Math.max(0, rows.length - 1) * listGap
+        + listPaddingTop
+        + listPaddingBottom;
+      const contentHeight = this.boneLayerList.offsetTop + rowsHeight + paddingBottom + borderBottom;
+      const { max } = this.timelineDrawerHeightBounds();
+      return Math.max(0, Math.min(max, Math.ceil(contentHeight)));
+    },
+
+    defaultTimelineDrawerHeight() {
+      const viewportHeight = typeof window !== "undefined" ? Number(window.innerHeight) || 0 : 0;
+      const preferred = viewportHeight > 0 ? Math.min(TIMELINE_DRAWER_DEFAULT_HEIGHT, viewportHeight * 0.72) : TIMELINE_DRAWER_DEFAULT_HEIGHT;
+      return this.clampTimelineDrawerHeight(Math.max(TIMELINE_DRAWER_MIN_HEIGHT, preferred));
+    },
+
+    clampTimelineDrawerHeight(height, options = {}) {
+      const value = Number(height);
+      const { min, max } = this.timelineDrawerHeightBounds();
+      const contentHeight = options.fitContent !== false ? this.timelineDrawerContentHeight() : 0;
+      const effectiveMax = contentHeight > 0 ? Math.min(max, contentHeight) : max;
+      const requestedMin = Number(options.minHeight);
+      const baseMin = Number.isFinite(requestedMin) ? requestedMin : min;
+      const effectiveMin = Math.min(baseMin, effectiveMax);
+      return Math.round(THREE.MathUtils.clamp(Number.isFinite(value) ? value : this.defaultTimelineDrawerHeight(), effectiveMin, effectiveMax));
+    },
+
+    applyTimelineDrawerHeight(height, options = {}) {
+      if (!this.app) {
+        return TIMELINE_DRAWER_DEFAULT_HEIGHT;
+      }
+      const nextHeight = this.clampTimelineDrawerHeight(height, options);
+      if (options.userSized === true) {
+        this.timelineDrawerUserSized = true;
+      }
+      this.app.style.setProperty("--cleanup-timeline-drawer-height", `${nextHeight}px`);
+      if (options.persist !== false) {
+        try {
+          window.localStorage?.setItem(TIMELINE_DRAWER_HEIGHT_STORAGE_KEY, String(nextHeight));
+        } catch {
+          // Ignore private browsing/storage failures.
+        }
+      }
+      return nextHeight;
+    },
+
+    restoreTimelineDrawerHeight() {
+      let storedHeight = this.defaultTimelineDrawerHeight();
+      try {
+        const value = window.localStorage?.getItem(TIMELINE_DRAWER_HEIGHT_STORAGE_KEY);
+        if (value !== null) {
+          storedHeight = Number(value);
+        }
+      } catch {
+        storedHeight = this.defaultTimelineDrawerHeight();
+      }
+      return this.applyTimelineDrawerHeight(Math.max(storedHeight, this.defaultTimelineDrawerHeight()), { persist: false });
+    },
+
+    fitTimelineDrawerToContent(options = {}) {
+      if (!this.app || this.app.classList.contains("is-timeline-compact")) {
+        return 0;
+      }
+      if (this.timelineDrawerUserSized && options.force !== true) {
+        return this.timelineDrawerPanel?.()?.getBoundingClientRect?.()?.height || 0;
+      }
+      if (!this.timelineDrawerHasCurveContent()) {
+        this.setTimelineCompact(true, { status: false });
+        return 0;
+      }
+      const contentHeight = this.timelineDrawerContentHeight();
+      if (contentHeight <= 0) {
+        return 0;
+      }
+      return this.applyTimelineDrawerHeight(contentHeight, {
+        persist: options.persist === true,
+        fitContent: true
+      });
+    },
+
+    beginTimelineDrawerDrag(event) {
+      if (!this.app || this.timelineDrawerDrag || event.button > 0) {
+        return;
+      }
+      const panelRect = this.timelineDrawerPanel()?.getBoundingClientRect();
+      const captureElement = event.currentTarget?.setPointerCapture ? event.currentTarget : this.timelineDrawerHandle;
+      this.timelineDrawerDrag = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        startHeight: panelRect?.height || this.defaultTimelineDrawerHeight(),
+        latestHeight: panelRect?.height || this.defaultTimelineDrawerHeight(),
+        latestDeltaY: 0,
+        startCompact: this.app.classList.contains("is-timeline-compact"),
+        captureElement
+      };
+      this.app.classList.add("is-timeline-drawer-dragging");
+      this.boundTimelineDrawerPointerMove = this.boundTimelineDrawerPointerMove || ((moveEvent) => this.dragTimelineDrawer(moveEvent));
+      this.boundTimelineDrawerPointerUp = this.boundTimelineDrawerPointerUp || ((upEvent) => this.endTimelineDrawerDrag(upEvent));
+      window.addEventListener("pointermove", this.boundTimelineDrawerPointerMove);
+      window.addEventListener("pointerup", this.boundTimelineDrawerPointerUp);
+      window.addEventListener("pointercancel", this.boundTimelineDrawerPointerUp);
+      captureElement?.setPointerCapture?.(event.pointerId);
+      event.stopPropagation?.();
+      event.preventDefault();
+    },
+
+    dragTimelineDrawer(event) {
+      if (!this.timelineDrawerDrag || event.pointerId !== this.timelineDrawerDrag.pointerId) {
+        return;
+      }
+      if (this.timelineDrawerDrag.closedDuringDrag) {
+        event.preventDefault();
+        return;
+      }
+      const deltaY = event.clientY - this.timelineDrawerDrag.startY;
+      const isCompact = this.app?.classList.contains("is-timeline-compact");
+      const rawHeight = this.timelineDrawerDrag.startHeight - deltaY;
+      const dragMinHeight = this.timelineDrawerMinimumHeight(this.timelineDrawerDrag.startHeight);
+      const closeDistance = this.timelineDrawerCloseDistance(this.timelineDrawerDrag.startHeight);
+      const pullPastMinimum = Math.max(0, dragMinHeight - rawHeight);
+      const nextHeight = this.clampTimelineDrawerHeight(rawHeight, {
+        fitContent: false,
+        minHeight: dragMinHeight
+      });
+      const dragOffset = pullPastMinimum > 0
+        ? Math.min(pullPastMinimum, closeDistance) * TIMELINE_DRAWER_ELASTIC_RESISTANCE
+        : 0;
+      this.timelineDrawerDrag.latestHeight = nextHeight;
+      this.timelineDrawerDrag.latestDeltaY = deltaY;
+      this.timelineDrawerDrag.latestPullPastMinimum = pullPastMinimum;
+      this.applyTimelineDrawerDragOffset(dragOffset);
+      if (isCompact) {
+        if (deltaY > 0) {
+          event.preventDefault();
+          return;
+        }
+        if (deltaY < 0) {
+          this.setTimelineCompact(false, {
+            height: nextHeight,
+            fitContent: false,
+            minHeight: dragMinHeight,
+            persist: false,
+            userSized: true
+          });
+        }
+      } else {
+        this.applyTimelineDrawerHeight(nextHeight, {
+          persist: false,
+          fitContent: false,
+          minHeight: dragMinHeight,
+          userSized: true
+        });
+      }
+      this.resize?.();
+      event.preventDefault();
+    },
+
+    beginTimelineHiddenDrawerDrag(event) {
+      if (!this.app || event.button > 0) {
+        return;
+      }
+      this.timelineHiddenDrawerDrag = {
+        pointerId: event.pointerId,
+        startY: event.clientY,
+        openedDuringDrag: false
+      };
+      this.boundTimelineHiddenDrawerPointerMove = this.boundTimelineHiddenDrawerPointerMove
+        || ((moveEvent) => this.dragTimelineHiddenDrawer(moveEvent));
+      this.boundTimelineHiddenDrawerPointerUp = this.boundTimelineHiddenDrawerPointerUp
+        || ((upEvent) => this.endTimelineHiddenDrawerDrag(upEvent));
+      window.addEventListener("pointermove", this.boundTimelineHiddenDrawerPointerMove);
+      window.addEventListener("pointerup", this.boundTimelineHiddenDrawerPointerUp);
+      window.addEventListener("pointercancel", this.boundTimelineHiddenDrawerPointerUp);
+      this.timelineShowToggle?.setPointerCapture?.(event.pointerId);
+      event.stopPropagation?.();
+      event.preventDefault();
+    },
+
+    dragTimelineHiddenDrawer(event) {
+      if (!this.timelineHiddenDrawerDrag || event.pointerId !== this.timelineHiddenDrawerDrag.pointerId) {
+        return;
+      }
+      const deltaY = event.clientY - this.timelineHiddenDrawerDrag.startY;
+      if (deltaY < 0) {
+        const nextHeight = this.clampTimelineDrawerHeight(-deltaY, {
+          fitContent: false,
+          minHeight: 1
+        });
+        this.timelineHiddenDrawerDrag.openedDuringDrag = true;
+        this.setTimelineHidden(false);
+        this.setTimelineCompact(false, {
+          height: nextHeight,
+          fitContent: false,
+          minHeight: 1,
+          persist: false,
+          status: false,
+          userSized: true
+        });
+      }
+      event.preventDefault();
+    },
+
+    endTimelineHiddenDrawerDrag(event) {
+      if (!this.timelineHiddenDrawerDrag || event.pointerId !== this.timelineHiddenDrawerDrag.pointerId) {
+        return;
+      }
+      this.timelineShowToggle?.releasePointerCapture?.(event.pointerId);
+      window.removeEventListener("pointermove", this.boundTimelineHiddenDrawerPointerMove);
+      window.removeEventListener("pointerup", this.boundTimelineHiddenDrawerPointerUp);
+      window.removeEventListener("pointercancel", this.boundTimelineHiddenDrawerPointerUp);
+      const opened = this.timelineHiddenDrawerDrag.openedDuringDrag;
+      this.timelineHiddenDrawerDrag = null;
+      if (!opened) {
+        this.hideTimelineDrawer();
+      }
+      event.preventDefault();
+    },
+
+    endTimelineDrawerDrag(event) {
+      if (!this.timelineDrawerDrag || event.pointerId !== this.timelineDrawerDrag.pointerId) {
+        return;
+      }
+      const latestHeight = this.timelineDrawerDrag.latestHeight;
+      const latestDeltaY = this.timelineDrawerDrag.latestDeltaY || 0;
+      const startCompact = this.timelineDrawerDrag.startCompact === true;
+      const startHeight = this.timelineDrawerDrag.startHeight;
+      const minHeight = this.timelineDrawerMinimumHeight(startHeight);
+      const closeDistance = this.timelineDrawerCloseDistance(startHeight);
+      const pullPastMinimum = Number(this.timelineDrawerDrag.latestPullPastMinimum) || 0;
+      this.timelineDrawerDrag.captureElement?.releasePointerCapture?.(event.pointerId);
+      window.removeEventListener("pointermove", this.boundTimelineDrawerPointerMove);
+      window.removeEventListener("pointerup", this.boundTimelineDrawerPointerUp);
+      window.removeEventListener("pointercancel", this.boundTimelineDrawerPointerUp);
+      const closedDuringDrag = this.timelineDrawerDrag.closedDuringDrag === true;
+      this.timelineDrawerDrag = null;
+      this.app?.classList.remove("is-timeline-drawer-dragging");
+      if (closedDuringDrag) {
+        event.preventDefault();
+        return;
+      }
+      if (pullPastMinimum >= closeDistance) {
+        this.applyTimelineDrawerHeight(minHeight, {
+          fitContent: false,
+          minHeight,
+          persist: false,
+          userSized: true
+        });
+        this.applyTimelineDrawerDragOffset(0);
+        this.setTimelineCompact(true, { status: false });
+        this.hideTimelineDrawer();
+      } else if (pullPastMinimum > 0) {
+        this.applyTimelineDrawerDragOffset(0);
+        this.setTimelineCompact(true, { status: false });
+        this.resize?.();
+      } else if (startCompact) {
+        this.applyTimelineDrawerDragOffset(0);
+        if (latestDeltaY < 0) {
+          this.setTimelineCompact(false, { height: latestHeight, fitContent: false, minHeight, userSized: true });
+        } else {
+          this.setTimelineCompact(true);
+        }
+        this.resize?.();
+      } else {
+        this.applyTimelineDrawerDragOffset(0);
+        this.applyTimelineDrawerHeight(latestHeight, { fitContent: false, minHeight, userSized: true });
+        this.resize?.();
+      }
+      event.preventDefault();
+    },
+
+    adjustTimelineDrawerHeight(delta) {
+      const compact = this.app?.classList.contains("is-timeline-compact");
+      const panelRect = this.timelineDrawerHandle?.closest?.(".weight-timeline-panel")?.getBoundingClientRect();
+      const currentHeight = compact ? this.timelineDrawerHeightBounds().snap : panelRect?.height || this.restoreTimelineDrawerHeight();
+      const minHeight = this.timelineDrawerMinimumHeight(currentHeight);
+      const nextHeight = this.clampTimelineDrawerHeight(currentHeight + delta, {
+        fitContent: false,
+        minHeight
+      });
+      if (compact && delta <= 0) {
+        this.setTimelineCompact(true);
+        return;
+      }
+      this.setTimelineCompact(false, { height: nextHeight, fitContent: false, minHeight, userSized: true });
+    },
+
+    handleTimelineDrawerKey(event) {
+      if (event.key === "ArrowUp") {
+        this.adjustTimelineDrawerHeight(event.shiftKey ? 72 : 36);
+      } else if (event.key === "ArrowDown") {
+        this.adjustTimelineDrawerHeight(event.shiftKey ? -72 : -36);
+      } else if (event.key === "Home") {
+        this.setTimelineCompact(true);
+      } else if (event.key === "End") {
+        this.setTimelineCompact(false, { height: this.defaultTimelineDrawerHeight() });
+      } else {
+        return;
+      }
+      event.preventDefault();
+    },
+
+    resetTimelineDrawerHeight() {
+      this.timelineDrawerUserSized = false;
+      this.setTimelineCompact(false, { height: this.defaultTimelineDrawerHeight(), fitContent: true });
+    },
+
+    timelineDrawerPanel() {
+      return this.timelineDrawerHandle?.closest?.(".weight-timeline-panel")
+        || document.querySelector(".weight-timeline-panel");
+    },
+
+    beginTimelineDrawerEdgeDrag(event) {
+      if (event.target === this.timelineDrawerHandle || this.timelineDrawerDrag) {
+        return;
+      }
+      const rect = this.timelineDrawerPanel()?.getBoundingClientRect?.();
+      if (!rect || event.clientY - rect.top > TIMELINE_DRAWER_EDGE_GRAB_HEIGHT) {
+        return;
+      }
+      if (event.target?.closest?.("button, input, select, textarea, label")) {
+        return;
+      }
+      this.beginTimelineDrawerDrag(event);
+    },
+
+    beginTimelineGlobalEdgeDrag(event) {
+      if (!this.app || event.defaultPrevented || this.timelineDrawerDrag || this.timelineHiddenDrawerDrag || event.button > 0) {
+        return;
+      }
+      const edgeHeight = TIMELINE_DRAWER_EDGE_GRAB_HEIGHT;
+      if (this.app.classList.contains("is-timeline-hidden")) {
+        const viewportHeight = Number(window.innerHeight) || 0;
+        if (viewportHeight > 0 && viewportHeight - event.clientY <= edgeHeight) {
+          this.beginTimelineHiddenDrawerDrag(event);
+        }
+        return;
+      }
+      const panel = this.timelineDrawerPanel?.();
+      const rect = panel?.getBoundingClientRect?.();
+      if (!rect || event.clientX < rect.left || event.clientX > rect.right) {
+        return;
+      }
+      const onTopEdge = event.clientY >= rect.top - 8 && event.clientY <= rect.top + edgeHeight;
+      if (!onTopEdge) {
+        return;
+      }
+      const target = event.target;
+      const isHandle = target === this.timelineDrawerHandle;
+      const isCompactLayout = window.matchMedia?.("(max-width: 480px)")?.matches === true;
+      const isInteractiveTarget = target?.closest?.("button, input, select, textarea, label");
+      if (!isHandle && isInteractiveTarget && !isCompactLayout && event.clientY > rect.top + 8) {
+        return;
+      }
+      this.beginTimelineDrawerDrag(event);
+    },
+
+    hideTimelineDrawer() {
+      if (!this.app || this.app.classList.contains("is-timeline-hidden")) {
+        return;
+      }
+      window.clearTimeout?.(this.timelineDrawerHideTimer);
+      this.applyTimelineDrawerDragOffset(0);
+      const panel = this.timelineDrawerPanel?.();
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+      if (!panel || reduceMotion) {
+        this.setTimelineHidden(true);
+        return;
+      }
+      this.app.classList.remove("is-timeline-drawer-dragging");
+      this.app.classList.add("is-timeline-closing");
+      this.timelineDrawerHideTimer = window.setTimeout(() => {
+        this.timelineDrawerHideTimer = null;
+        this.setTimelineHidden(true);
+      }, TIMELINE_DRAWER_CLOSE_MS);
+    },
+
+    setSidePanelOpen(open, options = {}) {
       if (!this.app || !this.sidePanelToggle) {
         return;
       }
+      if (!open) {
+        window.clearTimeout?.(this.sidePanelHideTimer);
+        this.sidePanelHideTimer = null;
+        window.cancelAnimationFrame?.(this.sidePanelOpenFrame);
+        this.sidePanelOpenFrame = null;
+        this.applySidePanelDragOffset(0);
+      }
+      if (open) {
+        this.restoreSidePanelWidth();
+      }
       this.app.classList.toggle("is-side-panel-open", open);
+      if (options.preserveAnimationClass !== true) {
+        this.app.classList.remove("is-side-panel-opening", "is-side-panel-closing", "is-side-panel-snap-ready");
+      }
       this.sidePanelToggle.textContent = "";
       this.sidePanelToggle.setAttribute("aria-label", "Hide panel");
       this.sidePanelToggle.title = "Hide panel";
@@ -2996,17 +4392,47 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.resize();
     },
 
-    setTimelineCompact(compact) {
+    setTimelineCompact(compact, options = {}) {
       if (!this.app || !this.timelineCompactToggle) {
         return;
       }
+      if (!compact && !this.timelineDrawerHasCurveContent()) {
+        compact = true;
+        if (options.status !== false) {
+          this.setStatus?.("Load a character with bones to open curve layers");
+        }
+      }
+      if (!compact) {
+        this.applyTimelineDrawerHeight?.(
+          options.height ?? this.restoreTimelineDrawerHeight?.() ?? this.defaultTimelineDrawerHeight?.(),
+          {
+            persist: options.persist !== false,
+            fitContent: options.fitContent !== false,
+            minHeight: options.minHeight,
+            userSized: options.userSized === true
+          }
+        );
+      }
       this.app.classList.toggle("is-timeline-compact", compact);
-      this.timelineCompactToggle.textContent = compact ? "^" : "_";
+      this.timelineCompactToggle.textContent = "";
       this.timelineCompactToggle.setAttribute("aria-label", compact ? "Expand timeline" : "Compact timeline");
       this.timelineCompactToggle.title = compact ? "Expand timeline" : "Compact timeline";
       this.timelineCompactToggle.setAttribute("aria-pressed", String(compact));
       if (!compact) {
-        this.updateBoneLayerValues({ force: true });
+        if (!this.expandedBoneName && this.boneLayerNames?.length) {
+          this.expandedBoneName = this.poseBoneSelect?.value || this.boneLayerNames[0];
+        }
+        this.updateBoneLayerList?.();
+        requestAnimationFrame(() => {
+          if (options.fitContent !== false) {
+            this.fitTimelineDrawerToContent?.({ persist: false });
+          }
+          if (options.userSized !== true) {
+            this.boneLayerList?.querySelector?.(".bone-layer-row.is-expanded")?.scrollIntoView?.({ block: "nearest" });
+          }
+          this.drawCurveEditor?.();
+          this.updateCurvePlayhead?.();
+        });
       }
       this.resize();
     },
@@ -3015,15 +4441,37 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (!this.app || !this.timelineShowToggle || !this.timelineHideToggle) {
         return;
       }
+      const wasHidden = this.app.classList.contains("is-timeline-hidden");
+      const opening = !hidden && wasHidden;
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+      if (!hidden) {
+        window.clearTimeout?.(this.timelineDrawerHideTimer);
+        this.timelineDrawerHideTimer = null;
+        this.applyTimelineDrawerDragOffset(0);
+      }
+      window.cancelAnimationFrame?.(this.timelineDrawerOpenFrame);
+      if (opening && !reduceMotion) {
+        this.app.classList.add("is-timeline-opening");
+      } else {
+        this.app.classList.remove("is-timeline-opening");
+      }
       this.app.classList.toggle("is-timeline-hidden", hidden);
+      this.app.classList.remove("is-timeline-closing");
       this.timelineShowToggle.hidden = !hidden;
-      this.timelineShowToggle.textContent = "^";
+      this.timelineShowToggle.textContent = "";
       this.timelineShowToggle.setAttribute("aria-label", "Show timeline");
       this.timelineShowToggle.title = "Show timeline";
-      this.timelineHideToggle.textContent = "v";
+      this.timelineHideToggle.textContent = "";
       this.timelineHideToggle.setAttribute("aria-label", "Hide timeline");
       this.timelineHideToggle.title = "Hide timeline";
       this.timelineHideToggle.setAttribute("aria-pressed", String(hidden));
+      if (opening && !reduceMotion) {
+        this.timelineDrawerPanel?.()?.getBoundingClientRect?.();
+        this.timelineDrawerOpenFrame = window.requestAnimationFrame?.(() => {
+          this.timelineDrawerOpenFrame = null;
+          this.app?.classList.remove("is-timeline-opening");
+        });
+      }
       if (!hidden) {
         this.updateBoneLayerValues({ force: true });
       }
@@ -3056,6 +4504,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
       if (this.textureBrushOpacityOutput && this.textureBrushOpacity) {
         this.textureBrushOpacityOutput.textContent = `${Math.round(Number(this.textureBrushOpacity.value) * 100)}%`;
+      }
+      if (this.textureBrushHardnessOutput && this.textureBrushHardness) {
+        this.textureBrushHardnessOutput.textContent = `${Math.round(Number(this.textureBrushHardness.value) * 100)}%`;
       }
       if (this.textureBrushScatterOutput && this.textureBrushScatter) {
         this.textureBrushScatterOutput.textContent = `${Math.round(Number(this.textureBrushScatter.value) * 100)}%`;

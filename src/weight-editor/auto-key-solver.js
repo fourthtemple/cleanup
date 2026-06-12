@@ -104,7 +104,11 @@ export function installAutoKeySolverMethods(BirdWeightEditor, deps) {
         this.pushUndoState?.("Auto key clip");
       }
       this.poseKeyframes.clear();
+      this.adaptiveGuideKeyframes = new Map();
+      this.adaptiveGuideDeltaKeyframes = new Map();
+      this.adaptiveGuideCurveHandles = new Map();
       this.poseCurveHandles?.clear?.();
+      this.poseKeyframeKinds?.clear?.();
       this.manualPose.clear();
       this.manualPoseAdditiveNames?.clear?.();
       this.poseKeyframeMode = "replace";
@@ -196,7 +200,11 @@ export function installAutoKeySolverMethods(BirdWeightEditor, deps) {
         this.pushUndoState?.("Change key detail", { clearManualPose: true });
       }
       this.poseKeyframes.clear();
+      this.adaptiveGuideKeyframes = new Map();
+      this.adaptiveGuideDeltaKeyframes = new Map();
+      this.adaptiveGuideCurveHandles = new Map();
       this.poseCurveHandles?.clear?.();
+      this.poseKeyframeKinds?.clear?.();
       this.manualPose.clear();
       this.manualPoseAdditiveNames?.clear?.();
       this.poseKeyframeMode = "additive";

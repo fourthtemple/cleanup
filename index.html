@@ -4,11 +4,13 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fourth Temple Model Cleanup</title>
-    <link rel="icon" href="./assets/fourth-temple-logo.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=pose-copy-stack-20260605a" />
+    <link rel="icon" href="./assets/fourth-temple-logo.svg?v=logo-leaf-ft-20260606c" type="image/svg+xml" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=timeline-key-row-20260610a" />
     <script type="importmap">
       {
         "imports": {
+          "three": "./node_modules/three/build/three.module.js",
+          "three/addons/": "./node_modules/three/examples/jsm/",
           "@fourthtemple/fbx-exporter": "./node_modules/@fourthtemple/fbx-exporter/src/index.js",
           "@fourthtemple/fbx-exporter/document/static": "./node_modules/@fourthtemple/fbx-exporter/src/document/static-document.js"
         }
@@ -20,10 +22,10 @@
       <aside class="viewer-panel editor-control-panel" aria-label="Fourth Temple Model Cleanup controls">
         <div class="viewer-panel-scroll">
           <header class="viewer-header">
-            <button id="side-panel-toggle" class="panel-collapse-toggle" type="button" aria-label="Hide panel" title="Hide panel" aria-pressed="true"></button>
             <button id="tutorials-toggle" class="tutorials-toggle" type="button" aria-controls="tutorial-drawer" aria-expanded="false" aria-label="Open tutorials" title="Tutorials">?</button>
+            <button id="side-panel-toggle" class="panel-collapse-toggle" type="button" aria-label="Hide panel" title="Hide panel" aria-pressed="true"></button>
             <div class="viewer-brand">
-              <img class="viewer-logo" src="./assets/fourth-temple-logo.svg" alt="" aria-hidden="true" />
+              <img class="viewer-logo" src="./assets/fourth-temple-logo.svg?v=logo-leaf-ft-20260606c" alt="" aria-hidden="true" />
               <div class="viewer-brand-copy">
                 <span>Fourth Temple</span>
                 <h1>Model Cleanup</h1>
@@ -39,8 +41,55 @@
           </div>
           <label class="viewer-field">
             <span>Folder</span>
-            <select id="animation-library-folder-select"></select>
+            <div class="animation-library-folder-row">
+              <select id="animation-library-folder-select"></select>
+              <button id="delete-animation-library-folder" class="animation-library-folder-delete" type="button" title="Delete the selected folder and its saved files" aria-label="Delete selected folder" aria-expanded="false" aria-controls="delete-animation-library-folder-confirm">-</button>
+            </div>
+            <div id="delete-animation-library-folder-confirm" class="animation-library-folder-confirm" hidden>
+              <span id="delete-animation-library-folder-message">Delete selected folder?</span>
+              <button id="cancel-delete-animation-library-folder" type="button">Cancel</button>
+              <button id="confirm-delete-animation-library-folder" type="button">Delete</button>
+            </div>
           </label>
+          <div id="animation-library-list" class="animation-library-list" aria-label="Animation library files"></div>
+          <label class="viewer-field motion-conversion-field">
+            <span>Motion conversion</span>
+            <select id="motion-conversion-mode">
+              <option value="solved">Solved keys</option>
+              <option value="adaptive">Adaptive keys</option>
+              <option value="additive" selected>Additive kinematics</option>
+            </select>
+          </label>
+          <label class="viewer-field motion-key-detail-field" hidden aria-hidden="true">
+            <span>Key Detail</span>
+            <div class="viewer-range-row">
+              <input id="solved-key-detail" type="range" min="0" max="1" step="0.05" value="0.2" />
+              <output id="solved-key-detail-output">20%</output>
+            </div>
+          </label>
+        </section>
+
+        <section class="viewer-section animation-side-section animation-blend-section">
+          <span class="viewer-label">Blend</span>
+          <label class="viewer-field timeline-blend-action-field">
+            <span>Blend To</span>
+            <select id="timeline-blend-action-select"></select>
+          </label>
+          <div class="viewer-actions">
+            <button id="transfer-cleanup-to-blend" type="button" disabled title="Copy the current cleanup to the selected Blend To animation">Transfer Cleanup</button>
+          </div>
+          <input id="time-scrub" type="hidden" value="0" />
+          <label class="viewer-field">
+            <span>End Blend</span>
+            <div class="viewer-range-row">
+              <input id="timeline-blend-control" type="range" min="0.05" max="2" step="0.05" value="0.35" />
+              <output id="timeline-blend-output">0.35s</output>
+            </div>
+          </label>
+        </section>
+
+        <section class="viewer-section animation-side-section animation-import-section">
+          <span class="viewer-label">Import</span>
           <div class="animation-library-create">
             <input id="animation-library-folder-name" type="text" placeholder="character" autocomplete="off" />
             <button id="create-animation-library-folder" type="button">Create Folder</button>
@@ -56,7 +105,10 @@
             <button id="animation-library-save-as-cancel" type="button" title="Cancel save as" aria-label="Cancel save as">×</button>
           </div>
           <input id="animation-library-file" type="file" accept=".fbx,.glb,.gltf" multiple hidden />
-          <div id="animation-library-list" class="animation-library-list" aria-label="Animation library files"></div>
+        </section>
+
+        <section class="viewer-section animation-side-section animation-export-section">
+          <span class="viewer-label">Motion Cleanup</span>
           <label class="viewer-field">
             <span>FBX Target</span>
             <select id="fbx-export-target">
@@ -75,32 +127,15 @@
           <div class="viewer-actions export-actions">
             <button id="unbake-root-motion" type="button" disabled>Unbake Root</button>
           </div>
-          <div class="viewer-checks import-options">
+          <div class="viewer-checks import-options" hidden aria-hidden="true">
             <label><input id="use-timeline-keys" name="edit-source-mode" type="radio" value="solved" /> Use solved keys</label>
-            <label><input id="adaptive-edit-mode" name="edit-source-mode" type="radio" value="adaptive" checked /> Adaptive edits</label>
+            <label><input id="adaptive-edit-mode" name="edit-source-mode" type="radio" value="adaptive" /> Adaptive edits</label>
+            <label><input id="additive-kinematics-mode" name="edit-source-mode" type="radio" value="additive" checked /> Additive kinematics</label>
           </div>
-          <label class="viewer-field">
-            <span>Key Detail</span>
-            <div class="viewer-range-row">
-              <input id="solved-key-detail" type="range" min="0" max="1" step="0.05" value="0.2" />
-              <output id="solved-key-detail-output">20%</output>
-            </div>
-          </label>
-          <label class="viewer-field timeline-blend-action-field">
-            <span>Blend To</span>
-            <select id="timeline-blend-action-select"></select>
-          </label>
-          <div class="viewer-actions">
-            <button id="transfer-cleanup-to-blend" type="button" disabled title="Copy the current cleanup to the selected Blend To animation">Transfer Cleanup</button>
-          </div>
-          <input id="time-scrub" type="hidden" value="0" />
-          <label class="viewer-field">
-            <span>End Blend</span>
-            <div class="viewer-range-row">
-              <input id="timeline-blend-control" type="range" min="0.05" max="2" step="0.05" value="0.35" />
-              <output id="timeline-blend-output">0.35s</output>
-            </div>
-          </label>
+        </section>
+
+        <section class="viewer-section animation-side-section animation-preview-section">
+          <span class="viewer-label">Preview</span>
           <label class="viewer-field">
             <span>Speed</span>
             <div class="viewer-range-row">
@@ -115,11 +150,6 @@
               <output id="weight-scale-output">1.00x</output>
             </div>
           </label>
-          <div class="viewer-checks animation-loop-options">
-            <label><input id="loop-toggle" type="checkbox" checked /> Loop</label>
-            <label><input id="travel-loop-toggle" type="checkbox" /> Travel</label>
-            <label class="travel-follow-option is-hidden"><input id="travel-follow-toggle" type="checkbox" checked /> Follow</label>
-          </div>
         </section>
 
         <section class="viewer-section select-tool-panel">
@@ -156,9 +186,8 @@
             <button id="clone-paint-copy-json" type="button" disabled>Copy JSON</button>
           </div>
           <div class="texture-paint-actions">
-            <label class="texture-paint-color">
-              <span>Color</span>
-              <input id="texture-paint-color" type="color" value="#c06f4f" />
+            <label class="texture-paint-color" title="Airbrush color">
+              <input id="texture-paint-color" type="color" value="#c06f4f" aria-label="Airbrush color" />
             </label>
             <button id="texture-pick-color-tool" type="button" data-tool="eyedropper" title="Pick texture color">Pick</button>
             <button id="texture-airbrush-tool" type="button" data-tool="airbrush">Airbrush</button>
@@ -175,6 +204,13 @@
             <div class="viewer-range-row">
               <input id="texture-brush-opacity" type="range" min="0.04" max="1" step="0.02" value="0.42" />
               <output id="texture-brush-opacity-output">42%</output>
+            </div>
+          </label>
+          <label class="viewer-field">
+            <span>Brush hardness</span>
+            <div class="viewer-range-row">
+              <input id="texture-brush-hardness" type="range" min="0" max="1" step="0.02" value="0.35" />
+              <output id="texture-brush-hardness-output">35%</output>
             </div>
           </label>
           <label class="viewer-field">
@@ -371,6 +407,10 @@
             <span>Background</span>
             <input id="camera-background-color" type="color" value="#11171c" />
           </label>
+          <label class="viewer-field camera-color-field">
+            <span>Mesh</span>
+            <input id="camera-mesh-color" type="color" value="#80d8ff" />
+          </label>
           <label class="viewer-field">
             <span>Ambient</span>
             <div class="viewer-range-row">
@@ -402,11 +442,23 @@
         </section>
 
         <div class="viewer-panel-footer">
-          <section class="viewer-section orbit-view-section">
-            <span class="viewer-label">Saved View</span>
-            <div class="viewer-grid-actions orbit-view-actions" role="group" aria-label="Saved orbit camera view">
-              <button id="save-orbit-view" type="button" title="Save current orbit camera view">Save View</button>
-              <button id="restore-orbit-view" type="button" title="Restore saved orbit camera view">Restore View</button>
+          <section class="viewer-section settings-save-section">
+            <span class="viewer-label">Settings</span>
+            <div class="settings-save-grid">
+              <div class="settings-save-row">
+                <span>View</span>
+                <div class="viewer-grid-actions settings-save-actions" role="group" aria-label="Saved orbit camera view">
+                  <button id="save-orbit-view" type="button" title="Save current orbit camera view">Save</button>
+                  <button id="restore-orbit-view" type="button" title="Restore saved orbit camera view">Restore</button>
+                </div>
+              </div>
+              <div class="settings-save-row">
+                <span>Configuration</span>
+                <div class="viewer-grid-actions settings-save-actions" role="group" aria-label="Saved camera configuration">
+                  <button id="save-camera-settings" type="button" title="Save background, mesh, lights, and texture settings">Save</button>
+                  <button id="reset-camera-settings" type="button" title="Restore saved background, mesh, lights, and texture settings">Restore</button>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -433,27 +485,32 @@
           </section>
         </div>
         </div>
+        <button id="side-panel-resize" class="panel-resize-handle" type="button" aria-label="Resize left menu" title="Drag to resize menu"></button>
       </aside>
 
       <section class="viewer-stage" aria-label="3D weight editor">
         <div class="animation-editor-tools" aria-label="Editor layout controls">
           <button id="side-panel-show-toggle" class="panel-show-toggle" type="button" aria-label="Show panel" title="Show panel" hidden></button>
         </div>
-        <button id="timeline-show-toggle" class="timeline-show-toggle" type="button" aria-label="Show timeline" title="Show timeline" hidden>^</button>
+        <button id="timeline-show-toggle" class="timeline-show-toggle" type="button" aria-label="Show timeline" title="Show timeline" hidden></button>
         <div class="weight-viewport-tools" aria-label="Viewport tools">
-          <div class="viewport-tool-group viewport-edit-dock" role="group" aria-label="Edit tools">
-            <button id="undo-edit" type="button" title="Undo last cleanup edit">Undo</button>
-            <button id="redo-edit" type="button" title="Redo last cleanup edit">Redo</button>
-            <button id="tool-orbit" type="button" data-tool="orbit" title="Orbit camera">Orbit</button>
+          <div class="viewport-edit-dock" aria-label="Edit tools">
+            <div class="viewport-tool-group viewport-history-group" role="group" aria-label="History controls">
+              <button id="undo-edit" type="button" title="Undo last cleanup edit">Undo</button>
+              <button id="redo-edit" type="button" title="Redo last cleanup edit">Redo</button>
+            </div>
+            <div class="viewport-tool-group viewport-transform-group" role="group" aria-label="Camera and gizmo controls">
+              <button id="tool-orbit" type="button" data-tool="orbit" title="Orbit camera">Orbit</button>
+            </div>
           </div>
           <div class="viewport-tool-group viewport-mode-group" role="group" aria-label="Viewport layers">
+            <button id="gizmo-only-preview" type="button" title="Show only the active FK or IK gizmo" hidden disabled>Gizmo Only</button>
             <button id="viewport-rendered-toggle" class="is-active" type="button" data-viewport-layer="rendered" title="Show textured model" aria-pressed="true">Rendered</button>
             <button id="viewport-mesh-toggle" type="button" data-viewport-layer="mesh" title="Show mesh wire overlay" aria-pressed="false">Mesh</button>
             <button id="viewport-selection-toggle" class="is-active" type="button" data-viewport-layer="selection" title="Show vertex selection markers" aria-pressed="true">Selection</button>
             <button id="skeleton-toggle" type="button" data-viewport-layer="bones" title="Show bone overlay" aria-pressed="false">Bones</button>
             <span class="viewport-clean-preview-pair">
               <button id="clean-preview" type="button" title="Hide selections, bones, and edit controls without clearing them">Clean Preview</button>
-              <button id="gizmo-only-preview" type="button" title="Show only the active FK or IK gizmo" disabled>Gizmo Only</button>
             </span>
           </div>
         </div>
@@ -465,6 +522,7 @@
           </div>
         </div>
         <div class="weight-timeline-panel" aria-label="Keyframe posing timeline">
+          <button id="timeline-drawer-handle" class="timeline-drawer-handle" type="button" aria-label="Drag timeline drawer" title="Drag timeline drawer"></button>
           <div class="timeline-pose-row">
             <div class="timeline-pose-tools">
               <div class="timeline-bone-tool-actions">
@@ -480,13 +538,13 @@
                   <span>IK solver</span>
                   <select id="ik-solver-mode">
                     <option value="ccd">CCD</option>
-                    <option value="smooth">Smooth</option>
+                    <option value="smooth" selected>Smooth</option>
                   </select>
                 </label>
-                <label class="viewer-field ik-counter-rotation-field">
+                <label class="viewer-field ik-counter-rotation-field is-disabled">
                   <span title="Counter rotation">Counter</span>
                   <div class="viewer-range-row">
-                    <input id="ik-counter-rotation" type="range" min="-1" max="1" step="0.05" value="0" />
+                    <input id="ik-counter-rotation" type="range" min="-1" max="1" step="0.05" value="0" disabled />
                     <output id="ik-counter-rotation-output">0.00</output>
                   </div>
                 </label>
@@ -531,32 +589,43 @@
                   <input id="pose-pos-z-value" class="timeline-value-input" type="number" step="0.005" value="0.000" />
                 </label>
               </div>
+              <div class="timeline-action-strip" aria-label="Timeline playback and pose actions">
+                <div class="timeline-transport-controls" aria-label="Playback and key navigation">
+                  <button id="timeline-play-toggle" type="button">Play</button>
+                  <div class="timeline-frame-readout"><span class="timeline-frame-label">Frame</span><output id="frame-readout">0 / 96</output></div>
+                  <div class="timeline-playback-options animation-loop-options" aria-label="Playback options">
+                    <label><input id="loop-toggle" type="checkbox" checked /> Loop</label>
+                    <label><input id="travel-loop-toggle" type="checkbox" /> Travel</label>
+                    <label class="travel-follow-option is-hidden"><input id="travel-follow-toggle" type="checkbox" checked /> Follow</label>
+                  </div>
+                  <div class="timeline-key-actions">
+                    <button id="prev-key" type="button" title="Previous keyed frame">Prev</button>
+                    <button id="next-key" type="button" title="Next keyed frame">Next</button>
+                  </div>
+                </div>
+                <div class="timeline-pose-key-actions" aria-label="Pose key actions">
+                  <button id="delete-key" type="button" title="Delete key at the current frame">delete</button>
+                  <button id="clear-keys" type="button" title="Clear keys for the selected bone or chain">clear</button>
+                  <button id="convert-adaptive-key" class="timeline-adaptive-convert-button" type="button" title="Convert the adaptive sync point at this frame to a keyframe" hidden>convert</button>
+                  <button id="key-current-pose" type="button" title="Key selected bone pose">key</button>
+                  <button id="copy-pose" type="button" title="Copy selected bone or chain pose from the current frame">copy</button>
+                  <button id="paste-pose" type="button" title="Paste copied pose to the current frame" disabled>paste</button>
+                </div>
+              </div>
             </div>
             <div class="timeline-pose-actions">
               <div class="timeline-layout-actions">
-                <button id="timeline-compact-toggle" type="button" aria-label="Expand timeline" title="Expand timeline" aria-pressed="true">^</button>
-                <button id="timeline-hide-toggle" type="button" aria-label="Hide timeline" title="Hide timeline">v</button>
+                <button id="timeline-compact-toggle" type="button" aria-label="Expand timeline" title="Expand timeline" aria-pressed="true"></button>
+                <button id="timeline-hide-toggle" type="button" aria-label="Hide timeline" title="Hide timeline"></button>
               </div>
-              <button id="key-current-pose" type="button" title="Key selected bone pose">key</button>
-              <button id="copy-pose" type="button" title="Copy selected bone or chain pose from the current frame">copy</button>
-              <button id="paste-pose" type="button" title="Paste copied pose to the current frame" disabled>paste</button>
               <button id="loop-to-start" class="timeline-loop-action" type="button" title="Blend selected bone or chain back to frame 0 at the end" hidden>Blend Loop</button>
             </div>
           </div>
           <div class="timeline-track-row">
-            <button id="timeline-play-toggle" type="button">Play</button>
-            <div class="timeline-frame-readout">Frame <output id="frame-readout">0 / 96</output></div>
             <div class="timeline-track">
               <input id="timeline-scrub" type="range" min="0" max="96" step="1" value="0" />
               <div id="timeline-keys" class="timeline-keys" aria-label="Pose keyframes"></div>
             </div>
-            <div class="timeline-key-actions">
-              <button id="prev-key" type="button">Prev Frame</button>
-              <button id="next-key" type="button">Next Frame</button>
-              <button id="delete-key" type="button">Delete Key</button>
-              <button id="clear-keys" type="button">Clear Keys</button>
-            </div>
-            <label class="timeline-hold-toggle"><input id="hold-keys-toggle" type="checkbox" /> Hold</label>
           </div>
           <div class="timeline-track-row timeline-sequence-row">
             <button id="timeline-play-both" type="button" disabled>Play Sequence</button>
@@ -575,6 +644,7 @@
         </div>
         <div id="bone-labels" class="bone-labels" aria-hidden="true"></div>
         <canvas id="viewer-canvas"></canvas>
+        <canvas id="texture-airbrush-screen-layer" class="texture-airbrush-screen-layer" aria-hidden="true" hidden></canvas>
         <svg id="lasso-overlay" class="lasso-overlay" aria-hidden="true" hidden>
           <path id="lasso-overlay-path" class="lasso-overlay-path"></path>
         </svg>
@@ -595,6 +665,9 @@
           <button id="tutorial-reset" type="button" hidden>Reset</button>
           <button id="tutorial-macro-record" type="button" hidden>Record Macro</button>
           <button id="tutorial-macro-stop" type="button" hidden>Stop</button>
+          <button id="tutorial-macro-export" type="button" hidden title="Export tutorial macro backup">Export</button>
+          <button id="tutorial-macro-import" type="button" hidden title="Import tutorial macro backup">Import</button>
+          <input id="tutorial-macro-import-file" type="file" accept="application/json,.json" hidden />
           <button id="tutorial-close" class="tutorial-close" type="button" aria-label="Close tutorials" title="Close tutorials">×</button>
         </div>
       </header>
@@ -626,6 +699,8 @@
                   <option value="2">2x</option>
                   <option value="3">3x</option>
                   <option value="4" selected>4x</option>
+                  <option value="6">6x</option>
+                  <option value="8">8x</option>
                 </select>
                 <input id="tutorial-macro-scrub" type="range" min="0" max="1000" step="1" value="0" aria-label="Demo playback position" />
               </div>
@@ -676,14 +751,6 @@
         </section>
       </div>
     </aside>
-    <script type="importmap">
-      {
-        "imports": {
-          "three": "./node_modules/three/build/three.module.js",
-          "three/addons/": "./node_modules/three/examples/jsm/"
-        }
-      }
-    </script>
-    <script type="module" src="./src/bird-weight-editor.js?v=macro-replay-state-20260606a"></script>
+  <script type="module" src="./src/model-cleanup-editor.js?v=timeline-bone-curves-20260610a"></script>
   </body>
 </html>

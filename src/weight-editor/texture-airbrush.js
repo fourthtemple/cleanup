@@ -1,5 +1,6 @@
 export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
   const { THREE } = deps;
+  const TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS = 64;
   const SELECTION_BRUSH_TOOLS = new Set(["paint", "deselect", "erase", "push", "pull"]);
   const MIPMAP_FILTERS = new Set([
     THREE.NearestMipmapNearestFilter,
@@ -8,12 +9,33 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
     THREE.LinearMipmapLinearFilter
   ].filter((value) => value !== undefined));
 
+  // Painting module note:
+  // The current airbrush is a WebGL live-bake brush: each stroke projects screen-space
+  // brush segments into UV texture render targets. A Photoshop-like brush feel likely
+  // needs a larger WebGPU brush-engine pass instead of another UI preview layer. The
+  // future direction is a shared stroke buffer, one GPU brush kernel for both preview
+  // and bake, tiled texture updates, and identical brush math for the screen preview
+  // and final UV texture result. We tried a separate 2D overlay preview, but it did not
+  // agree visually with the bake because screen pixels, UV texels, seams, filtering,
+  // depth, and falloff all diverged.
+
   function clampByte(value) {
     return Math.max(0, Math.min(255, Math.round(value)));
   }
 
   function byteHex(value) {
     return clampByte(value).toString(16).padStart(2, "0");
+  }
+
+  function hexColorBytes(value, fallback = "#c06f4f") {
+    const text = String(value || fallback).trim();
+    const match = /^#?([0-9a-f]{6})$/i.exec(text) || /^#?([0-9a-f]{6})$/i.exec(fallback);
+    const hex = match?.[1] || "c06f4f";
+    return {
+      r: parseInt(hex.slice(0, 2), 16),
+      g: parseInt(hex.slice(2, 4), 16),
+      b: parseInt(hex.slice(4, 6), 16)
+    };
   }
 
   function linearByteToSrgbByte(value) {
@@ -38,6 +60,45 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       return baseAlpha;
     }
     return Math.max(baseAlpha, Math.min(0.96, 0.34 + softFalloff * 0.62));
+  }
+
+  function distanceToSegmentPixels(x, y, startX, startY, endX, endY) {
+    const segmentX = endX - startX;
+    const segmentY = endY - startY;
+    const segmentLengthSq = segmentX * segmentX + segmentY * segmentY;
+    const t = segmentLengthSq > 0.0001
+      ? Math.max(0, Math.min(1, ((x - startX) * segmentX + (y - startY) * segmentY) / segmentLengthSq))
+      : 1;
+    const closestX = startX + segmentX * t;
+    const closestY = startY + segmentY * t;
+    const dx = x - closestX;
+    const dy = y - closestY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function airbrushCoverageForDistance(distancePixels, radiusPixels, scatter, hardness) {
+    const radius = Math.max(1, radiusPixels);
+    const safeScatter = Math.max(0, Math.min(1, scatter));
+    const safeHardness = Math.max(0, Math.min(1, hardness));
+    const haloRadius = radius * (1 + safeScatter * 0.72);
+    if (distancePixels > haloRadius) {
+      return 0;
+    }
+    const hardRadius = radius * safeHardness;
+    if (distancePixels <= hardRadius) {
+      return 1;
+    }
+    const fadeRadius = Math.max(1, haloRadius - hardRadius);
+    const edge = Math.max(0, 1 - (distancePixels - hardRadius) / fadeRadius);
+    const exponent = 3.6 - safeHardness * 2.55 + safeScatter * 0.25;
+    return Math.min(1, Math.pow(edge, exponent));
+  }
+
+  function airbrushAlphaForDistance(distancePixels, radiusPixels, opacity, scatter, hardness, strength = 1) {
+    return Math.min(
+      1,
+      opacity * strength * airbrushCoverageForDistance(distancePixels, radiusPixels, scatter, hardness)
+    );
   }
 
   Object.assign(BirdWeightEditor.prototype, {
@@ -203,6 +264,363 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       return Math.max(18, Math.min(160, radius * 720));
     },
 
+    textureAirbrushCanUseScreenStroke() {
+      return this.activeTool === "airbrush"
+        && Boolean(this.model)
+        && Boolean(this.canvas)
+        && !this.textureAirbrushGpuDisabled;
+    },
+
+    resizeTextureAirbrushScreenLayer() {
+      const layer = this.textureAirbrushScreenLayer;
+      if (!layer || !this.canvas) {
+        return null;
+      }
+      const rect = this.canvas.getBoundingClientRect();
+      const scale = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      const width = Math.max(1, Math.round(rect.width * scale));
+      const height = Math.max(1, Math.round(rect.height * scale));
+      if (layer.width !== width || layer.height !== height) {
+        layer.width = width;
+        layer.height = height;
+      }
+      return {
+        layer,
+        context: layer.getContext("2d"),
+        rect,
+        scale
+      };
+    },
+
+    captureTextureAirbrushScreenBase(layerState = null) {
+      const state = layerState || this.resizeTextureAirbrushScreenLayer?.();
+      if (!state?.layer || !this.canvas) {
+        this.textureAirbrushScreenBaseImage = null;
+        return null;
+      }
+      const { layer } = state;
+      const baseCanvas = this.textureAirbrushScreenBaseCanvas || document.createElement("canvas");
+      if (baseCanvas.width !== layer.width || baseCanvas.height !== layer.height) {
+        baseCanvas.width = layer.width;
+        baseCanvas.height = layer.height;
+      }
+      const context = baseCanvas.getContext("2d");
+      if (!context) {
+        this.textureAirbrushScreenBaseImage = null;
+        return null;
+      }
+      try {
+        context.clearRect(0, 0, baseCanvas.width, baseCanvas.height);
+        context.drawImage(this.canvas, 0, 0, baseCanvas.width, baseCanvas.height);
+        this.textureAirbrushScreenBaseCanvas = baseCanvas;
+        this.textureAirbrushScreenBaseContext = context;
+        this.textureAirbrushScreenBaseImage = context.getImageData(0, 0, baseCanvas.width, baseCanvas.height);
+      } catch {
+        this.textureAirbrushScreenBaseImage = null;
+      }
+      return this.textureAirbrushScreenBaseImage;
+    },
+
+    clearTextureAirbrushScreenLayer(options = {}) {
+      const layer = this.textureAirbrushScreenLayer;
+      if (!layer) {
+        return;
+      }
+      if (options.defer) {
+        const token = {};
+        this.textureAirbrushScreenClearToken = token;
+        const requestFrame = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+          ? window.requestAnimationFrame.bind(window)
+          : (callback) => window.setTimeout(callback, 16);
+        requestFrame(() => {
+          requestFrame(() => {
+            if (this.textureAirbrushScreenClearToken === token) {
+              this.textureAirbrushScreenClearToken = null;
+              this.clearTextureAirbrushScreenLayer?.();
+            }
+          });
+        });
+        return;
+      }
+      const context = layer.getContext("2d");
+      context?.clearRect(0, 0, layer.width || 0, layer.height || 0);
+      layer.hidden = true;
+      this.textureAirbrushScreenBaseImage = null;
+    },
+
+    textureAirbrushScreenStrokePayload(event, strokeStart) {
+      if (!event) {
+        return null;
+      }
+      const current = {
+        clientX: event.clientX,
+        clientY: event.clientY
+      };
+      const start = strokeStart && Number.isFinite(strokeStart.clientX) && Number.isFinite(strokeStart.clientY)
+        ? {
+            clientX: strokeStart.clientX,
+            clientY: strokeStart.clientY
+          }
+        : current;
+      const radiusPixels = Math.max(1, this.textureBrushRadiusScreenPixels?.() || 8);
+      const dx = current.clientX - start.clientX;
+      const dy = current.clientY - start.clientY;
+      const maxSegmentPixels = Math.max(80, radiusPixels * 18);
+      const safeStart = Math.sqrt(dx * dx + dy * dy) > maxSegmentPixels
+        ? current
+        : start;
+      const color = this.textureAirbrushColor();
+      return {
+        clientX: current.clientX,
+        clientY: current.clientY,
+        strokeStart: safeStart,
+        radiusPixels,
+        color: { r: color.r, g: color.g, b: color.b },
+        opacity: this.textureAirbrushOpacity?.() ?? 0.42,
+        hardness: this.textureAirbrushHardness?.() ?? 0.35,
+        scatter: this.textureAirbrushScatter?.() ?? 0.35,
+        strength: 1
+      };
+    },
+
+    drawTextureAirbrushScreenStroke(payload) {
+      const layerState = this.resizeTextureAirbrushScreenLayer?.();
+      const context = layerState?.context;
+      if (!payload || !context || !layerState?.rect) {
+        return false;
+      }
+      const { layer, rect, scale } = layerState;
+      const startX = payload.strokeStart.clientX - rect.left;
+      const startY = payload.strokeStart.clientY - rect.top;
+      const endX = payload.clientX - rect.left;
+      const endY = payload.clientY - rect.top;
+      const color = payload.color || this.textureAirbrushColor();
+      const red = clampByte(color.r);
+      const green = clampByte(color.g);
+      const blue = clampByte(color.b);
+      const paintLuma = Math.max(1, 0.2126 * red + 0.7152 * green + 0.0722 * blue);
+      const opacity = Math.max(0.04, Math.min(1, Number(payload.opacity ?? 0.42)));
+      const hardness = Math.max(0, Math.min(1, Number(payload.hardness ?? 0.35)));
+      const scatter = Math.max(0, Math.min(1, Number(payload.scatter ?? 0.35)));
+      const strength = Math.max(0.08, Math.min(1, Number(payload.strength ?? 1)));
+      const radius = Math.max(1, payload.radiusPixels);
+      const haloRadius = radius * (1 + scatter * 0.72);
+      const minX = Math.max(0, Math.floor((Math.min(startX, endX) - haloRadius - 2) * scale));
+      const maxX = Math.min(layer.width, Math.ceil((Math.max(startX, endX) + haloRadius + 2) * scale));
+      const minY = Math.max(0, Math.floor((Math.min(startY, endY) - haloRadius - 2) * scale));
+      const maxY = Math.min(layer.height, Math.ceil((Math.max(startY, endY) + haloRadius + 2) * scale));
+      const width = maxX - minX;
+      const height = maxY - minY;
+      if (width <= 0 || height <= 0) {
+        return false;
+      }
+      this.textureAirbrushScreenClearToken = null;
+      layer.hidden = false;
+
+      const image = context.getImageData(minX, minY, width, height);
+      const data = image.data;
+      const baseImage = this.textureAirbrushScreenBaseImage?.width === layer.width
+        && this.textureAirbrushScreenBaseImage?.height === layer.height
+        ? this.textureAirbrushScreenBaseImage
+        : this.captureTextureAirbrushScreenBase?.(layerState);
+      const baseData = baseImage?.data || null;
+      for (let y = 0; y < height; y += 1) {
+        const screenY = (minY + y + 0.5) / scale;
+        for (let x = 0; x < width; x += 1) {
+          const screenX = (minX + x + 0.5) / scale;
+          const distance = distanceToSegmentPixels(screenX, screenY, startX, startY, endX, endY);
+          const alpha = airbrushAlphaForDistance(distance, radius, opacity, scatter, hardness, strength);
+          if (alpha <= 0.004) {
+            continue;
+          }
+          const offset = (y * width + x) * 4;
+          const alphaByte = clampByte(alpha * 255);
+          if (alphaByte <= data[offset + 3]) {
+            continue;
+          }
+          let shadedRed = red;
+          let shadedGreen = green;
+          let shadedBlue = blue;
+          if (baseData) {
+            const baseOffset = ((minY + y) * layer.width + (minX + x)) * 4;
+            const baseRed = baseData[baseOffset];
+            const baseGreen = baseData[baseOffset + 1];
+            const baseBlue = baseData[baseOffset + 2];
+            const baseLuma = 0.2126 * baseRed + 0.7152 * baseGreen + 0.0722 * baseBlue;
+            const shade = Math.max(
+              0.08,
+              Math.min(1.15, (baseLuma / paintLuma) * (0.92 + hardness * 0.28) + 0.04)
+            );
+            shadedRed = clampByte(red * shade);
+            shadedGreen = clampByte(green * shade);
+            shadedBlue = clampByte(blue * shade);
+          }
+          data[offset] = shadedRed;
+          data[offset + 1] = shadedGreen;
+          data[offset + 2] = shadedBlue;
+          data[offset + 3] = alphaByte;
+        }
+      }
+      context.putImageData(image, minX, minY);
+      return true;
+    },
+
+    textureAirbrushQueueScreenStroke(event, options = {}) {
+      if (!this.textureAirbrushCanUseScreenStroke?.()) {
+        return false;
+      }
+      const payload = this.textureAirbrushScreenStrokePayload(event, options.strokeStart);
+      if (!payload) {
+        return false;
+      }
+      this.clearTextureAirbrushScreenLayer?.();
+      const changed = this.textureAirbrushProjectedMeshFromEvent?.(event, {
+        gpu: true,
+        strokeStart: payload.strokeStart,
+        radiusPixels: payload.radiusPixels,
+        color: payload.color,
+        opacity: payload.opacity,
+        hardness: payload.hardness,
+        scatter: payload.scatter,
+        strength: payload.strength
+      }) || 0;
+      if (!changed) {
+        this.setStatus("Airbrush needs the cursor over textured mesh");
+      }
+      return true;
+    },
+
+    scheduleTextureAirbrushScreenStrokeFlush() {
+      if (this.textureAirbrushScreenFlushScheduled || this.textureAirbrushFlushingScreenStroke) {
+        return false;
+      }
+      const requestFrame = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+        ? window.requestAnimationFrame.bind(window)
+        : (callback) => window.setTimeout(callback, 16);
+      this.textureAirbrushScreenFlushScheduled = true;
+      requestFrame(() => {
+        this.textureAirbrushScreenFlushScheduled = false;
+        if (this.textureAirbrushScreenStrokeQueue?.length) {
+          this.flushTextureAirbrushScreenStroke?.({ live: true });
+        }
+      });
+      return true;
+    },
+
+    textureAirbrushScreenStrokeBatches(queue = []) {
+      const batches = [];
+      let activeBatch = null;
+      for (const segment of queue) {
+        if (
+          !segment
+          || !Number.isFinite(segment.clientX)
+          || !Number.isFinite(segment.clientY)
+          || !Number.isFinite(segment.strokeStart?.clientX)
+          || !Number.isFinite(segment.strokeStart?.clientY)
+        ) {
+          continue;
+        }
+        const radiusPixels = Math.max(1, Number(segment.radiusPixels) || this.textureBrushRadiusScreenPixels?.() || 8);
+        const color = segment.color || this.textureAirbrushColor();
+        const opacity = Math.max(0.04, Math.min(1, Number(segment.opacity ?? this.textureAirbrushOpacity?.() ?? 0.42)));
+        const hardness = Math.max(0, Math.min(1, Number(segment.hardness ?? this.textureAirbrushHardness?.() ?? 0.35)));
+        const scatter = Math.max(0, Math.min(1, Number(segment.scatter ?? this.textureAirbrushScatter?.() ?? 0.35)));
+        const strength = Math.max(0.08, Math.min(1, Number(segment.strength ?? 1)));
+        const styleKey = [
+          Math.round(radiusPixels * 100),
+          clampByte(color.r),
+          clampByte(color.g),
+          clampByte(color.b),
+          Math.round(opacity * 1000),
+          Math.round(hardness * 1000),
+          Math.round(scatter * 1000),
+          Math.round(strength * 1000)
+        ].join(":");
+        if (
+          !activeBatch
+          || activeBatch.styleKey !== styleKey
+          || activeBatch.strokeSegments.length >= TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS
+        ) {
+          activeBatch = {
+            styleKey,
+            radiusPixels,
+            color: { r: clampByte(color.r), g: clampByte(color.g), b: clampByte(color.b) },
+            opacity,
+            hardness,
+            scatter,
+            strength,
+            strokeSegments: []
+          };
+          batches.push(activeBatch);
+        }
+        activeBatch.strokeSegments.push({
+          start: {
+            clientX: segment.strokeStart.clientX,
+            clientY: segment.strokeStart.clientY
+          },
+          end: {
+            clientX: segment.clientX,
+            clientY: segment.clientY
+          }
+        });
+      }
+      return batches;
+    },
+
+    flushTextureAirbrushScreenStroke(options = {}) {
+      if (this.textureAirbrushFlushingScreenStroke) {
+        return 0;
+      }
+      this.textureAirbrushScreenFlushScheduled = false;
+      const queue = this.textureAirbrushScreenStrokeQueue || [];
+      if (!queue.length) {
+        this.clearTextureAirbrushScreenLayer?.();
+        return 0;
+      }
+      this.textureAirbrushScreenStrokeQueue = [];
+      this.textureAirbrushFlushingScreenStroke = true;
+      let changed = 0;
+      try {
+        const batches = this.textureAirbrushScreenStrokeBatches(queue);
+        for (const batch of batches) {
+          const lastSegment = batch.strokeSegments.at(-1);
+          const event = {
+            clientX: lastSegment?.end.clientX ?? 0,
+            clientY: lastSegment?.end.clientY ?? 0,
+            button: 0,
+            altKey: false,
+            ctrlKey: false,
+            metaKey: false,
+            shiftKey: false,
+            preventDefault: () => {},
+            stopPropagation: () => {}
+          };
+          changed += this.textureAirbrushProjectedMeshFromEvent?.(event, {
+            gpu: true,
+            strokeSegments: batch.strokeSegments,
+            radiusPixels: batch.radiusPixels,
+            color: batch.color,
+            opacity: batch.opacity,
+            hardness: batch.hardness,
+            scatter: batch.scatter,
+            strength: batch.strength
+          }) || 0;
+        }
+      } finally {
+        this.textureAirbrushFlushingScreenStroke = false;
+        this.clearTextureAirbrushScreenLayer?.();
+      }
+      if (changed > 0) {
+        this.setStatus(`Airbrushed ${changed} projected pixels`);
+      } else {
+        this.setStatus("Airbrush needs the cursor over textured mesh");
+      }
+      if (options.live && this.textureAirbrushScreenStrokeQueue?.length) {
+        this.scheduleTextureAirbrushScreenStrokeFlush?.();
+      }
+      return changed;
+    },
+
     hideTextureBrushCursor() {
       if (this.textureBrushCursor) {
         this.textureBrushCursor.hidden = true;
@@ -262,16 +680,19 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       if (!this.textureBrushCursor || !this.canvas || !event) {
         return false;
       }
-      this.rememberBrushCursorEvent(event);
+      const remembered = this.rememberBrushCursorEvent(event);
       const isTextureBrush = this.activeTool === "airbrush" || this.activeTool === "clone";
-      if (!isTextureBrush || this.cleanPreview) {
+      if (!isTextureBrush || this.cleanPreview || !remembered) {
         this.hideTextureBrushCursor();
         return false;
       }
       const hit = this.texturePaintHitForEvent(event, this.activeTool);
-      if (!hit || (this.activeTool === "clone" && !this.clonePaintSource?.records?.get(hit.record))) {
+      if (this.activeTool === "clone" && (!hit || !this.clonePaintSource?.records?.get(hit.record))) {
         this.hideTextureBrushCursor();
         return false;
+      }
+      if (this.activeTool === "airbrush") {
+        this.scheduleTextureAirbrushPrewarm?.(event, hit);
       }
       const radius = this.textureBrushRadiusScreenPixels();
       this.textureBrushCursor.hidden = false;
@@ -461,11 +882,18 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
     },
 
     textureAirbrushColor() {
-      const color = new THREE.Color(this.texturePaintColor?.value || "#c06f4f");
+      return hexColorBytes(this.texturePaintColor?.value || "#c06f4f");
+    },
+
+    textureAirbrushShaderColor(color = null) {
+      const hex = color
+        ? `#${byteHex(color.r)}${byteHex(color.g)}${byteHex(color.b)}`
+        : this.texturePaintColor?.value || "#c06f4f";
+      const shaderColor = new THREE.Color(hex);
       return {
-        r: clampByte(color.r * 255),
-        g: clampByte(color.g * 255),
-        b: clampByte(color.b * 255)
+        r: shaderColor.r,
+        g: shaderColor.g,
+        b: shaderColor.b
       };
     },
 
@@ -477,8 +905,43 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       return Math.max(0.04, Math.min(1, Number(this.textureBrushOpacity?.value || 0.42)));
     },
 
+    textureAirbrushHardness() {
+      return Math.max(0, Math.min(1, Number(this.textureBrushHardness?.value || 0.35)));
+    },
+
     textureAirbrushScatter() {
       return Math.max(0, Math.min(1, Number(this.textureBrushScatter?.value || 0.35)));
+    },
+
+    textureAirbrushOptionsFromMacroBrush(settings = null) {
+      if (!settings || typeof settings !== "object") {
+        return null;
+      }
+      const colorBytes = settings.colorBytes && typeof settings.colorBytes === "object"
+        ? settings.colorBytes
+        : null;
+      let color = colorBytes
+        ? {
+            r: clampByte(colorBytes.r),
+            g: clampByte(colorBytes.g),
+            b: clampByte(colorBytes.b)
+          }
+        : null;
+      if (!color && /^#[0-9a-f]{6}$/i.test(String(settings.color || ""))) {
+        const value = Number.parseInt(String(settings.color).slice(1), 16);
+        color = {
+          r: (value >> 16) & 255,
+          g: (value >> 8) & 255,
+          b: value & 255
+        };
+      }
+      return {
+        ...(color ? { color } : {}),
+        ...(Number.isFinite(Number(settings.radiusPixels)) ? { radiusPixels: Math.max(1, Number(settings.radiusPixels)) } : {}),
+        ...(Number.isFinite(Number(settings.opacity)) ? { opacity: Math.max(0.04, Math.min(1, Number(settings.opacity))) } : {}),
+        ...(Number.isFinite(Number(settings.hardness)) ? { hardness: Math.max(0, Math.min(1, Number(settings.hardness))) } : {}),
+        ...(Number.isFinite(Number(settings.scatter)) ? { scatter: Math.max(0, Math.min(1, Number(settings.scatter))) } : {})
+      };
     },
 
     texturePaintVisibleRegionTriangles(record, materialIndex, canvas, texture, options = {}) {
@@ -798,7 +1261,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top
       };
-      const brushRadius = this.textureBrushRadiusScreenPixels?.() || 24;
+      const brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
       const scatter = this.textureAirbrushScatter?.() ?? 0.35;
       const haloRadius = brushRadius * (1 + scatter * 0.72);
       const radiusSq = haloRadius * haloRadius;
@@ -1140,7 +1603,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top
       };
-      const brushRadius = this.textureBrushRadiusScreenPixels?.() || 24;
+      const brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
       const radiusSq = brushRadius * brushRadius;
       const target = options.target || null;
       const referenceUv = options.referenceUv || target?.originUv || target?.uvCenter || hit.uv || face.centerUv || null;
@@ -1253,6 +1716,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       const color = this.textureAirbrushColor();
       const strength = options.strength ?? 1;
       const opacity = options.opacity ?? this.textureAirbrushOpacity?.() ?? 0.42;
+      const hardness = options.hardness ?? this.textureAirbrushHardness?.() ?? 0.35;
       const image = options.paintState?.image || context.getImageData(0, 0, canvas.width, canvas.height);
       const written = options.paintState?.written || new Set();
       let changed = 0;
@@ -1290,19 +1754,12 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
           }
           written.add(key);
           const distance = Math.sqrt(distanceSq);
-          const core = Math.pow(
-            Math.max(0, 1 - distance / Math.max(1, brushRadius)),
-            2.85 - scatter * 1.57
-          );
-          const halo = scatter * 0.42 * Math.pow(
-            Math.max(0, 1 - distance / Math.max(1, haloRadius)),
-            2.4
-          );
+          const coverage = airbrushCoverageForDistance(distance, brushRadius, scatter, hardness);
           const offset = (actualPixel.y * canvas.width + actualPixel.x) * 4;
           const brightArtifact = isBrightArtifactPixel(image.data, offset);
           const alpha = brightArtifact
-            ? Math.min(0.92, Math.max(0.32, opacity * strength * Math.min(1, core + halo + 0.28)))
-            : Math.min(0.82, opacity * strength * Math.min(1, core + halo));
+            ? Math.min(1, Math.max(0.32, opacity * strength * Math.min(1, coverage + 0.28)))
+            : Math.min(1, opacity * strength * coverage);
           if (alpha <= 0.008) {
             continue;
           }
@@ -1374,12 +1831,17 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
           paintProjectionMatrix: { value: new THREE.Matrix4() },
           depthTexture: { value: null },
           brushCenter: { value: new THREE.Vector2() },
+          brushStart: { value: new THREE.Vector2() },
+          strokeStarts: { value: Array.from({ length: TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS }, () => new THREE.Vector2()) },
+          strokeEnds: { value: Array.from({ length: TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS }, () => new THREE.Vector2()) },
+          strokeSegmentCount: { value: 1 },
           viewportSize: { value: new THREE.Vector2(1, 1) },
           uvOffset: { value: new THREE.Vector2() },
           paintColor: { value: new THREE.Color(1, 1, 1) },
           radiusPixels: { value: 8 },
           strength: { value: 0.35 },
           brushOpacity: { value: 0.42 },
+          brushHardness: { value: 0.35 },
           scatterAmount: { value: 0.35 },
           depthEpsilon: { value: 0.006 }
         },
@@ -1406,13 +1868,19 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         `,
         fragmentShader: `
           #include <common>
+          #define MAX_STROKE_SEGMENTS ${TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS}
           uniform sampler2D depthTexture;
           uniform vec2 brushCenter;
+          uniform vec2 brushStart;
+          uniform vec2 strokeStarts[MAX_STROKE_SEGMENTS];
+          uniform vec2 strokeEnds[MAX_STROKE_SEGMENTS];
+          uniform int strokeSegmentCount;
           uniform vec2 viewportSize;
           uniform vec3 paintColor;
           uniform float radiusPixels;
           uniform float strength;
           uniform float brushOpacity;
+          uniform float brushHardness;
           uniform float scatterAmount;
           uniform float depthEpsilon;
           varying vec2 vPaintUv;
@@ -1438,13 +1906,34 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
             );
             float scatter = clamp(scatterAmount, 0.0, 1.0);
             float haloRadius = radiusPixels * (1.0 + scatter * 0.72);
-            float distancePixels = distance(screenPoint, brushCenter);
+            float distancePixels = 100000.0;
+            for (int strokeIndex = 0; strokeIndex < MAX_STROKE_SEGMENTS; strokeIndex++) {
+              if (strokeIndex >= strokeSegmentCount) {
+                break;
+              }
+              vec2 segmentStart = strokeStarts[strokeIndex];
+              vec2 segmentEnd = strokeEnds[strokeIndex];
+              vec2 brushSegment = segmentEnd - segmentStart;
+              float segmentLengthSq = dot(brushSegment, brushSegment);
+              float segmentAlpha = segmentLengthSq > 0.0001
+                ? clamp(dot(screenPoint - segmentStart, brushSegment) / segmentLengthSq, 0.0, 1.0)
+                : 1.0;
+              vec2 closestPoint = segmentStart + brushSegment * segmentAlpha;
+              distancePixels = min(distancePixels, distance(screenPoint, closestPoint));
+            }
             if (distancePixels > haloRadius) {
               discard;
             }
-            float core = pow(max(0.0, 1.0 - distancePixels / max(1.0, radiusPixels)), mix(2.85, 1.28, scatter));
-            float halo = scatter * 0.42 * pow(max(0.0, 1.0 - distancePixels / max(1.0, haloRadius)), 2.4);
-            float alpha = min(0.82, brushOpacity * strength * min(1.0, core + halo));
+            float hardness = clamp(brushHardness, 0.0, 1.0);
+            float hardRadius = radiusPixels * hardness;
+            float coverage = 1.0;
+            if (distancePixels > hardRadius) {
+              float fadeRadius = max(1.0, haloRadius - hardRadius);
+              float edge = max(0.0, 1.0 - (distancePixels - hardRadius) / fadeRadius);
+              float exponent = 3.6 - hardness * 2.55 + scatter * 0.25;
+              coverage = min(1.0, pow(edge, exponent));
+            }
+            float alpha = min(1.0, brushOpacity * strength * coverage);
             if (alpha <= 0.004) {
               discard;
             }
@@ -1586,26 +2075,89 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       };
     },
 
-    textureAirbrushGpuUvBleedOffsets(targetEntry) {
+    textureAirbrushGpuUvBleedOffsets(targetEntry, radiusPixels = this.textureBrushRadiusScreenPixels?.() || 8) {
       const width = Math.max(1, targetEntry?.width || targetEntry?.target?.width || 1);
       const height = Math.max(1, targetEntry?.height || targetEntry?.target?.height || 1);
       const stepX = 1 / width;
       const stepY = 1 / height;
-      return [
-        [0, 0],
-        [-1, 0],
-        [1, 0],
-        [0, -1],
-        [0, 1],
-        [-1, -1],
-        [1, -1],
-        [-1, 1],
-        [1, 1],
-        [-2, 0],
-        [2, 0],
-        [0, -2],
-        [0, 2]
-      ].map(([x, y]) => new THREE.Vector2(x * stepX, y * stepY));
+      const radius = Math.max(1, Number(radiusPixels) || 1);
+      let offsets = [[0, 0]];
+      if (radius > 16) {
+        offsets = [
+          [0, 0],
+          [-1, 0],
+          [1, 0],
+          [0, -1],
+          [0, 1],
+          [-1, -1],
+          [1, -1],
+          [-1, 1],
+          [1, 1],
+          [-2, 0],
+          [2, 0],
+          [0, -2],
+          [0, 2]
+        ];
+      } else if (radius > 9) {
+        offsets = [
+          [0, 0],
+          [-1, 0],
+          [1, 0],
+          [0, -1],
+          [0, 1]
+        ];
+      }
+      return offsets.map(([x, y]) => new THREE.Vector2(x * stepX, y * stepY));
+    },
+
+    scheduleTextureAirbrushPrewarm(event = null, hit = null) {
+      if (this.textureAirbrushPrewarmPending || this.activeTool !== "airbrush") {
+        return false;
+      }
+      const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (this.textureAirbrushLastPrewarmAt && now - this.textureAirbrushLastPrewarmAt < 180) {
+        return false;
+      }
+      this.textureAirbrushPendingPrewarmEvent = event
+        ? { clientX: event.clientX, clientY: event.clientY }
+        : this.textureAirbrushPendingPrewarmEvent || null;
+      this.textureAirbrushPendingPrewarmHit = hit || this.textureAirbrushPendingPrewarmHit || null;
+      this.textureAirbrushPrewarmPending = true;
+      const run = () => {
+        this.textureAirbrushPrewarmPending = false;
+        this.textureAirbrushLastPrewarmAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+        const pendingEvent = this.textureAirbrushPendingPrewarmEvent;
+        const pendingHit = this.textureAirbrushPendingPrewarmHit;
+        this.textureAirbrushPendingPrewarmEvent = null;
+        this.textureAirbrushPendingPrewarmHit = null;
+        this.textureAirbrushPrewarm?.(pendingEvent, pendingHit);
+      };
+      if (typeof window.requestIdleCallback === "function") {
+        window.requestIdleCallback(run, { timeout: 450 });
+      } else {
+        window.setTimeout(run, 80);
+      }
+      return true;
+    },
+
+    textureAirbrushPrewarm(event = null, hit = null) {
+      if (!this.renderer || !this.model || this.activeTool !== "airbrush") {
+        return false;
+      }
+      this.textureAirbrushBrushShaderMaterial?.();
+      this.textureAirbrushEnsureCopyScene?.();
+      this.textureAirbrushRenderDepthTarget?.();
+      const paintHit = hit || (event ? this.texturePaintHitForEvent?.(event, "airbrush") : null);
+      const record = paintHit?.record;
+      const materialIndex = paintHit?.hit?.face?.materialIndex ?? 0;
+      const material = record ? this.clonePaintMaterialForHit?.(record, paintHit.hit) : null;
+      if (record && material) {
+        const targetEntry = this.textureAirbrushGpuTargetForMaterial?.(material);
+        if (targetEntry) {
+          this.textureAirbrushGpuProxyForRecord?.(record, materialIndex, material);
+        }
+      }
+      return true;
     },
 
     textureAirbrushEnsureCopyScene() {
@@ -1636,6 +2188,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         return existing;
       }
       existing?.dispose?.();
+      this.textureAirbrushDepthTargetKey = "";
       const target = new THREE.WebGLRenderTarget(width, height, {
         minFilter: THREE.NearestFilter,
         magFilter: THREE.NearestFilter,
@@ -1651,10 +2204,31 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       return target;
     },
 
-    textureAirbrushRenderDepthTarget() {
+    textureAirbrushDepthCacheKey(rect = this.canvas?.getBoundingClientRect?.()) {
+      if (!rect || !this.camera || !this.renderer) {
+        return "";
+      }
+      const pixelRatio = this.renderer.getPixelRatio?.() || 1;
+      const matrixKey = [
+        ...this.camera.matrixWorldInverse.elements,
+        ...this.camera.projectionMatrix.elements
+      ].map((value) => Number(value).toFixed(4)).join(",");
+      return [
+        Math.round(rect.width * pixelRatio),
+        Math.round(rect.height * pixelRatio),
+        Number(this.progress || 0).toFixed(5),
+        matrixKey
+      ].join(":");
+    },
+
+    textureAirbrushRenderDepthTarget(options = {}) {
       const depthTarget = this.textureAirbrushEnsureDepthTarget();
       if (!depthTarget || !this.renderer || !this.scene || !this.camera) {
         return null;
+      }
+      const key = this.textureAirbrushDepthCacheKey();
+      if (options.reuse !== false && key && this.textureAirbrushDepthTargetKey === key) {
+        return depthTarget;
       }
       const previousTarget = this.renderer.getRenderTarget();
       const previousAutoClear = this.renderer.autoClear;
@@ -1664,6 +2238,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       this.renderer.render(this.scene, this.camera);
       this.renderer.setRenderTarget(previousTarget);
       this.renderer.autoClear = previousAutoClear;
+      this.textureAirbrushDepthTargetKey = key;
       return depthTarget;
     },
 
@@ -1767,20 +2342,83 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top
       };
-      const depthTarget = this.textureAirbrushRenderDepthTarget();
+      const strokeStart = options.strokeStart
+        && Number.isFinite(options.strokeStart.clientX)
+        && Number.isFinite(options.strokeStart.clientY)
+        ? options.strokeStart
+        : null;
+      const screenStart = strokeStart
+        ? {
+            x: strokeStart.clientX - rect.left,
+            y: strokeStart.clientY - rect.top
+          }
+        : screenCenter;
+      const screenSegments = (Array.isArray(options.strokeSegments) ? options.strokeSegments : [])
+        .map((segment) => {
+          const start = segment?.start;
+          const end = segment?.end;
+          if (
+            !Number.isFinite(start?.clientX)
+            || !Number.isFinite(start?.clientY)
+            || !Number.isFinite(end?.clientX)
+            || !Number.isFinite(end?.clientY)
+          ) {
+            return null;
+          }
+          return {
+            start: {
+              x: start.clientX - rect.left,
+              y: start.clientY - rect.top
+            },
+            end: {
+              x: end.clientX - rect.left,
+              y: end.clientY - rect.top
+            }
+          };
+        })
+        .filter(Boolean)
+        .slice(0, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
+      if (!screenSegments.length) {
+        screenSegments.push({
+          start: screenStart,
+          end: screenCenter
+        });
+      }
+      const brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
+      const depthTarget = this.textureAirbrushRenderDepthTarget({ reuse: true });
       if (!depthTarget) {
         return 0;
       }
-      const brushRadius = this.textureBrushRadiusScreenPixels?.() || 24;
-      const probeRadii = [0, brushRadius * 0.36, brushRadius * 0.72, brushRadius];
+      const probeCenters = [];
+      const addProbeCenter = (point) => {
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+          return;
+        }
+        const key = `${Math.round(point.x)}:${Math.round(point.y)}`;
+        if (!probeCenters.some((entry) => entry.key === key)) {
+          probeCenters.push({ key, x: point.x, y: point.y });
+        }
+      };
+      addProbeCenter(screenCenter);
+      addProbeCenter(screenStart);
+      for (const segment of screenSegments.slice(-3)) {
+        addProbeCenter(segment.start);
+        addProbeCenter(segment.end);
+      }
+      const probeRadii = brushRadius <= 16
+        ? [0]
+        : [0, brushRadius * 0.5, brushRadius];
       const probeAngles = [0, Math.PI * 0.25, Math.PI * 0.5, Math.PI * 0.75, Math.PI, Math.PI * 1.25, Math.PI * 1.5, Math.PI * 1.75];
-      const probes = [{ x: screenCenter.x, y: screenCenter.y }];
-      for (const radius of probeRadii.slice(1)) {
-        for (const angle of probeAngles) {
-          probes.push({
-            x: screenCenter.x + Math.cos(angle) * radius,
-            y: screenCenter.y + Math.sin(angle) * radius
-          });
+      const probes = [];
+      for (const center of probeCenters) {
+        probes.push({ x: center.x, y: center.y });
+        for (const radius of probeRadii.slice(1)) {
+          for (const angle of probeAngles) {
+            probes.push({
+              x: center.x + Math.cos(angle) * radius,
+              y: center.y + Math.sin(angle) * radius
+            });
+          }
         }
       }
 
@@ -1804,26 +2442,21 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         }
       };
 
-      for (const record of paintRecords) {
-        const materials = Array.isArray(record.object.material)
-          ? record.object.material
-          : [record.object.material].filter(Boolean);
-        for (let materialIndex = 0; materialIndex < materials.length; materialIndex += 1) {
-          addPaintPass(record, materialIndex, materials[materialIndex]);
+      for (const probe of probes) {
+        if (probe.x < 0 || probe.y < 0 || probe.x > rect.width || probe.y > rect.height) {
+          continue;
         }
-      }
-      if (!paintPasses.size) {
-        for (const probe of probes) {
-          if (probe.x < 0 || probe.y < 0 || probe.x > rect.width || probe.y > rect.height) {
-            continue;
+        this.pointer.x = (probe.x / rect.width) * 2 - 1;
+        this.pointer.y = -(probe.y / rect.height) * 2 + 1;
+        this.raycaster.setFromCamera(this.pointer, this.camera);
+        const intersections = this.raycaster.intersectObjects(paintObjects, false);
+        const nearest = intersections[0]?.distance ?? null;
+        for (const hit of intersections.slice(0, 4)) {
+          if (!hit || (Number.isFinite(nearest) && hit.distance > nearest + 0.025)) {
+            break;
           }
-          this.pointer.x = (probe.x / rect.width) * 2 - 1;
-          this.pointer.y = -(probe.y / rect.height) * 2 + 1;
-          this.raycaster.setFromCamera(this.pointer, this.camera);
-          const intersections = this.raycaster.intersectObjects(paintObjects, false);
-          const hit = intersections[0];
-          const record = recordByObject.get(hit?.object);
-          const materialIndex = hit?.face?.materialIndex ?? 0;
+          const record = recordByObject.get(hit.object);
+          const materialIndex = hit.face?.materialIndex ?? 0;
           const material = record ? this.clonePaintMaterialForHit?.(record, hit) : null;
           addPaintPass(record, materialIndex, material);
         }
@@ -1837,13 +2470,21 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       shaderMaterial.uniforms.paintProjectionMatrix.value.copy(this.camera.projectionMatrix);
       shaderMaterial.uniforms.depthTexture.value = depthTarget.depthTexture;
       shaderMaterial.uniforms.brushCenter.value.set(screenCenter.x, screenCenter.y);
+      shaderMaterial.uniforms.brushStart.value.set(screenStart.x, screenStart.y);
+      shaderMaterial.uniforms.strokeSegmentCount.value = screenSegments.length;
+      for (let index = 0; index < TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS; index += 1) {
+        const segment = screenSegments[index] || screenSegments[screenSegments.length - 1];
+        shaderMaterial.uniforms.strokeStarts.value[index].set(segment.start.x, segment.start.y);
+        shaderMaterial.uniforms.strokeEnds.value[index].set(segment.end.x, segment.end.y);
+      }
       shaderMaterial.uniforms.viewportSize.value.set(rect.width, rect.height);
-      const color = this.textureAirbrushColor();
-      shaderMaterial.uniforms.paintColor.value.setRGB(color.r / 255, color.g / 255, color.b / 255);
+      const color = this.textureAirbrushShaderColor(options.color || null);
+      shaderMaterial.uniforms.paintColor.value.setRGB(color.r, color.g, color.b);
       shaderMaterial.uniforms.radiusPixels.value = brushRadius;
       shaderMaterial.uniforms.strength.value = options.strength ?? 1;
-      shaderMaterial.uniforms.brushOpacity.value = this.textureAirbrushOpacity?.() ?? 0.42;
-      shaderMaterial.uniforms.scatterAmount.value = this.textureAirbrushScatter?.() ?? 0.35;
+      shaderMaterial.uniforms.brushOpacity.value = options.opacity ?? this.textureAirbrushOpacity?.() ?? 0.42;
+      shaderMaterial.uniforms.brushHardness.value = options.hardness ?? this.textureAirbrushHardness?.() ?? 0.35;
+      shaderMaterial.uniforms.scatterAmount.value = options.scatter ?? this.textureAirbrushScatter?.() ?? 0.35;
       shaderMaterial.uniforms.depthEpsilon.value = options.depthEpsilon
         ?? Math.max(0.01, Math.min(0.035, this.textureBrushRadiusValue() * 0.55));
       shaderMaterial.needsUpdate = false;
@@ -1855,7 +2496,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
         const { proxy, scene } = this.textureAirbrushGpuProxyForRecord(pass.record, pass.materialIndex, pass.material);
         proxy.skeleton?.update?.();
         this.renderer.setRenderTarget(pass.targetEntry.target);
-        const bleedOffsets = this.textureAirbrushGpuUvBleedOffsets?.(pass.targetEntry) || [new THREE.Vector2()];
+        const bleedOffsets = this.textureAirbrushGpuUvBleedOffsets?.(pass.targetEntry, brushRadius) || [new THREE.Vector2()];
         for (const offset of bleedOffsets) {
           shaderMaterial.uniforms.uvOffset.value.copy(offset);
           this.renderer.render(scene, this.textureAirbrushGpuCopyCamera);
@@ -1866,9 +2507,15 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
       this.renderer.setRenderTarget(previousTarget);
       this.renderer.autoClear = previousAutoClear;
 
+      const segmentLength = screenSegments.reduce((total, segment) => {
+        const dx = segment.end.x - segment.start.x;
+        const dy = segment.end.y - segment.start.y;
+        return total + Math.sqrt(dx * dx + dy * dy);
+      }, 0);
+      const radiusPixels = shaderMaterial.uniforms.radiusPixels.value;
       const estimate = Math.max(
         1,
-        Math.round(Math.PI * shaderMaterial.uniforms.radiusPixels.value * shaderMaterial.uniforms.radiusPixels.value * paintPasses.size)
+        Math.round((Math.PI * radiusPixels * radiusPixels + segmentLength * radiusPixels * 2) * paintPasses.size)
       );
       this.markTexturePaintStrokeChanged?.();
       this.setStatus(`Airbrushed ${estimate} projected pixels`);

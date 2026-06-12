@@ -1,5 +1,5 @@
 /*
-Paste this into the bird-weight-editor browser console after reproducing a
+Paste this into the Model Cleanup browser console after reproducing a
 Source -> Region -> Clone issue. It copies replay JSON to the clipboard and
 also prints it to the console.
 */
@@ -12,4 +12,3 @@ also prints it to the console.
   console.log("Clone paint replay JSON copied. Paste it into the Codex thread.");
   return json;
 })();
-

@@ -1721,6 +1721,9 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       if (this.poseBoneSelect.value !== name && [...this.poseBoneSelect.options].some((option) => option.value === name)) {
         this.poseBoneSelect.value = name;
       }
+      if (!this.app?.classList.contains("is-timeline-compact") && this.boneLayerNames?.includes(name)) {
+        this.expandedBoneName = name;
+      }
       this.syncPoseControls();
       this.updateRigBoneList();
       this.updateTimelineKeyMarkers();

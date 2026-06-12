@@ -628,12 +628,14 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
     },
 
     resize() {
+      this.flushTextureAirbrushScreenStroke?.();
       const rect = this.canvas.getBoundingClientRect();
       const width = Math.max(1, Math.floor(rect.width));
       const height = Math.max(1, Math.floor(rect.height));
       this.camera.aspect = width / height;
       this.camera.updateProjectionMatrix();
       this.renderer.setSize(width, height, false);
+      this.resizeTextureAirbrushScreenLayer?.();
     },
 
     hasSelection() {
@@ -693,8 +695,11 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       const now = performance.now();
       const dt = Math.min((now - this.lastFrameTime) / 1000, 0.08);
       this.lastFrameTime = now;
+      const macroSceneSpeed = this.tutorialMacroPlaying
+        ? Math.max(0.1, Number(this.tutorialMacroPlaybackSpeed?.()) || 1)
+        : 1;
       if (this.sequencePlaying) {
-        const speed = Math.max(0.01, Number(this.speedControl.value) || 1);
+        const speed = Math.max(0.01, Number(this.speedControl.value) || 1) * macroSceneSpeed;
         this.sequenceElapsed = Math.min(this.sequenceElapsed + dt * speed, this.sequenceDurationSeconds());
         this.applySequencePose({ now, throttleReadouts: true });
         this.syncSequenceControls({ now, throttle: true });
@@ -709,7 +714,7 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
           this.syncSequenceControls({ force: true });
         }
       } else if (this.playing && !this.draggingScrub) {
-        const speed = Number(this.speedControl.value) * this.actionSpeedMultiplier();
+        const speed = Number(this.speedControl.value) * this.actionSpeedMultiplier() * macroSceneSpeed;
         const nextProgress = this.progress + (dt * speed) / this.currentActionDuration();
         if (this.loopToggle.checked) {
           this.progress = this.rootMotionPreviewEnabled?.() === true

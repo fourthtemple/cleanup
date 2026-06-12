@@ -268,6 +268,41 @@ export class BrowserAnimationLibraryStorage {
     return { ok: true, folder: folderName, fileName, cleanupDeleted: true };
   }
 
+  async deleteFolder({ folder }) {
+    const folderName = sanitizeFolderName(folder);
+    if (!folderName) {
+      throw new Error("Folder name is required");
+    }
+    const files = (await this.fileRecords()).filter((record) => record.folder === folderName);
+    const cleanups = (await this.cleanupRecords()).filter((record) => record.folder === folderName);
+    const db = await this.db();
+    if (!db) {
+      this.memoryFolders.delete(folderName);
+      for (const record of files) {
+        this.memoryFiles.delete(record.key);
+      }
+      for (const record of cleanups) {
+        this.memoryCleanups.delete(record.key);
+      }
+    } else {
+      const transaction = db.transaction([FOLDER_STORE, FILE_STORE, CLEANUP_STORE], "readwrite");
+      transaction.objectStore(FOLDER_STORE).delete(folderName);
+      for (const record of files) {
+        transaction.objectStore(FILE_STORE).delete(record.key);
+      }
+      for (const record of cleanups) {
+        transaction.objectStore(CLEANUP_STORE).delete(record.key);
+      }
+      await transactionDone(transaction);
+    }
+    return {
+      ok: true,
+      folder: folderName,
+      filesDeleted: files.length,
+      cleanupsDeleted: cleanups.length
+    };
+  }
+
   async saveCleanup({ folder, fileName, content }) {
     const folderName = sanitizeFolderName(folder);
     const name = String(fileName || "").trim();

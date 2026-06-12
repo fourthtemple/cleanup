@@ -119,8 +119,8 @@ export function installLoopBlendMethods(BirdWeightEditor, deps) {
       this.poseKeyframes.set(targetFrame, framePose);
     },
 
-    loopBlendLayerValue(frame, boneName, channel, sampledValue, adaptiveAbsoluteEdit) {
-      if (adaptiveAbsoluteEdit) {
+    loopBlendLayerValue(frame, boneName, channel, sampledValue, convertAbsoluteEdit) {
+      if (convertAbsoluteEdit) {
         return this.adaptiveValueFromAbsoluteValue?.(frame, boneName, channel, sampledValue) ?? finitePoseValue(sampledValue);
       }
       return finitePoseValue(sampledValue);
@@ -164,8 +164,12 @@ export function installLoopBlendMethods(BirdWeightEditor, deps) {
         return false;
       }
 
+      const useAdditiveKinematics = this.canUseAdditiveKinematicsForCurrentLayer?.() === true;
+      if (useAdditiveKinematics) {
+        this.prepareAdditiveKinematicsLayerForEdit?.();
+      }
       const useAdaptiveEdit = this.canUseAdaptiveEditForCurrentLayer?.() === true;
-      const adaptiveAbsoluteEdit = this.shouldConvertSolvedEditToAdaptive?.() === true;
+      const convertAbsoluteEdit = useAdditiveKinematics || this.shouldConvertSolvedEditToAdaptive?.() === true;
       if (useAdaptiveEdit) {
         this.prepareAdaptivePoseLayerForEdit?.();
       }
@@ -178,7 +182,7 @@ export function installLoopBlendMethods(BirdWeightEditor, deps) {
           boneName,
           channel,
           finitePoseValue(startPose[channel]),
-          adaptiveAbsoluteEdit
+          convertAbsoluteEdit
         );
         const holdSample = hasInteriorKey
           ? finitePoseValue(blendStartPose[channel])
@@ -188,14 +192,14 @@ export function installLoopBlendMethods(BirdWeightEditor, deps) {
           boneName,
           channel,
           holdSample,
-          adaptiveAbsoluteEdit
+          convertAbsoluteEdit
         );
         const endValue = this.loopBlendLayerValue(
           endFrame,
           boneName,
           channel,
           finitePoseValue(startPose[channel]),
-          adaptiveAbsoluteEdit
+          convertAbsoluteEdit
         );
         this.setLoopBlendChannelValue(0, boneName, channel, startValue);
         this.setLoopBlendChannelValue(blendStartFrame, boneName, channel, holdValue);

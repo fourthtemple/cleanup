@@ -2,6 +2,9 @@
 node_modules/
 dist/
 npm-debug.log*
+.env
+.env.local
+.env.*.local
 
 # Local scratch output
 *.log

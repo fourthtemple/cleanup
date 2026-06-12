@@ -1,12 +1,16 @@
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const port = Number(process.env.PORT || 4174);
+const initialEnvKeys = new Set(Object.keys(process.env));
+await loadLocalEnv(root, initialEnvKeys);
+const requestedPort = parseRequestedPort(process.env.PORT);
 const animationLibraryRoot = resolve(root, "assets/models/animation-library");
+const tutorialMacroAssetPath = resolve(root, "assets/tutorial-macros.json");
+const tutorialRecipeAssetPath = resolve(root, "assets/tutorial-recipes.json");
 const animationFileExtensions = new Set([".fbx", ".glb", ".gltf"]);
 
 const contentTypes = {
@@ -25,7 +29,7 @@ const contentTypes = {
 
 const server = createServer(async (request, response) => {
   try {
-    const requestUrl = new URL(request.url || "/", `http://${request.headers.host || `127.0.0.1:${port}`}`);
+    const requestUrl = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`);
 
     if (request.method === "GET" && requestUrl.pathname === "/api/animation-library") {
       await listAnimationLibrary(response);
@@ -47,8 +51,23 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "POST" && requestUrl.pathname === "/api/animation-library/folder/delete") {
+      await deleteAnimationLibraryFolder(request, response);
+      return;
+    }
+
     if (request.method === "POST" && requestUrl.pathname === "/api/animation-library/cleanup") {
       await saveAnimationLibraryCleanup(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && requestUrl.pathname === "/api/tutorial-macros") {
+      await saveTutorialMacros(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && requestUrl.pathname === "/api/tutorial-recipes") {
+      await saveTutorialRecipes(request, response);
       return;
     }
 
@@ -64,9 +83,70 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(port, () => {
+server.listen(requestedPort, "127.0.0.1", () => {
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : requestedPort;
   console.log(`Fourth Temple Model Cleanup dev server: http://127.0.0.1:${port}/`);
 });
+
+function parseRequestedPort(value) {
+  if (value === undefined || value === "") {
+    return 0;
+  }
+
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`PORT must be an integer from 0 to 65535, received "${value}"`);
+  }
+
+  return port;
+}
+
+async function loadLocalEnv(rootDir, explicitEnvKeys) {
+  for (const fileName of [".env", ".env.local"]) {
+    let text = "";
+    try {
+      text = await readFile(resolve(rootDir, fileName), "utf8");
+    } catch {
+      continue;
+    }
+
+    for (const [key, value] of parseEnvFile(text)) {
+      if (!explicitEnvKeys.has(key)) {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+function parseEnvFile(text) {
+  const entries = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+
+    entries.push([match[1], unquoteEnvValue(match[2])]);
+  }
+  return entries;
+}
+
+function unquoteEnvValue(value) {
+  const trimmed = String(value || "").trim();
+  if (
+    (trimmed.startsWith("\"") && trimmed.endsWith("\""))
+    || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
 
 async function listAnimationLibrary(response) {
   await mkdir(animationLibraryRoot, { recursive: true });
@@ -217,6 +297,34 @@ async function deleteAnimationLibraryFile(request, response) {
   });
 }
 
+async function deleteAnimationLibraryFolder(request, response) {
+  const payload = await readJsonRequest(request, 64 * 1024);
+  const folderName = sanitizeLibraryFolderName(payload.folder || payload.name);
+  if (!folderName) {
+    sendJson(response, 400, { error: "Folder name is required" });
+    return;
+  }
+
+  const folderPath = resolveAnimationLibraryFolder(folderName);
+  if (!folderPath) {
+    sendJson(response, 403, { error: "Invalid animation folder" });
+    return;
+  }
+
+  try {
+    await rm(folderPath, { recursive: true, force: false });
+  } catch {
+    sendJson(response, 404, { error: "Animation folder not found" });
+    return;
+  }
+
+  sendJson(response, 200, {
+    ok: true,
+    folder: folderName,
+    path: `assets/models/animation-library/${folderName}`
+  });
+}
+
 async function saveAnimationLibraryCleanup(request, response) {
   const payload = await readJsonRequest(request, 16 * 1024 * 1024);
   const folderName = sanitizeLibraryFolderName(payload.folder);
@@ -259,6 +367,66 @@ async function saveAnimationLibraryCleanup(request, response) {
     path: `assets/models/animation-library/${folderName}/${fileName}`,
     bytes: Buffer.byteLength(content, "utf8")
   });
+}
+
+async function saveTutorialMacros(request, response) {
+  const payload = await readJsonRequest(request, 64 * 1024 * 1024);
+  const macros = payload?.macros;
+  if (!macros || typeof macros !== "object" || Array.isArray(macros)) {
+    sendJson(response, 400, { error: "Tutorial macros payload requires a macros object" });
+    return;
+  }
+
+  const content = `${JSON.stringify({
+    version: 1,
+    app: "Fourth Temple Model Cleanup",
+    updatedAt: new Date().toISOString(),
+    macros
+  }, null, 2)}\n`;
+  JSON.parse(content);
+  await writeAssetJson(tutorialMacroAssetPath, content);
+  sendJson(response, 200, {
+    ok: true,
+    path: "assets/tutorial-macros.json",
+    macros: Object.keys(macros).sort(),
+    bytes: Buffer.byteLength(content, "utf8")
+  });
+}
+
+async function saveTutorialRecipes(request, response) {
+  const payload = await readJsonRequest(request, 4 * 1024 * 1024);
+  const cards = Array.isArray(payload?.cards) ? payload.cards : null;
+  if (!cards) {
+    sendJson(response, 400, { error: "Tutorial recipes payload requires a cards array" });
+    return;
+  }
+
+  const content = `${JSON.stringify({
+    version: 1,
+    app: "Fourth Temple Model Cleanup",
+    updatedAt: new Date().toISOString(),
+    cards
+  }, null, 2)}\n`;
+  JSON.parse(content);
+  await writeAssetJson(tutorialRecipeAssetPath, content);
+  sendJson(response, 200, {
+    ok: true,
+    path: "assets/tutorial-recipes.json",
+    cards: cards.length,
+    bytes: Buffer.byteLength(content, "utf8")
+  });
+}
+
+async function writeAssetJson(destination, content) {
+  if (!destination.startsWith(`${resolve(root, "assets")}${sep}`)) {
+    const error = new Error("Invalid asset path");
+    error.statusCode = 403;
+    throw error;
+  }
+  await mkdir(resolve(root, "assets"), { recursive: true });
+  const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(temporary, content, "utf8");
+  await rename(temporary, destination);
 }
 
 function animationLibraryFileDescriptor(folderName, fileName) {

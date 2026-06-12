@@ -13,29 +13,32 @@ import {
 } from "./animation/animation-clip-utils.js";
 import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
 import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=tutorial-macro-reset-20260605a";
-import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=help-demo-clean-slate-20260605a";
-import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=ik-chain-demo-20260605a";
+import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=folder-delete-inline-20260607a";
+import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=adaptive-context-key-20260609a";
 import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=tutorial-macro-reset-20260605a";
 import { installClonePaintReplayMethods } from "./weight-editor/clone-paint-replay.js?v=airbrush-command-20260602a";
-import { installCurveEditorMethods } from "./weight-editor/curve-editor.js";
-import { installCurveHandleMethods } from "./weight-editor/curve-handles.js";
-import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js?v=ik-chain-demo-20260605a";
+import { installCurveEditorMethods } from "./weight-editor/curve-editor.js?v=adaptive-context-key-20260609a";
+import { installCurveHandleMethods } from "./weight-editor/curve-handles.js?v=adaptive-context-key-20260609a";
+import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js?v=adaptive-delta-cache-20260609a";
 import { installJointConstraintMethods } from "./weight-editor/joint-constraints.js?v=joint-limit-capture-20260604a";
-import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=joint-limit-min-max-20260604b";
-import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=selection-radius-sync-20260605a";
+import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=macro-scene-speed-20260608a";
+import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=airbrush-lag-20260607b";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-replay-state-20260606a";
-import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=chain-paste-quat-20260606a";
-import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=chain-paste-quat-20260606a";
-import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-chain-demo-20260605a";
+import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=adaptive-context-key-20260609a";
+import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=timeline-curve-expand-20260610a";
+import { installTimelineAdditiveKinematicsMethods } from "./weight-editor/timeline-additive-kinematics.js?v=edit-modes-20260609a";
+import { installTimelineAdaptiveEditMethods } from "./weight-editor/timeline-adaptive-edits.js?v=adaptive-convert-exact-20260609b";
+import { installTimelineSolvedKeyMethods } from "./weight-editor/timeline-solved-keys.js?v=key-detail-motion-20260609a";
+import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-solver-dropdown-active-20260609a";
 import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
-import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=macro-chain-scroll-20260605a";
-import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js?v=travel-follow-return-20260605a";
+import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=timeline-bone-curves-20260610a";
+import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js?v=macro-live-follow-20260608a";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=preview-cursor-paste-undo-20260606a";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=timeline-bone-curves-20260610a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
-import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=preview-cursor-paste-undo-20260606a";
-import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-replay-state-20260606a";
-import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=tutorial-macro-reset-20260605a";
+import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=airbrush-lag-20260607b";
+import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=tutorial-disk-save-20260609a";
+import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=adaptive-delta-cache-20260609a";
 import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
 
 const BIRD_WEIGHT_PATCH_FILE_NAME = "mixamo-cleanup-weight-patch.json";
@@ -119,8 +122,9 @@ function finitePoseValue(value) {
   return Number.isFinite(number) ? number : 0;
 }
 
-class BirdWeightEditor {
+class ModelCleanupEditor {
   constructor() {
+    window.modelCleanupEditor = this;
     window.mixamoCleanupEditor = this;
     this.installClonePaintReplayConsole?.();
     this.app = document.querySelector(".weight-editor-app");
@@ -138,6 +142,8 @@ class BirdWeightEditor {
     this.mirrorModeButton = document.getElementById("mirror-mode");
     this.saveOrbitViewButton = document.getElementById("save-orbit-view");
     this.restoreOrbitViewButton = document.getElementById("restore-orbit-view");
+    this.saveCameraSettingsButton = document.getElementById("save-camera-settings");
+    this.resetCameraSettingsButton = document.getElementById("reset-camera-settings");
     this.characterSelect = document.getElementById("weight-character-select");
     this.actionSelect = document.getElementById("weight-action-select");
     this.exportFbxButton = document.getElementById("export-fbx-button");
@@ -145,6 +151,11 @@ class BirdWeightEditor {
     this.exportGlbButton = document.getElementById("export-glb-button");
     this.unbakeRootMotionButton = document.getElementById("unbake-root-motion");
     this.animationLibraryFolderSelect = document.getElementById("animation-library-folder-select");
+    this.deleteAnimationLibraryFolderButton = document.getElementById("delete-animation-library-folder");
+    this.deleteAnimationLibraryFolderConfirm = document.getElementById("delete-animation-library-folder-confirm");
+    this.deleteAnimationLibraryFolderConfirmMessage = document.getElementById("delete-animation-library-folder-message");
+    this.confirmDeleteAnimationLibraryFolderButton = document.getElementById("confirm-delete-animation-library-folder");
+    this.cancelDeleteAnimationLibraryFolderButton = document.getElementById("cancel-delete-animation-library-folder");
     this.animationLibraryFolderName = document.getElementById("animation-library-folder-name");
     this.createAnimationLibraryFolderButton = document.getElementById("create-animation-library-folder");
     this.animationLibraryImportButton = document.getElementById("animation-library-import-button");
@@ -156,6 +167,7 @@ class BirdWeightEditor {
     this.animationLibraryFileInput = document.getElementById("animation-library-file");
     this.animationLibraryRefreshButton = document.getElementById("animation-library-refresh");
     this.animationLibraryList = document.getElementById("animation-library-list");
+    this.motionConversionModeSelect = document.getElementById("motion-conversion-mode");
     this.timelineBlendActionSelect = document.getElementById("timeline-blend-action-select");
     this.transferCleanupToBlendButton = document.getElementById("transfer-cleanup-to-blend");
     this.timelineBlendControl = document.getElementById("timeline-blend-control");
@@ -202,6 +214,7 @@ class BirdWeightEditor {
     this.ikSolverModeSelect = document.getElementById("ik-solver-mode");
     this.ikCounterRotation = document.getElementById("ik-counter-rotation");
     this.ikCounterRotationOutput = document.getElementById("ik-counter-rotation-output");
+    this.convertAdaptiveKeyButton = document.getElementById("convert-adaptive-key");
     this.brushRadius = document.getElementById("brush-radius");
     this.brushRadiusOutput = document.getElementById("brush-radius-output");
     this.throughSelectionToggle = document.getElementById("through-selection-toggle");
@@ -219,6 +232,8 @@ class BirdWeightEditor {
     this.textureBrushRadiusOutput = document.getElementById("texture-brush-radius-output");
     this.textureBrushOpacity = document.getElementById("texture-brush-opacity");
     this.textureBrushOpacityOutput = document.getElementById("texture-brush-opacity-output");
+    this.textureBrushHardness = document.getElementById("texture-brush-hardness");
+    this.textureBrushHardnessOutput = document.getElementById("texture-brush-hardness-output");
     this.textureBrushScatter = document.getElementById("texture-brush-scatter");
     this.textureBrushScatterOutput = document.getElementById("texture-brush-scatter-output");
     this.texturePickColorToolButton = document.getElementById("texture-pick-color-tool");
@@ -231,6 +246,7 @@ class BirdWeightEditor {
     this.lassoOverlay = document.getElementById("lasso-overlay");
     this.lassoOverlayPath = document.getElementById("lasso-overlay-path");
     this.textureBrushCursor = document.getElementById("texture-brush-cursor");
+    this.textureAirbrushScreenLayer = document.getElementById("texture-airbrush-screen-layer");
     this.clearSelectionButton = document.getElementById("clear-selection");
     this.clearAllSelectionButton = document.getElementById("clear-all-selection");
     this.invertSelectionButton = document.getElementById("invert-selection");
@@ -296,6 +312,7 @@ class BirdWeightEditor {
     this.status = document.getElementById("viewer-status");
     this.sidePanelToggle = document.getElementById("side-panel-toggle");
     this.sidePanelShowToggle = document.getElementById("side-panel-show-toggle");
+    this.sidePanelResizeHandle = document.getElementById("side-panel-resize");
     this.tutorialsToggle = document.getElementById("tutorials-toggle");
     this.tutorialBackdrop = document.getElementById("tutorial-backdrop");
     this.tutorialDrawer = document.getElementById("tutorial-drawer");
@@ -305,6 +322,9 @@ class BirdWeightEditor {
     this.tutorialResetButton = document.getElementById("tutorial-reset");
     this.tutorialMacroRecordButton = document.getElementById("tutorial-macro-record");
     this.tutorialMacroStopButton = document.getElementById("tutorial-macro-stop");
+    this.tutorialMacroExportButton = document.getElementById("tutorial-macro-export");
+    this.tutorialMacroImportButton = document.getElementById("tutorial-macro-import");
+    this.tutorialMacroImportFileInput = document.getElementById("tutorial-macro-import-file");
     this.tutorialDemoControls = document.getElementById("tutorial-demo-controls");
     this.tutorialMacroPlayButton = document.getElementById("tutorial-macro-play");
     this.tutorialMacroSpeedSelect = document.getElementById("tutorial-macro-speed");
@@ -313,8 +333,10 @@ class BirdWeightEditor {
     this.timelineCompactToggle = document.getElementById("timeline-compact-toggle");
     this.timelineHideToggle = document.getElementById("timeline-hide-toggle");
     this.timelineShowToggle = document.getElementById("timeline-show-toggle");
+    this.timelineDrawerHandle = document.getElementById("timeline-drawer-handle");
     this.useTimelineKeysToggle = document.getElementById("use-timeline-keys");
     this.adaptiveEditToggle = document.getElementById("adaptive-edit-mode");
+    this.additiveKinematicsToggle = document.getElementById("additive-kinematics-mode");
     this.solvedKeyDetail = document.getElementById("solved-key-detail");
     this.solvedKeyDetailOutput = document.getElementById("solved-key-detail-output");
     this.cameraGizmo = document.getElementById("camera-gizmo");
@@ -325,6 +347,7 @@ class BirdWeightEditor {
     this.cameraGizmoSpeed = document.getElementById("camera-gizmo-speed");
     this.cameraGizmoSpeedOutput = document.getElementById("camera-gizmo-speed-output");
     this.cameraBackgroundColor = document.getElementById("camera-background-color");
+    this.cameraMeshColor = document.getElementById("camera-mesh-color");
     this.cameraAmbientLight = document.getElementById("camera-ambient-light");
     this.cameraAmbientLightOutput = document.getElementById("camera-ambient-light-output");
     this.cameraKeyLight = document.getElementById("camera-key-light");
@@ -387,6 +410,7 @@ class BirdWeightEditor {
     this.gizmoOnlyPreview = false;
     this.mirrorMode = false;
     this.backgroundColor = this.cameraBackgroundColor?.value || "#11171c";
+    this.meshColor = this.cameraMeshColor?.value || "#80d8ff";
     const controlNumber = (control, fallback) => {
       const value = Number(control?.value);
       return Number.isFinite(value) ? value : fallback;
@@ -401,7 +425,11 @@ class BirdWeightEditor {
     this.manualPoseAdditiveNames = new Set();
     this.manualPoseEditedChannels = new Map();
     this.poseKeyframes = new Map();
+    this.adaptiveGuideKeyframes = new Map();
+    this.adaptiveGuideDeltaKeyframes = new Map();
+    this.adaptiveGuideCurveHandles = new Map();
     this.poseCurveHandles = new Map();
+    this.poseKeyframeKinds = new Map();
     this.poseClipboard = null;
     this.poseKeyframeMode = "additive";
     this.poseKeyframesGenerated = false;
@@ -503,7 +531,7 @@ class BirdWeightEditor {
   }
 }
 
-const BIRD_WEIGHT_EDITOR_DEPS = {
+const MODEL_CLEANUP_EDITOR_DEPS = {
   THREE,
   FBXLoader,
   GLTFExporter,
@@ -534,31 +562,34 @@ const BIRD_WEIGHT_EDITOR_DEPS = {
   writeAnimationLibraryCleanupFile
 };
 
-installSceneAndControlMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installAssetExportMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installAnimationLibraryMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installActorAndModelMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installClonePaintMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installClonePaintReplayMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installRigEditorMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installIkSolverMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installJointConstraintMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installPaintToolMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installWeightMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installVertexPatchMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installPoseCoreMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installPoseClipboardMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installPoseTimelineMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installCurveHandleMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installLoopBlendMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installSequencePlaybackMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installRootMotionPreviewMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installRootMotionUnbakeMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installOverlayAndRenderMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installCurveEditorMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installAutoKeySolverMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installTextureAirbrushMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
-installTutorialMacroMethods(BirdWeightEditor, BIRD_WEIGHT_EDITOR_DEPS);
+installSceneAndControlMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installAssetExportMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installAnimationLibraryMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installActorAndModelMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installClonePaintMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installClonePaintReplayMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installRigEditorMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installIkSolverMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installJointConstraintMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installPaintToolMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installWeightMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installVertexPatchMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installPoseCoreMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installPoseClipboardMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installTimelineAdditiveKinematicsMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installTimelineAdaptiveEditMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installTimelineSolvedKeyMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installPoseTimelineMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installCurveHandleMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installLoopBlendMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installSequencePlaybackMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installRootMotionPreviewMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installRootMotionUnbakeMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installOverlayAndRenderMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installCurveEditorMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installAutoKeySolverMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installTextureAirbrushMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installTutorialMacroMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 
 
 async function writeJsonFile(fileName, text, description) {
@@ -610,4 +641,4 @@ async function writeAnimationLibraryCleanupFile(folder, fileName, text) {
   }
 }
 
-new BirdWeightEditor();
+new ModelCleanupEditor();

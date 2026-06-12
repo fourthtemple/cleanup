@@ -87,7 +87,11 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       this.painting = true;
       this.controls.enabled = false;
       this.canvas.setPointerCapture?.(event.pointerId);
-      this.paintFromEvent(event);
+      if (this.activeTool === "airbrush" || this.activeTool === "clone") {
+        this.paintTextureStrokeFromEvent?.(event, { reset: true });
+      } else {
+        this.paintFromEvent(event);
+      }
     },
 
     onCanvasClick(event) {
@@ -111,7 +115,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.pushUndoState?.(undoLabel);
       }
       this.updateTextureBrushCursor?.(event);
-      this.paintFromEvent(event);
+      this.paintTextureStrokeFromEvent?.(event, { reset: true });
       this.endTexturePaintStrokeUndo?.();
     },
 
@@ -155,6 +159,8 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       event.preventDefault();
       if (this.activeTool === "airbrush" || this.activeTool === "clone") {
         this.updateTextureBrushCursor?.(event);
+        this.paintTextureStrokeFromEvent?.(event);
+        return;
       } else if (this.usesSelectionBrushCursor?.(this.activeTool)) {
         this.updateSelectionBrushCursor?.(event);
       }
@@ -186,6 +192,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (this.activeTool === "airbrush" || this.activeTool === "clone") {
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         this.texturePaintSuppressClickUntil = now + 700;
+        this.texturePaintStrokePoint = null;
         this.hideTextureBrushCursor?.();
       }
       this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
@@ -199,6 +206,58 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
 
     usesTextureStrokeUndo(action) {
       return action === "airbrush" || action === "clone";
+    },
+
+    texturePaintEventAtPoint(sourceEvent, point) {
+      return {
+        clientX: point.clientX,
+        clientY: point.clientY,
+        button: sourceEvent?.button ?? 0,
+        buttons: sourceEvent?.buttons ?? 1,
+        pointerId: sourceEvent?.pointerId,
+        pointerType: sourceEvent?.pointerType || "",
+        altKey: Boolean(sourceEvent?.altKey),
+        ctrlKey: Boolean(sourceEvent?.ctrlKey),
+        metaKey: Boolean(sourceEvent?.metaKey),
+        shiftKey: Boolean(sourceEvent?.shiftKey),
+        preventDefault: () => sourceEvent?.preventDefault?.(),
+        stopPropagation: () => sourceEvent?.stopPropagation?.()
+      };
+    },
+
+    paintTextureStrokeFromEvent(event, { reset = false } = {}) {
+      if (!event || (this.activeTool !== "airbrush" && this.activeTool !== "clone")) {
+        return false;
+      }
+      const current = {
+        clientX: event.clientX,
+        clientY: event.clientY
+      };
+      const previous = reset ? null : this.texturePaintStrokePoint;
+      if (this.activeTool === "clone") {
+        this.paintFromEvent(event);
+        this.texturePaintStrokePoint = current;
+        return true;
+      }
+      if (!previous) {
+        this.paintFromEvent(event, { strokeStart: current });
+        this.texturePaintStrokePoint = current;
+        return true;
+      }
+      const dx = current.clientX - previous.clientX;
+      const dy = current.clientY - previous.clientY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance <= 0.001) {
+        this.paintFromEvent(event, { strokeStart: previous });
+        this.texturePaintStrokePoint = current;
+        return true;
+      }
+      const brushRadius = Math.max(1, this.textureBrushRadiusScreenPixels?.() || 8);
+      const maxSegmentPixels = Math.max(80, brushRadius * 18);
+      const strokeStart = distance > maxSegmentPixels ? current : previous;
+      this.paintFromEvent(event, { strokeStart });
+      this.texturePaintStrokePoint = current;
+      return true;
     },
 
     captureSelectionSnapshot() {
@@ -457,6 +516,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     endTexturePaintStrokeUndo() {
+      this.flushTextureAirbrushScreenStroke?.();
       const stroke = this.texturePaintStrokeUndo;
       this.texturePaintStrokeUndo = null;
       if (!stroke?.changed || !stroke.before.length) {
@@ -1267,7 +1327,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return changed;
     },
 
-    paintFromEvent(event) {
+    paintFromEvent(event, options = {}) {
       if (!this.model) {
         return;
       }
@@ -1298,7 +1358,14 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         ? this.texturePaintHitForEvent?.(event, this.activeTool)
         : null;
       if (this.activeTool === "airbrush") {
-        const projectedChanged = this.textureAirbrushProjectedMeshFromEvent?.(event, { gpu: true }) || 0;
+        this.clearTextureAirbrushScreenLayer?.();
+        const macroBrush = this.recordTutorialMacroPaintBrushState?.(event) || event.tutorialMacroBrush;
+        const macroBrushOptions = this.textureAirbrushOptionsFromMacroBrush?.(macroBrush) || {};
+        const projectedChanged = this.textureAirbrushProjectedMeshFromEvent?.(event, {
+          gpu: true,
+          strokeStart: options.strokeStart || null,
+          ...macroBrushOptions
+        }) || 0;
         if (!projectedChanged) {
           this.setStatus("Airbrush needs the cursor over textured mesh");
         }

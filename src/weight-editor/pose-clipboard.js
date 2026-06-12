@@ -132,6 +132,10 @@ export function installPoseClipboardMethods(BirdWeightEditor, deps) {
       this.stopSequencePreview?.({ applyPose: false, resetElapsed: true });
       this.pausePlayback?.();
       const frame = this.currentFrame();
+      const useAdditiveKinematics = this.canUseAdditiveKinematicsForCurrentLayer?.() === true;
+      if (useAdditiveKinematics) {
+        this.prepareAdditiveKinematicsLayerForEdit?.();
+      }
       const useAdaptiveEdit = this.canUseAdaptiveEditForCurrentLayer?.() === true;
       if (useAdaptiveEdit) {
         this.prepareAdaptivePoseLayerForEdit?.();
@@ -153,6 +157,7 @@ export function installPoseClipboardMethods(BirdWeightEditor, deps) {
         }
       }
       this.poseKeyframes.set(frame, framePose);
+      this.setPoseKeyframeKind?.(frame, entries.length > 1 ? "ik" : "authored");
       this.progress = frame / Math.max(1, this.timelineFrames);
       if (this.timeScrub) {
         this.timeScrub.value = String(this.progress);

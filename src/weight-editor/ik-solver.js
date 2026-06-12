@@ -211,6 +211,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       this.refreshRigOverlays();
       this.updateIkMoveGizmo();
       const settings = this.ikSettingsForChain(chainNames);
+      this.updateIkSettingsControls?.();
       this.setStatus(`IK ${this.ikChainLabel(chainNames)} (${settings.solver.toUpperCase()}): drag the target, then Key to bake`);
       return true;
     },
@@ -308,12 +309,12 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
     },
 
     defaultIkChainSettings() {
-      return { solver: "ccd", counterRotation: 0 };
+      return this.normalizeIkChainSettings?.(this.defaultIkChainSettingsOverride) || { solver: "smooth", counterRotation: 0 };
     },
 
     normalizeIkChainSettings(settings = {}) {
       return {
-        solver: settings.solver === "smooth" ? "smooth" : "ccd",
+        solver: settings.solver === "ccd" ? "ccd" : "smooth",
         counterRotation: THREE.MathUtils.clamp(Number(settings.counterRotation) || 0, -1, 1)
       };
     },
@@ -355,29 +356,46 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
         this.syncPatchJson?.();
       }
       if (!options.silent) {
-        this.setStatus(`IK ${this.boneChainSelect?.selectedOptions?.[0]?.textContent || "chain"} uses ${next.solver.toUpperCase()}`);
+        this.setStatus(`IK ${this.boneChainSelect?.selectedOptions?.[0]?.textContent || this.ikChainLabel?.() || "chain"} uses ${next.solver.toUpperCase()}`);
+      }
+      return true;
+    },
+
+    setDefaultIkChainSettings(settings = {}, options = {}) {
+      const next = this.normalizeIkChainSettings(settings);
+      this.defaultIkChainSettingsOverride = next;
+      this.updateIkSettingsControls?.();
+      if (options.sync !== false) {
+        this.syncPatchJson?.();
+      }
+      if (!options.silent) {
+        this.setStatus(`Default IK solver uses ${next.solver.toUpperCase()}`);
       }
       return true;
     },
 
     updateSelectedIkSettingsFromControls() {
-      return this.setIkChainSettings(this.selectedBoneChainRootName, {
-        solver: this.ikSolverModeSelect?.value || "ccd",
+      const settings = {
+        solver: this.ikSolverModeSelect?.value || "smooth",
         counterRotation: Number(this.ikCounterRotation?.value) || 0
-      });
+      };
+      const chainNames = this.ikChainNames?.() || [];
+      return chainNames.length >= 2
+        ? this.setIkChainSettings(this.selectedBoneChainRootName, settings)
+        : this.setDefaultIkChainSettings(settings);
     },
 
     updateIkSettingsControls() {
-      const chainNames = this.selectedBoneChainNames?.() || [];
+      const chainNames = this.ikChainNames?.() || [];
       const enabled = chainNames.length >= 2;
       const settings = enabled ? this.ikSettingsForChain(chainNames) : this.defaultIkChainSettings();
       if (this.ikSolverModeSelect) {
-        this.ikSolverModeSelect.disabled = !enabled;
+        this.ikSolverModeSelect.disabled = false;
         this.ikSolverModeSelect.value = settings.solver;
       }
       if (this.ikCounterRotation) {
         const showCounterRotation = settings.solver === "ccd";
-        this.ikCounterRotation.disabled = !enabled || !showCounterRotation;
+        this.ikCounterRotation.disabled = !showCounterRotation;
         this.ikCounterRotation.value = String(settings.counterRotation);
         const counterField = this.ikCounterRotation.closest?.(".ik-counter-rotation-field");
         counterField?.classList.remove("is-hidden");
