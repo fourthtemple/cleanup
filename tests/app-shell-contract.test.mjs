@@ -51,3 +51,17 @@ test("animation library exposes an explicit motion conversion action", () => {
   assert.match(animationLibrary, /id="motion-conversion-apply"/);
   assert.match(animationLibrary, />Convert<\/button>/);
 });
+
+test("tutorial recipes explain curve editing and motion conversion", () => {
+  const html = indexHtml();
+
+  assert.match(html, /<h3>Curve Editor<\/h3>/);
+  assert.match(html, /<h3>Motion Conversion<\/h3>/);
+  assert.match(html, /before opening a model/);
+  assert.match(html, /Convert<\/b> while editing/);
+  assert.match(html, /data-tutorial-action="open-timeline-drawer"/);
+  assert.match(html, /Solved keys/);
+  assert.match(html, /Adaptive keys/);
+  assert.match(html, /Additive kinematics/);
+  assert.match(html, /unkeyed FK\/IK poses are ignored/);
+});

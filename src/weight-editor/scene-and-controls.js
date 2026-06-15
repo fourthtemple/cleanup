@@ -1349,6 +1349,13 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         }
         return Boolean(this.ensureTutorialDemoFkIkChain?.({ status: true }));
       }
+      if (action === "open-timeline-drawer") {
+        const opened = this.openTimelineDrawerForTutorial?.() || false;
+        if (opened) {
+          requestAnimationFrame(() => this.highlightTutorialTargets(source));
+        }
+        return opened;
+      }
       const macroName = source?.dataset?.tutorialMacro || "";
       if (macroName) {
         const loaded = await this.ensureTutorialDemoModelLoaded?.("cat") || false;
@@ -4140,6 +4147,24 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         persist: options.persist === true,
         fitContent: true
       });
+    },
+
+    openTimelineDrawerForTutorial() {
+      if (!this.timelineDrawerHasCurveContent?.()) {
+        this.setStatus?.("Load or convert keyed motion before opening curve layers");
+        return false;
+      }
+      this.setTimelineHidden?.(false);
+      this.timelineDrawerUserSized = false;
+      this.setTimelineCompact?.(false, {
+        height: this.defaultTimelineDrawerHeight?.(),
+        fitContent: true,
+        persist: false,
+        status: false
+      });
+      this.timelineDrawerPanel?.()?.scrollIntoView?.({ block: "end", inline: "nearest", behavior: "smooth" });
+      this.setStatus?.("Opened the timeline drawer");
+      return true;
     },
 
     beginTimelineDrawerDrag(event) {

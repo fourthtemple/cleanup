@@ -198,3 +198,50 @@ test("large downward drawer drag closes to the bottom tip from compact state", (
   assert.equal(editor.lastDragOffset, 0);
   assert.equal(editor.applyTimelineDrawerHeightCalls[0].height, 120);
 });
+
+test("tutorial action opens the bottom timeline drawer when curve content exists", () => {
+  const editor = new TestEditor();
+  const panel = {
+    scrollIntoView(options) {
+      editor.scrollOptions = options;
+    }
+  };
+  editor.timelineDrawerHasCurveContent = () => true;
+  editor.defaultTimelineDrawerHeight = () => 420;
+  editor.timelineDrawerPanel = () => panel;
+  editor.setTimelineHidden = (hidden) => {
+    editor.timelineHidden = hidden;
+  };
+  editor.setTimelineCompact = (compact, options) => {
+    editor.timelineCompact = compact;
+    editor.timelineCompactOptions = options;
+  };
+  editor.setStatus = (message) => {
+    editor.lastStatus = message;
+  };
+
+  assert.equal(editor.openTimelineDrawerForTutorial(), true);
+  assert.equal(editor.timelineHidden, false);
+  assert.equal(editor.timelineCompact, false);
+  assert.equal(editor.timelineCompactOptions.height, 420);
+  assert.equal(editor.timelineCompactOptions.persist, false);
+  assert.equal(editor.lastStatus, "Opened the timeline drawer");
+  assert.deepEqual(editor.scrollOptions, { block: "end", inline: "nearest", behavior: "smooth" });
+});
+
+test("tutorial action does not open the bottom timeline drawer without curve content", () => {
+  const editor = new TestEditor();
+  editor.timelineDrawerHasCurveContent = () => false;
+  editor.setTimelineHidden = () => {
+    throw new Error("timeline should not open without curve content");
+  };
+  editor.setTimelineCompact = () => {
+    throw new Error("timeline should not expand without curve content");
+  };
+  editor.setStatus = (message) => {
+    editor.lastStatus = message;
+  };
+
+  assert.equal(editor.openTimelineDrawerForTutorial(), false);
+  assert.equal(editor.lastStatus, "Load or convert keyed motion before opening curve layers");
+});
