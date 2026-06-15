@@ -168,6 +168,7 @@ class ModelCleanupEditor {
     this.animationLibraryRefreshButton = document.getElementById("animation-library-refresh");
     this.animationLibraryList = document.getElementById("animation-library-list");
     this.motionConversionModeSelect = document.getElementById("motion-conversion-mode");
+    this.motionConversionApplyButton = document.getElementById("motion-conversion-apply");
     this.timelineBlendActionSelect = document.getElementById("timeline-blend-action-select");
     this.transferCleanupToBlendButton = document.getElementById("transfer-cleanup-to-blend");
     this.timelineBlendControl = document.getElementById("timeline-blend-control");
@@ -489,7 +490,7 @@ class ModelCleanupEditor {
     this.boneLayerValueNodes = [];
     this.pendingBonePlacement = false;
     this.boneMoveGizmoArmed = false;
-    this.expandedBoneName = "";
+    this.expandedBoneName = null;
     this.curveChannelKey = "y";
     this.curveCanvas = null;
     this.curveContext = null;

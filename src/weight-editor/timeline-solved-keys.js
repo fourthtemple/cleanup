@@ -33,21 +33,42 @@ export function installTimelineSolvedKeyMethods(BirdWeightEditor) {
       return this.currentTimelineEditMode?.() === "solved";
     },
 
+    timelineEditModeLabel(mode = this.currentTimelineEditMode?.()) {
+      if (mode === "solved") {
+        return "solved keys";
+      }
+      if (mode === "adaptive") {
+        return "adaptive keys";
+      }
+      return "additive kinematics";
+    },
+
+    canConvertCurrentMotion() {
+      return Boolean(this.model && (this.actorTarget?.mode === "bird-flap" || this.activeClipEntry));
+    },
+
+    hasResolvedMotionEdits() {
+      if (!this.poseKeyframes?.size) {
+        return false;
+      }
+      return !(this.poseKeyframeMode === "replace" && this.poseKeyframesGenerated);
+    },
+
     normalizeTimelineEditMode(preferred = "") {
+      const mode = ["solved", "adaptive", "additive"].includes(preferred)
+        ? preferred
+        : this.currentTimelineEditMode?.() || "additive";
+      if (this.motionConversionModeSelect) {
+        this.motionConversionModeSelect.value = mode;
+      }
       if (!this.useTimelineKeysToggle || !this.adaptiveEditToggle) {
         return;
       }
       const additiveToggle = this.additiveKinematicsToggle;
-      const mode = ["solved", "adaptive", "additive"].includes(preferred)
-        ? preferred
-        : this.currentTimelineEditMode?.() || "additive";
       this.useTimelineKeysToggle.checked = mode === "solved";
       this.adaptiveEditToggle.checked = mode === "adaptive";
       if (additiveToggle) {
         additiveToggle.checked = mode === "additive";
-      }
-      if (this.motionConversionModeSelect) {
-        this.motionConversionModeSelect.value = mode;
       }
       if (!this.useTimelineKeysToggle.checked && !this.adaptiveEditToggle.checked && !additiveToggle?.checked) {
         if (additiveToggle) {
@@ -66,6 +87,7 @@ export function installTimelineSolvedKeyMethods(BirdWeightEditor) {
 
     syncTimelineSourceControl() {
       if (!this.useTimelineKeysToggle) {
+        this.syncMotionConversionApplyButton?.();
         return;
       }
       this.normalizeTimelineEditMode?.();
@@ -95,6 +117,88 @@ export function installTimelineSolvedKeyMethods(BirdWeightEditor) {
         const showKeyDetail = currentMode === "solved" || currentMode === "adaptive";
         keyDetailField.hidden = !showKeyDetail;
         keyDetailField.setAttribute("aria-hidden", showKeyDetail ? "false" : "true");
+      }
+      this.syncMotionConversionApplyButton?.();
+    },
+
+    syncMotionConversionApplyButton() {
+      if (!this.motionConversionApplyButton) {
+        return;
+      }
+      const enabled = this.canConvertCurrentMotion?.() === true;
+      const mode = this.currentTimelineEditMode?.() || "additive";
+      const label = this.timelineEditModeLabel?.(mode) || "selected motion mode";
+      this.motionConversionApplyButton.disabled = !enabled;
+      this.motionConversionApplyButton.title = enabled
+        ? `Convert the open animation to ${label}`
+        : "Load a character animation before converting motion";
+    },
+
+    async convertCurrentMotionToSelectedMode(options = {}) {
+      const mode = this.currentTimelineEditMode?.() || "additive";
+      this.normalizeTimelineEditMode?.(mode);
+      if (!this.canConvertCurrentMotion?.()) {
+        this.syncMotionConversionApplyButton?.();
+        if (!options.silent) {
+          this.setStatus(this.model ? "Choose an animation first" : "Load a character first");
+        }
+        return false;
+      }
+
+      const outputAdditive = mode === "additive";
+      if (outputAdditive && !this.hasResolvedMotionEdits?.()) {
+        const converted = this.setTimelineEditMode?.("additive", options) !== false;
+        this.syncMotionConversionApplyButton?.();
+        if (converted && !options.silent) {
+          this.setStatus(this.additiveKinematicsStatusText?.() || "Additive kinematics ready");
+        }
+        return converted;
+      }
+
+      if (typeof this.autoKeyActiveClip !== "function") {
+        this.syncMotionConversionApplyButton?.();
+        if (!options.silent) {
+          this.setStatus("Motion conversion is not available");
+        }
+        return false;
+      }
+
+      const button = this.motionConversionApplyButton;
+      if (button) {
+        button.disabled = true;
+      }
+      try {
+        if (!options.silent) {
+          this.setStatus(`Converting motion to ${this.timelineEditModeLabel?.(mode) || mode}...`);
+        }
+        const settings = this.autoKeyDetailSettings?.(options) || {};
+        const solution = await this.autoKeyActiveClip({
+          ...settings,
+          minKeys: options.minKeys || 6,
+          pushUndo: options.pushUndo !== false,
+          generated: mode === "adaptive",
+          outputAdditive,
+          sampleResolvedMotion: true,
+          selectPrimaryBone: false,
+          silent: true
+        });
+        if (!solution) {
+          this.syncTimelineSourceControl?.();
+          if (!options.silent) {
+            this.setStatus("Could not convert the current motion");
+          }
+          return false;
+        }
+        this.normalizeTimelineEditMode?.(mode);
+        this.syncTimelineSourceControl?.();
+        this.updateRangeOutputs?.();
+        if (!options.silent) {
+          const label = this.activeClipEntry?.name || this.activeClipEntry?.id || solution.label || "animation";
+          this.setStatus(`Resolved ${label} to ${this.timelineEditModeLabel?.(mode) || mode}`);
+        }
+        return true;
+      } finally {
+        this.syncMotionConversionApplyButton?.();
       }
     },
 

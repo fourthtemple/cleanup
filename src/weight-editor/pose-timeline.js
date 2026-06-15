@@ -837,8 +837,9 @@ export function installPoseTimelineMethods(BirdWeightEditor, deps) {
       const activeBone = this.poseBoneSelect.value;
       const mirroredActiveBone = this.mirrorMode ? this.mirrorBoneName(activeBone) : "";
       const timelineExpanded = !this.app?.classList?.contains?.("is-timeline-compact");
-      const fallbackExpandedBone = timelineExpanded ? this.boneLayerNames[0] || "" : "";
-      const expandedBone = this.expandedBoneName === null ? "" : this.expandedBoneName || activeBone || fallbackExpandedBone;
+      const expandedBone = timelineExpanded && this.expandedBoneName && this.boneLayerNames.includes(this.expandedBoneName)
+        ? this.expandedBoneName
+        : "";
       this.curveCanvas = null;
       this.curveContext = null;
       this.curvePlayhead = null;

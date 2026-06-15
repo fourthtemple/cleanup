@@ -603,6 +603,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.updateUndoButton?.();
       this.syncPoseClipboardControls?.();
       this.boneLayerNames = [];
+      this.expandedBoneName = null;
+      this.pendingCurveScrollBoneName = "";
       this.bonePickerNames = [];
       this.invalidateBoneDisplayCache?.();
       this.activeBoneName = "";
@@ -2243,6 +2245,9 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         ? this.canonicalMirrorBone(this.poseBoneSelect.value || this.activeBoneName)
         : "";
       const displayNames = this.mirrorMode ? this.collapsedMirrorBoneNames(allNames) : allNames;
+      if (this.expandedBoneName && !displayNames.includes(this.expandedBoneName)) {
+        this.expandedBoneName = null;
+      }
       const blankOption = () => {
         const option = document.createElement("option");
         option.value = "";

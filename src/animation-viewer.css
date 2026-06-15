@@ -651,6 +651,10 @@ button {
   background: rgba(6, 9, 11, 0.82);
 }
 
+.motion-conversion-actions {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .viewer-field {
   display: grid;
   gap: 6px;
@@ -2475,7 +2479,9 @@ button.is-active {
   padding: 0 8px;
 }
 
-.animation-editor-app.is-timeline-compact .bone-layer-list {
+.animation-editor-app.is-timeline-compact .bone-layer-list,
+.weight-editor-app.is-timeline-compact .bone-layer-list,
+.weight-editor-app.is-timeline-compact .timeline-sequence-row {
   display: none;
 }
 

@@ -42,3 +42,12 @@ test("app shell exposes the camera gizmo stage control once", () => {
   assert.equal((html.match(/id="camera-gizmo-toggle"/g) || []).length, 1);
   assert.equal((html.match(/data-camera-axis=/g) || []).length, 3);
 });
+
+test("animation library exposes an explicit motion conversion action", () => {
+  const html = indexHtml();
+  const animationLibrary = sectionText(html, "Animation Library");
+
+  assert.match(animationLibrary, /id="motion-conversion-mode"/);
+  assert.match(animationLibrary, /id="motion-conversion-apply"/);
+  assert.match(animationLibrary, />Convert<\/button>/);
+});

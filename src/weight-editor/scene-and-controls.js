@@ -2179,11 +2179,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           ? this.motionConversionModeSelect.value
           : "additive";
         this.normalizeTimelineEditMode?.(mode);
-        this.withUndo(
-          `Use ${timelineEditModeLabels[mode]}`,
-          () => this.setTimelineEditMode?.(mode),
-          { clearManualPose: true }
-        );
+        this.syncTimelineSourceControl?.();
+        this.setStatus(`Motion conversion target: ${timelineEditModeLabels[mode]}`);
+      });
+      this.motionConversionApplyButton?.addEventListener("click", () => {
+        void this.convertCurrentMotionToSelectedMode?.({ pushUndo: true });
       });
       const bindTimelineEditModeToggle = (toggle, mode, label) => {
         toggle?.addEventListener("change", () => {
@@ -4118,7 +4118,11 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     fitTimelineDrawerToContent(options = {}) {
-      if (!this.app || this.app.classList.contains("is-timeline-compact")) {
+      if (
+        !this.app
+        || this.app.classList.contains("is-timeline-compact")
+        || this.app.classList.contains("is-timeline-drawer-dragging")
+      ) {
         return 0;
       }
       if (this.timelineDrawerUserSized && options.force !== true) {
@@ -4307,6 +4311,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         });
         this.applyTimelineDrawerDragOffset(0);
         this.setTimelineCompact(true, { status: false });
+        const panel = this.timelineDrawerPanel?.();
+        if (panel) {
+          panel.scrollTop = 0;
+        }
         this.hideTimelineDrawer();
       } else if (pullPastMinimum > 0) {
         this.applyTimelineDrawerDragOffset(0);
@@ -4485,14 +4493,17 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         );
       }
       this.app.classList.toggle("is-timeline-compact", compact);
+      if (compact) {
+        const panel = this.timelineDrawerPanel?.();
+        if (panel) {
+          panel.scrollTop = 0;
+        }
+      }
       this.timelineCompactToggle.textContent = "";
       this.timelineCompactToggle.setAttribute("aria-label", compact ? "Expand timeline" : "Compact timeline");
       this.timelineCompactToggle.title = compact ? "Expand timeline" : "Compact timeline";
       this.timelineCompactToggle.setAttribute("aria-pressed", String(compact));
       if (!compact) {
-        if (!this.expandedBoneName && this.boneLayerNames?.length) {
-          this.expandedBoneName = this.poseBoneSelect?.value || this.boneLayerNames[0];
-        }
         this.updateBoneLayerList?.();
         requestAnimationFrame(() => {
           if (options.fitContent !== false) {

@@ -142,6 +142,7 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       if (this.animationLibrarySaveGlbButton) {
         this.animationLibrarySaveGlbButton.disabled = !enabled;
       }
+      this.syncMotionConversionApplyButton?.();
     },
 
     exportFileBaseName() {
