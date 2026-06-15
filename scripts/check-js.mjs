@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-const roots = ["src", "scripts"];
+const roots = ["src", "scripts", "tests"];
 
 function collectJavaScriptFiles(root) {
   const files = [];

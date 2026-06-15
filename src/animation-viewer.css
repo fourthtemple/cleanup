@@ -727,6 +727,10 @@ input[type="color"] {
   gap: 6px;
 }
 
+.camera-options {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .viewer-actions,
 .viewer-segments,
 .viewer-grid-actions,

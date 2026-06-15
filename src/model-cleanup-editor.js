@@ -341,6 +341,7 @@ class ModelCleanupEditor {
     this.solvedKeyDetailOutput = document.getElementById("solved-key-detail-output");
     this.cameraGizmo = document.getElementById("camera-gizmo");
     this.cameraGizmoPad = document.getElementById("camera-gizmo-pad");
+    this.cameraGizmoToggle = document.getElementById("camera-gizmo-toggle");
     this.cameraRollLeftButton = document.getElementById("camera-roll-left");
     this.cameraRollRightButton = document.getElementById("camera-roll-right");
     this.cameraRollResetButton = document.getElementById("camera-roll-reset");
@@ -409,6 +410,7 @@ class ModelCleanupEditor {
     this.cleanPreview = false;
     this.gizmoOnlyPreview = false;
     this.mirrorMode = false;
+    this.cameraGizmoVisible = this.cameraGizmoToggle?.checked !== false;
     this.backgroundColor = this.cameraBackgroundColor?.value || "#11171c";
     this.meshColor = this.cameraMeshColor?.value || "#80d8ff";
     const controlNumber = (control, fallback) => {

@@ -762,7 +762,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         ambient: 0.75,
         key: 1.25,
         rim: 0.35,
-        texture: 1
+        texture: 1,
+        cameraGizmoVisible: true
       };
     },
 
@@ -778,7 +779,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         ambient: numberValue(this.cameraAmbientLight, fallback.ambient),
         key: numberValue(this.cameraKeyLight, fallback.key),
         rim: numberValue(this.cameraRimLight, fallback.rim),
-        texture: numberValue(this.cameraTextureGain, fallback.texture)
+        texture: numberValue(this.cameraTextureGain, fallback.texture),
+        cameraGizmoVisible: this.cameraGizmoVisible !== false
       };
     },
 
@@ -844,6 +846,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (this.cameraTextureGain) {
         this.cameraTextureGain.value = String(numberValue(setting.texture, fallback.texture));
       }
+      this.applyCameraGizmoVisibility(setting.cameraGizmoVisible !== false);
       this.applyBackgroundColor(colorValue(setting.backgroundColor, fallback.backgroundColor));
       this.applyMeshColor(colorValue(setting.meshColor, fallback.meshColor));
       this.applySceneLighting();
@@ -856,6 +859,26 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     resetCameraConfigurationSetting(options = {}) {
       return this.applyCameraConfigurationSetting(this.savedCameraConfigurationSetting(), options);
+    },
+
+    applyCameraGizmoVisibility(visible) {
+      const nextVisible = visible !== false;
+      this.cameraGizmoVisible = nextVisible;
+      if (this.cameraGizmoToggle) {
+        this.cameraGizmoToggle.checked = nextVisible;
+      }
+      if (this.cameraGizmo) {
+        this.cameraGizmo.hidden = !nextVisible;
+        this.cameraGizmo.setAttribute("aria-hidden", nextVisible ? "false" : "true");
+      }
+      if (!nextVisible) {
+        this.cameraGizmoPad?.classList.remove("is-dragging");
+        const cameraAxisButtons = globalThis.document?.querySelectorAll?.("[data-camera-axis]") || [];
+        cameraAxisButtons.forEach((button) => {
+          button.classList.remove("is-dragging");
+        });
+        this.cameraGizmoDrag = null;
+      }
     },
 
     panelSectionTitle(section) {
@@ -2463,6 +2486,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.cameraRollRightButton?.addEventListener("click", () => this.rollCameraBy(Math.PI / 2));
       this.cameraRollResetButton?.addEventListener("click", () => this.resetCameraRoll());
       this.cameraGizmoSpeed?.addEventListener("input", () => this.updateRangeOutputs());
+      this.cameraGizmoToggle?.addEventListener("change", () => {
+        this.applyCameraGizmoVisibility(this.cameraGizmoToggle.checked);
+      });
+      this.applyCameraGizmoVisibility(this.cameraGizmoVisible !== false);
       this.cameraBackgroundColor?.addEventListener("input", () => this.applyBackgroundColor(this.cameraBackgroundColor.value));
       this.cameraMeshColor?.addEventListener("input", () => this.applyMeshColor(this.cameraMeshColor.value));
       for (const input of [
