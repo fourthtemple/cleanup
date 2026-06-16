@@ -34,7 +34,7 @@ import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=responsive-drawer-polish-20260612a";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js?v=macro-live-follow-20260608a";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=responsive-drawer-polish-20260612a";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=side-panel-scale-20260615a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=airbrush-lag-20260607b";
 import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=tutorial-disk-save-20260609a";

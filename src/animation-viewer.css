@@ -1,8 +1,8 @@
 :root {
   color-scheme: dark;
   --tutorial-drawer-width: 340px;
-  --cleanup-side-panel-width: 220px;
-  --cleanup-side-panel-font-size: 12px;
+  --cleanup-side-panel-width: 167px;
+  --cleanup-side-panel-font-size: 9.92px;
   --cleanup-timeline-drawer-height: min(72vh, 620px);
   --panel: rgba(11, 15, 18, 0.92);
   --panel-line: rgba(243, 230, 196, 0.18);

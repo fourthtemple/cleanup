@@ -24,7 +24,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
   const ORBIT_VIEW_STORAGE_KEY = "mixamo-cleanup-editor:orbit-view:v1";
   const CAMERA_CONFIGURATION_STORAGE_KEY = "fourth-temple-model-cleanup:camera-configuration:v1";
   const SIDE_PANEL_WIDTH_STORAGE_KEY = "fourth-temple-model-cleanup:side-panel-width:v1";
-  const SIDE_PANEL_DEFAULT_WIDTH = 220;
+  const SIDE_PANEL_DEFAULT_WIDTH = 167;
+  const SIDE_PANEL_FULL_FONT_WIDTH = 220;
   const SIDE_PANEL_MIN_WIDTH = 150;
   const SIDE_PANEL_MAX_WIDTH = 320;
   const SIDE_PANEL_NARROW_WIDTH = 196;
@@ -3676,7 +3677,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     sidePanelFontSizeForWidth(width) {
-      const compactT = THREE.MathUtils.clamp((Number(width) - SIDE_PANEL_MIN_WIDTH) / (SIDE_PANEL_DEFAULT_WIDTH - SIDE_PANEL_MIN_WIDTH), 0, 1);
+      const compactT = THREE.MathUtils.clamp((Number(width) - SIDE_PANEL_MIN_WIDTH) / (SIDE_PANEL_FULL_FONT_WIDTH - SIDE_PANEL_MIN_WIDTH), 0, 1);
       return 9.25 + compactT * 2.75;
     },
 
