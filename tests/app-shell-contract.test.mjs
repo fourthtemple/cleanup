@@ -60,6 +60,7 @@ test("tutorial recipes explain curve editing and motion conversion", () => {
   assert.match(html, /before opening a model/);
   assert.match(html, /Convert<\/b> while editing/);
   assert.match(html, /data-tutorial-action="open-timeline-drawer"/);
+  assert.match(html, /Select a keyed bone such as <b>Left Shoulder<\/b>/);
   assert.match(html, /Solved keys/);
   assert.match(html, /Adaptive keys/);
   assert.match(html, /Additive kinematics/);

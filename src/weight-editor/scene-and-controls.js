@@ -47,6 +47,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
   const TIMELINE_DRAWER_CLOSE_RATIO = 1 / 3;
   const TIMELINE_DRAWER_ELASTIC_RESISTANCE = 0.2;
   const TIMELINE_DRAWER_CLOSE_MS = 180;
+  const TUTORIAL_TIMELINE_DRAWER_OPEN_RATIO = 0.65;
   const TUTORIAL_EDITOR_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-editor-enabled:v1";
   const TUTORIAL_RECIPES_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-recipes:v1";
   const TUTORIAL_RECIPES_ASSET_URL = "./assets/tutorial-recipes.json?v=20260609a";
@@ -4150,18 +4151,63 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       });
     },
 
+    tutorialTimelineDrawerHeight() {
+      const compactHeight = Number(this.timelineDrawerCompactHeight?.()) || TIMELINE_DRAWER_SNAP_HEIGHT;
+      const defaultHeight = Number(this.defaultTimelineDrawerHeight?.()) || TIMELINE_DRAWER_DEFAULT_HEIGHT;
+      const targetHeight = Math.max(compactHeight, defaultHeight * TUTORIAL_TIMELINE_DRAWER_OPEN_RATIO);
+      return this.clampTimelineDrawerHeight(targetHeight, {
+        fitContent: false,
+        minHeight: compactHeight
+      });
+    },
+
+    tutorialTimelineCurveBoneName() {
+      const names = Array.isArray(this.boneLayerNames) && this.boneLayerNames.length
+        ? this.boneLayerNames
+        : [...this.bones?.keys?.() || []];
+      const normalized = (name) => String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      return names.find((name) => normalized(name) === "leftshoulder")
+        || names.find((name) => normalized(name).endsWith("leftshoulder"))
+        || "";
+    },
+
+    selectTutorialTimelineCurveBone() {
+      const boneName = this.tutorialTimelineCurveBoneName();
+      if (!boneName) {
+        return "";
+      }
+      if (this.bones?.has?.(boneName) && typeof this.setActiveBone === "function") {
+        this.setActiveBone(boneName, {
+          preserveBoneChainMemberSelection: true,
+          suppressBoneChainAutoSelect: true
+        });
+      } else {
+        this.activeBoneName = boneName;
+        if (this.poseBoneSelect && [...this.poseBoneSelect.options || []].some((option) => option.value === boneName)) {
+          this.poseBoneSelect.value = boneName;
+        }
+      }
+      this.expandedBoneName = boneName;
+      this.pendingCurveScrollBoneName = boneName;
+      this.curveValueWindowLock = null;
+      return boneName;
+    },
+
     openTimelineDrawerForTutorial() {
       if (!this.timelineDrawerHasCurveContent?.()) {
         this.setStatus?.("Load or convert keyed motion before opening curve layers");
         return false;
       }
+      this.selectTutorialTimelineCurveBone();
       this.setTimelineHidden?.(false);
-      this.timelineDrawerUserSized = false;
+      const compactHeight = Number(this.timelineDrawerCompactHeight?.()) || TIMELINE_DRAWER_SNAP_HEIGHT;
       this.setTimelineCompact?.(false, {
-        height: this.defaultTimelineDrawerHeight?.(),
-        fitContent: true,
+        height: this.tutorialTimelineDrawerHeight(),
+        fitContent: false,
+        minHeight: compactHeight,
         persist: false,
-        status: false
+        status: false,
+        userSized: true
       });
       this.timelineDrawerPanel?.()?.scrollIntoView?.({ block: "end", inline: "nearest", behavior: "smooth" });
       this.setStatus?.("Opened the timeline drawer");

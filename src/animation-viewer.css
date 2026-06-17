@@ -655,6 +655,14 @@ button {
   grid-template-columns: minmax(0, 1fr);
 }
 
+.animation-blend-section .viewer-actions {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+#transfer-cleanup-to-blend {
+  white-space: nowrap;
+}
+
 .viewer-field {
   display: grid;
   gap: 6px;

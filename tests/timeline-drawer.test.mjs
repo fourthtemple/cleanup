@@ -207,7 +207,18 @@ test("tutorial action opens the bottom timeline drawer when curve content exists
     }
   };
   editor.timelineDrawerHasCurveContent = () => true;
-  editor.defaultTimelineDrawerHeight = () => 420;
+  editor.timelineDrawerCompactHeight = () => 180;
+  editor.defaultTimelineDrawerHeight = () => 560;
+  editor.boneLayerNames = ["Hips", "mixamorigLeftShoulder", "RightShoulder"];
+  editor.bones = new Map(editor.boneLayerNames.map((name) => [name, {}]));
+  editor.setActiveBone = (name, options) => {
+    editor.activeBoneName = name;
+    editor.setActiveBoneOptions = options;
+  };
+  editor.clampTimelineDrawerHeight = (height, options) => {
+    editor.clampOptions = options;
+    return Math.round(height);
+  };
   editor.timelineDrawerPanel = () => panel;
   editor.setTimelineHidden = (hidden) => {
     editor.timelineHidden = hidden;
@@ -223,8 +234,19 @@ test("tutorial action opens the bottom timeline drawer when curve content exists
   assert.equal(editor.openTimelineDrawerForTutorial(), true);
   assert.equal(editor.timelineHidden, false);
   assert.equal(editor.timelineCompact, false);
-  assert.equal(editor.timelineCompactOptions.height, 420);
+  assert.equal(editor.activeBoneName, "mixamorigLeftShoulder");
+  assert.deepEqual(editor.setActiveBoneOptions, {
+    preserveBoneChainMemberSelection: true,
+    suppressBoneChainAutoSelect: true
+  });
+  assert.equal(editor.expandedBoneName, "mixamorigLeftShoulder");
+  assert.equal(editor.pendingCurveScrollBoneName, "mixamorigLeftShoulder");
+  assert.equal(editor.timelineCompactOptions.height, 364);
+  assert.equal(editor.timelineCompactOptions.fitContent, false);
+  assert.equal(editor.timelineCompactOptions.minHeight, 180);
   assert.equal(editor.timelineCompactOptions.persist, false);
+  assert.equal(editor.timelineCompactOptions.userSized, true);
+  assert.deepEqual(editor.clampOptions, { fitContent: false, minHeight: 180 });
   assert.equal(editor.lastStatus, "Opened the timeline drawer");
   assert.deepEqual(editor.scrollOptions, { block: "end", inline: "nearest", behavior: "smooth" });
 });
