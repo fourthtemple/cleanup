@@ -86,7 +86,7 @@ const server = createServer(async (request, response) => {
 server.listen(requestedPort, "127.0.0.1", () => {
   const address = server.address();
   const port = typeof address === "object" && address ? address.port : requestedPort;
-  console.log(`Fourth Temple Model Cleanup dev server: http://127.0.0.1:${port}/`);
+  console.log(`Fourth Temple Cleanup dev server: http://127.0.0.1:${port}/`);
 });
 
 function parseRequestedPort(value) {
@@ -379,7 +379,7 @@ async function saveTutorialMacros(request, response) {
 
   const content = `${JSON.stringify({
     version: 1,
-    app: "Fourth Temple Model Cleanup",
+    app: "Fourth Temple Cleanup",
     updatedAt: new Date().toISOString(),
     macros
   }, null, 2)}\n`;
@@ -403,7 +403,7 @@ async function saveTutorialRecipes(request, response) {
 
   const content = `${JSON.stringify({
     version: 1,
-    app: "Fourth Temple Model Cleanup",
+    app: "Fourth Temple Cleanup",
     updatedAt: new Date().toISOString(),
     cards
   }, null, 2)}\n`;

@@ -18,6 +18,15 @@ function sectionText(html, label) {
   return html.slice(sectionStart, nextSection === -1 ? html.length : nextSection);
 }
 
+test("app shell uses Cleanup as the public product name", () => {
+  const html = indexHtml();
+
+  assert.match(html, /<title>Fourth Temple Cleanup<\/title>/);
+  assert.match(html, /aria-label="Fourth Temple Cleanup controls"/);
+  assert.match(html, /<h1>Cleanup<\/h1>/);
+  assert.match(html, /<h2 id="tutorial-title">Cleanup Recipes<\/h2>/);
+});
+
 test("app shell keeps camera controls separate from background display settings", () => {
   const html = indexHtml();
   const camera = sectionText(html, "Camera");

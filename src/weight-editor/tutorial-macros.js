@@ -677,7 +677,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       }
       const payload = {
         version: 1,
-        app: "Fourth Temple Model Cleanup",
+        app: "Fourth Temple Cleanup",
         storageKey: TUTORIAL_MACRO_STORAGE_KEY,
         exportedAt: new Date().toISOString(),
         macros

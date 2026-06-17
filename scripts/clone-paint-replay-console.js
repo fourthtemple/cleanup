@@ -1,5 +1,5 @@
 /*
-Paste this into the Model Cleanup browser console after reproducing a
+Paste this into the Cleanup browser console after reproducing a
 Source -> Region -> Clone issue. It copies replay JSON to the clipboard and
 also prints it to the console.
 */
