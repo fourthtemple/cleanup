@@ -33,12 +33,35 @@ function input(value) {
   return { value: String(value) };
 }
 
+function withLocalStorageMock(t) {
+  const originalWindow = globalThis.window;
+  const store = new Map();
+  globalThis.window = {
+    localStorage: {
+      getItem(key) {
+        return store.has(key) ? store.get(key) : null;
+      },
+      setItem(key, value) {
+        store.set(key, String(value));
+      },
+      removeItem(key) {
+        store.delete(key);
+      }
+    }
+  };
+  t.after(() => {
+    globalThis.window = originalWindow;
+  });
+  return store;
+}
+
 function editorWithCameraControls() {
   const axisClassList = classListMock(["is-dragging"]);
   const gizmoAttrs = new Map();
   const editor = new TestEditor();
   editor.cameraGizmoVisible = true;
   editor.cameraGizmoToggle = { checked: true };
+  editor.resetCameraSettingsButton = { disabled: false };
   editor.cameraGizmoPad = { classList: classListMock(["is-dragging"]) };
   editor.cameraGizmo = {
     hidden: false,
@@ -137,6 +160,58 @@ test("camera configuration includes and restores gizmo visibility", () => {
   assert.equal(editor.cameraKeyLight.value, "0.75");
   assert.equal(editor.cameraRimLight.value, "0.1");
   assert.equal(editor.cameraTextureGain.value, "0.9");
+  assert.equal(editor.sceneLightingApplied, true);
+});
+
+test("camera configuration auto-save writes display preferences without status noise", (t) => {
+  const store = withLocalStorageMock(t);
+  const { editor } = editorWithCameraControls();
+  editor.backgroundColor = "#123456";
+  editor.meshColor = "#654321";
+  editor.cameraAmbientLight.value = "1.1";
+  editor.cameraKeyLight.value = "2.2";
+  editor.cameraRimLight.value = "0.6";
+  editor.cameraTextureGain.value = "1.18";
+  editor.applyCameraGizmoVisibility(false);
+
+  assert.equal(editor.autoSaveCameraConfigurationSetting(), true);
+  assert.equal(editor.lastStatus, undefined);
+  assert.equal(editor.resetCameraSettingsButton.disabled, false);
+
+  const saved = JSON.parse(store.get("fourth-temple-model-cleanup:camera-configuration:v1"));
+  assert.deepEqual(saved, {
+    backgroundColor: "#123456",
+    meshColor: "#654321",
+    ambient: 1.1,
+    key: 2.2,
+    rim: 0.6,
+    texture: 1.18,
+    cameraGizmoVisible: false
+  });
+});
+
+test("saved camera configuration restores as a local user display preference", (t) => {
+  const store = withLocalStorageMock(t);
+  store.set("fourth-temple-model-cleanup:camera-configuration:v1", JSON.stringify({
+    backgroundColor: "#0a0b0c",
+    meshColor: "#ddeeff",
+    ambient: 0.55,
+    key: 1.8,
+    rim: 0.22,
+    texture: 1.09,
+    cameraGizmoVisible: false
+  }));
+  const { editor } = editorWithCameraControls();
+
+  assert.equal(editor.restoreSavedCameraConfigurationSetting({ status: false }), true);
+  assert.equal(editor.lastStatus, undefined);
+  assert.equal(editor.backgroundColor, "#0a0b0c");
+  assert.equal(editor.meshColor, "#ddeeff");
+  assert.equal(editor.cameraAmbientLight.value, "0.55");
+  assert.equal(editor.cameraKeyLight.value, "1.8");
+  assert.equal(editor.cameraRimLight.value, "0.22");
+  assert.equal(editor.cameraTextureGain.value, "1.09");
+  assert.equal(editor.cameraGizmoVisible, false);
   assert.equal(editor.sceneLightingApplied, true);
 });
 

@@ -843,21 +843,44 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
     },
 
-    saveCameraConfigurationSetting() {
+    saveCameraConfigurationSetting(options = {}) {
+      const status = options.status !== false;
       const setting = this.currentCameraConfigurationSetting();
       if (!setting || typeof window === "undefined") {
-        this.setStatus("No configuration to save");
+        if (status) {
+          this.setStatus("No configuration to save");
+        }
         return false;
       }
       try {
         window.localStorage?.setItem(CAMERA_CONFIGURATION_STORAGE_KEY, JSON.stringify(setting));
         this.updateCameraConfigurationControls();
-        this.setStatus("Saved configuration");
+        if (status) {
+          this.setStatus("Saved configuration");
+        }
         return true;
       } catch {
-        this.setStatus("Could not save configuration");
+        if (status) {
+          this.setStatus("Could not save configuration");
+        }
         return false;
       }
+    },
+
+    autoSaveCameraConfigurationSetting() {
+      return this.saveCameraConfigurationSetting({ status: false });
+    },
+
+    restoreSavedCameraConfigurationSetting(options = {}) {
+      const setting = this.savedCameraConfigurationSetting();
+      if (!setting) {
+        this.updateCameraConfigurationControls();
+        if (options.status !== false) {
+          this.setStatus("No saved configuration");
+        }
+        return false;
+      }
+      return this.applyCameraConfigurationSetting(setting, options);
     },
 
     applyCameraConfigurationSetting(setting = this.savedCameraConfigurationSetting(), options = {}) {
@@ -899,7 +922,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     resetCameraConfigurationSetting(options = {}) {
-      return this.applyCameraConfigurationSetting(this.savedCameraConfigurationSetting(), options);
+      return this.restoreSavedCameraConfigurationSetting(options);
     },
 
     applyCameraGizmoVisibility(visible) {
@@ -2537,17 +2560,27 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.cameraGizmoSpeed?.addEventListener("input", () => this.updateRangeOutputs());
       this.cameraGizmoToggle?.addEventListener("change", () => {
         this.applyCameraGizmoVisibility(this.cameraGizmoToggle.checked);
+        this.autoSaveCameraConfigurationSetting();
       });
       this.applyCameraGizmoVisibility(this.cameraGizmoVisible !== false);
-      this.cameraBackgroundColor?.addEventListener("input", () => this.applyBackgroundColor(this.cameraBackgroundColor.value));
-      this.cameraMeshColor?.addEventListener("input", () => this.applyMeshColor(this.cameraMeshColor.value));
+      this.cameraBackgroundColor?.addEventListener("input", () => {
+        this.applyBackgroundColor(this.cameraBackgroundColor.value);
+        this.autoSaveCameraConfigurationSetting();
+      });
+      this.cameraMeshColor?.addEventListener("input", () => {
+        this.applyMeshColor(this.cameraMeshColor.value);
+        this.autoSaveCameraConfigurationSetting();
+      });
       for (const input of [
         this.cameraAmbientLight,
         this.cameraKeyLight,
         this.cameraRimLight,
         this.cameraTextureGain
       ]) {
-        input?.addEventListener("input", () => this.applySceneLighting());
+        input?.addEventListener("input", () => {
+          this.applySceneLighting();
+          this.autoSaveCameraConfigurationSetting();
+        });
       }
     },
 
