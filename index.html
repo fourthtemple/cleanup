@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fourth Temple Cleanup</title>
     <link rel="icon" href="./assets/fourth-temple-logo.svg?v=logo-leaf-ft-20260606c" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=cleanup-header-spacing-20260617a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=airbrush-spacing-20260618a" />
     <script type="importmap">
       {
         "imports": {
@@ -196,17 +196,36 @@
             <button id="texture-airbrush-tool" type="button" data-tool="airbrush">Airbrush</button>
           </div>
           <label class="viewer-field">
-            <span>Airbrush radius</span>
+            <div class="brush-pressure-row">
+              <span>Airbrush radius</span>
+              <span class="brush-pressure-toggle" title="Let pointer pressure scale airbrush radius">
+                <input id="texture-pressure-radius" type="checkbox" checked aria-label="Pressure controls airbrush radius" />
+                Pressure
+              </span>
+            </div>
             <div class="viewer-range-row">
               <input id="texture-brush-radius" type="range" min="0.004" max="0.18" step="0.002" value="0.035" />
               <output id="texture-brush-radius-output">8px</output>
             </div>
           </label>
           <label class="viewer-field">
-            <span>Brush opacity</span>
+            <div class="brush-pressure-row">
+              <span>Brush opacity</span>
+              <span class="brush-pressure-toggle" title="Let pointer pressure scale brush opacity">
+                <input id="texture-pressure-opacity" type="checkbox" aria-label="Pressure controls brush opacity" />
+                Pressure
+              </span>
+            </div>
             <div class="viewer-range-row">
               <input id="texture-brush-opacity" type="range" min="0.04" max="1" step="0.02" value="0.42" />
               <output id="texture-brush-opacity-output">42%</output>
+            </div>
+          </label>
+          <label class="viewer-field">
+            <span>Brush spacing</span>
+            <div class="viewer-range-row">
+              <input id="texture-brush-spacing" type="range" min="0.1" max="200" step="0.1" value="1" />
+              <output id="texture-brush-spacing-output">1%</output>
             </div>
           </label>
           <label class="viewer-field">
@@ -406,6 +425,13 @@
             <button id="camera-roll-reset" type="button" title="Reset camera roll upright">Upright</button>
             <button id="camera-roll-right" type="button" title="Roll camera clockwise 90 degrees">Roll +90</button>
           </div>
+          <div class="camera-save-row">
+            <span class="viewer-subheading">View</span>
+            <div class="viewer-grid-actions camera-save-actions" role="group" aria-label="Saved orbit camera view">
+              <button id="save-orbit-view" type="button" title="Save current orbit camera view">Save</button>
+              <button id="restore-orbit-view" type="button" title="Restore saved orbit camera view">Restore</button>
+            </div>
+          </div>
           <div class="viewer-checks camera-options">
             <label>
               <input id="camera-gizmo-toggle" type="checkbox" checked />
@@ -458,13 +484,6 @@
           <section class="viewer-section settings-save-section">
             <span class="viewer-label">Settings</span>
             <div class="settings-save-grid">
-              <div class="settings-save-row">
-                <span>View</span>
-                <div class="viewer-grid-actions settings-save-actions" role="group" aria-label="Saved orbit camera view">
-                  <button id="save-orbit-view" type="button" title="Save current orbit camera view">Save</button>
-                  <button id="restore-orbit-view" type="button" title="Restore saved orbit camera view">Restore</button>
-                </div>
-              </div>
               <div class="settings-save-row">
                 <span>Configuration</span>
                 <div class="viewer-grid-actions settings-save-actions" role="group" aria-label="Saved camera configuration">
@@ -784,6 +803,6 @@
         </section>
       </div>
     </aside>
-  <script type="module" src="./src/model-cleanup-editor.js?v=side-panel-scale-20260615a"></script>
+  <script type="module" src="./src/model-cleanup-editor.js?v=airbrush-restore-20260618a"></script>
   </body>
 </html>

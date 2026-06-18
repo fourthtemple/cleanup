@@ -54,6 +54,8 @@ test("memory storage creates normalized folders and animation descriptors", asyn
   assert.equal(upload.file.cleanupFile, "Walking-8-weight-patch.json");
   assert.equal(upload.file.path, "browser-library/my-cat-folder/Walking-8.FBX");
   assert.equal(upload.file.url, "blob:test-1");
+  assert.equal(upload.file.blob instanceof Blob, true);
+  assert.equal(Object.keys(upload.file).includes("blob"), false);
 
   const listed = await storage.list();
   assert.equal(listed.root, "browser-library");
@@ -61,6 +63,8 @@ test("memory storage creates normalized folders and animation descriptors", asyn
   assert.equal(listed.folders[0].name, "my-cat-folder");
   assert.equal(listed.folders[0].files[0].name, "Walking-8.FBX");
   assert.equal(listed.folders[0].files[0].url, "blob:test-2");
+  assert.equal(listed.folders[0].files[0].blob instanceof Blob, true);
+  assert.equal(Object.keys(listed.folders[0].files[0]).includes("blob"), false);
 });
 
 test("memory storage saves cleanup files and deletes entire folders", async (t) => {
@@ -79,6 +83,8 @@ test("memory storage saves cleanup files and deletes entire folders", async (t) 
 
   const beforeDelete = await storage.list();
   assert.match(beforeDelete.folders[0].files[0].cleanupUrl, /^blob:test-\d+$/);
+  assert.equal(beforeDelete.folders[0].files[0].cleanupBlob instanceof Blob, true);
+  assert.equal(Object.keys(beforeDelete.folders[0].files[0]).includes("cleanupBlob"), false);
 
   const deleted = await storage.deleteFolder({ folder: "cat" });
   assert.deepEqual(deleted, {

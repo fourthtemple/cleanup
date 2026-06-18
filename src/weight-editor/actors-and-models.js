@@ -54,6 +54,47 @@ function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
+function defineHiddenValue(target, key, value) {
+  if (value === undefined || value === null) {
+    return target;
+  }
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: false,
+    configurable: true
+  });
+  return target;
+}
+
+function readableBlob(source, key = "blob") {
+  const blob = source?.[key];
+  return blob && typeof blob.arrayBuffer === "function" ? blob : null;
+}
+
+async function arrayBufferFromAnimationSource(source, url) {
+  const blob = readableBlob(source);
+  if (blob) {
+    return blob.arrayBuffer();
+  }
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.arrayBuffer();
+}
+
+async function jsonFromCleanupTarget(target) {
+  const blob = readableBlob(target);
+  if (blob) {
+    return JSON.parse(await blob.text());
+  }
+  const response = await fetch(target.url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
 function embeddedPngDimensions(bytes, offset) {
   if (offset + 24 > bytes.length) {
     return null;
@@ -660,6 +701,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.bindPose = this.captureBindPose();
         this.collectBones();
         this.collectPaintableMeshes();
+        this.scheduleTextureAirbrushPrewarm?.(null, null, { force: true });
         this.populateBoneSelect();
         await this.loadPatchAsset({ silent: true });
         if (token !== this.loadToken || this.actorTarget.id !== target.id) {
@@ -856,14 +898,13 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       const extension = animationFileExtension(entry.url || entry.name);
       let animations = [];
       if (extension === "fbx") {
-        const response = await fetch(entry.url, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const buffer = await response.arrayBuffer();
+        const buffer = await arrayBufferFromAnimationSource(entry, entry.url);
         const scene = this.fbxLoader.parse(buffer, "");
         await this.attachEmbeddedFbxTextures?.(scene, buffer);
         animations = scene.animations || [];
+      } else if (readableBlob(entry)) {
+        const gltf = await this.parseGLTFBuffer(await arrayBufferFromAnimationSource(entry, entry.url), "");
+        animations = gltf.animations || [];
       } else {
         const gltf = await this.loadGLTFUrl(entry.url);
         animations = gltf.animations || [];
@@ -953,7 +994,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       const label = item.label || animationLabelFromFileName(fileName);
       const url = item.url || `./${item.path}`;
       const cleanupUrl = item.cleanupUrl || (item.cleanupPath ? `./${item.cleanupPath}` : "");
-      return {
+      const entry = {
         id: actionId,
         name: label,
         url,
@@ -964,6 +1005,9 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         libraryKey: item.key || item.path || url,
         imported: true
       };
+      defineHiddenValue(entry, "blob", readableBlob(item));
+      defineHiddenValue(entry, "libraryCleanupBlob", readableBlob(item, "cleanupBlob"));
+      return entry;
     },
 
     upsertClipEntry(entry) {
@@ -1055,7 +1099,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
 
       const folderTarget = this.animationLibraryActorTargetForFolder(item.folder);
       const extension = String(item.extension || animationFileExtension(item.name || item.path || item.url)).toLowerCase();
-      if (folderTarget && !item.engine && ["fbx", "glb", "gltf"].includes(extension)) {
+      const folderModelIsOpen = Boolean(folderTarget && this.model && this.actorTarget?.id === folderTarget.id);
+      if (folderModelIsOpen && !item.engine && ["fbx", "glb", "gltf"].includes(extension)) {
         return this.loadAnimationLibraryClipAsset(item, folderTarget);
       }
 
@@ -1069,14 +1114,12 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         const extension = fileName.split(".").pop()?.toLowerCase() || "";
         let imported;
         if (extension === "fbx") {
-          const response = await fetch(url, { cache: "no-store" });
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-          const buffer = await response.arrayBuffer();
+          const buffer = await arrayBufferFromAnimationSource(item, url);
           const scene = this.fbxLoader.parse(buffer, "");
           await this.attachEmbeddedFbxTextures?.(scene, buffer);
           imported = { scene, animations: scene.animations || [] };
+        } else if (readableBlob(item)) {
+          imported = await this.parseGLTFBuffer(await arrayBufferFromAnimationSource(item, url), "");
         } else {
           imported = await this.loadGLTFUrl(url);
         }
@@ -1165,6 +1208,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.bindPose = this.captureBindPose();
       this.collectBones();
       this.collectPaintableMeshes();
+      this.scheduleTextureAirbrushPrewarm?.(null, null, { force: true });
       this.populateBoneSelect();
       await this.loadPatchAsset({ silent: true });
       this.clipEntries = this.clipEntriesForImportedAnimations(imported.animations || [], fileName, {
@@ -1840,15 +1884,11 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
 
     async loadAnimationLibraryCleanupForEntry(entry = this.activeClipEntry, { silent = false } = {}) {
       const target = await this.animationLibraryCleanupTargetForEntry(entry);
-      if (!target?.url) {
+      if (!target?.url && !target?.blob) {
         return false;
       }
       try {
-        const response = await fetch(target.url, { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        this.weightJson.value = JSON.stringify(await response.json(), null, 2);
+        this.weightJson.value = JSON.stringify(await jsonFromCleanupTarget(target), null, 2);
         this.applyPatchJson({ status: false });
         if (!silent) {
           this.setStatus(`Loaded ${target.fileName}`);
@@ -1870,7 +1910,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         return {
           folder: entry.libraryFolder,
           fileName: entry.libraryCleanupFile,
-          url: entry.libraryCleanupUrl || `./assets/models/animation-library/${entry.libraryFolder}/${entry.libraryCleanupFile}`
+          url: entry.libraryCleanupUrl || `./assets/models/animation-library/${entry.libraryFolder}/${entry.libraryCleanupFile}`,
+          blob: readableBlob(entry, "libraryCleanupBlob")
         };
       }
       if (!this.animationLibraryFolders.length) {
@@ -1895,7 +1936,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       return {
         folder: folderName,
         fileName: matchedFile.cleanupFile,
-        url: matchedFile.cleanupUrl || `./assets/models/animation-library/${folderName}/${matchedFile.cleanupFile}`
+        url: matchedFile.cleanupUrl || `./assets/models/animation-library/${folderName}/${matchedFile.cleanupFile}`,
+        blob: readableBlob(matchedFile, "cleanupBlob")
       };
     },
 

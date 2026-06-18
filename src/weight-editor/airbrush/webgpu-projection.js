@@ -1,0 +1,5 @@
+export {
+  TEXTURE_AIRBRUSH_PROJECTION_DEPTH_WINDOW as TEXTURE_AIRBRUSH_WEBGPU_PROJECTION_DEPTH_WINDOW,
+  textureAirbrushProbePointsFromStroke as textureAirbrushWebGpuProbePointsFromStroke,
+  textureAirbrushScreenStrokeFromEvent as textureAirbrushWebGpuScreenStrokeFromEvent
+} from "./projection.js";

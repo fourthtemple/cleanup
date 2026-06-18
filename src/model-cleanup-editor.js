@@ -13,16 +13,16 @@ import {
 } from "./animation/animation-clip-utils.js";
 import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
 import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=tutorial-macro-reset-20260605a";
-import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=folder-delete-inline-20260607a";
-import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=adaptive-context-key-20260609a";
-import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=tutorial-macro-reset-20260605a";
+import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=static-library-load-20260618a";
+import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=static-library-load-20260618a";
+import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=airbrush-spacing-20260618a";
 import { installClonePaintReplayMethods } from "./weight-editor/clone-paint-replay.js?v=airbrush-command-20260602a";
 import { installCurveEditorMethods } from "./weight-editor/curve-editor.js?v=adaptive-context-key-20260609a";
 import { installCurveHandleMethods } from "./weight-editor/curve-handles.js?v=adaptive-context-key-20260609a";
 import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js?v=adaptive-delta-cache-20260609a";
 import { installJointConstraintMethods } from "./weight-editor/joint-constraints.js?v=joint-limit-capture-20260604a";
 import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=macro-scene-speed-20260608a";
-import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=airbrush-lag-20260607b";
+import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=airbrush-spacing-20260618a";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-replay-state-20260606a";
 import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=adaptive-context-key-20260609a";
 import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=responsive-drawer-polish-20260612a";
@@ -34,10 +34,14 @@ import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=responsive-drawer-polish-20260612a";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js?v=macro-live-follow-20260608a";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=side-panel-scale-20260615a";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=airbrush-spacing-20260618a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
-import { installTextureAirbrushMethods } from "./weight-editor/texture-airbrush.js?v=airbrush-lag-20260607b";
-import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=tutorial-disk-save-20260609a";
+import {
+  installTextureAirbrushMethods,
+  installTextureAirbrushWebGpuMethods,
+  textureAirbrushWebGpuRendererRequestedFromSearch
+} from "./weight-editor/airbrush/index.js?v=airbrush-spacing-20260618a";
+import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=airbrush-spacing-20260618a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=adaptive-delta-cache-20260609a";
 import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
 
@@ -126,6 +130,8 @@ class ModelCleanupEditor {
   constructor() {
     window.modelCleanupEditor = this;
     window.mixamoCleanupEditor = this;
+    window.modelCleanupWebGpuStatus = () => this.textureAirbrushWebGpuRuntimeStatus?.() || null;
+    window.modelCleanupWebGpuSelfTest = (options = {}) => this.textureAirbrushRunWebGpuSelfTest?.(options) || Promise.resolve(null);
     this.installClonePaintReplayConsole?.();
     this.app = document.querySelector(".weight-editor-app");
     this.canvas = document.getElementById("viewer-canvas");
@@ -231,12 +237,16 @@ class ModelCleanupEditor {
     this.texturePaintColor = document.getElementById("texture-paint-color");
     this.textureBrushRadius = document.getElementById("texture-brush-radius");
     this.textureBrushRadiusOutput = document.getElementById("texture-brush-radius-output");
+    this.textureBrushSpacing = document.getElementById("texture-brush-spacing");
+    this.textureBrushSpacingOutput = document.getElementById("texture-brush-spacing-output");
     this.textureBrushOpacity = document.getElementById("texture-brush-opacity");
     this.textureBrushOpacityOutput = document.getElementById("texture-brush-opacity-output");
     this.textureBrushHardness = document.getElementById("texture-brush-hardness");
     this.textureBrushHardnessOutput = document.getElementById("texture-brush-hardness-output");
     this.textureBrushScatter = document.getElementById("texture-brush-scatter");
     this.textureBrushScatterOutput = document.getElementById("texture-brush-scatter-output");
+    this.texturePressureRadius = document.getElementById("texture-pressure-radius");
+    this.texturePressureOpacity = document.getElementById("texture-pressure-opacity");
     this.texturePickColorToolButton = document.getElementById("texture-pick-color-tool");
     this.textureAirbrushToolButton = document.getElementById("texture-airbrush-tool");
     this.textureFillRegionButton = document.getElementById("texture-fill-region");
@@ -562,7 +572,8 @@ const MODEL_CLEANUP_EDITOR_DEPS = {
   EDIT_ONLY_TOOLS,
   finitePoseValue,
   writeJsonFile,
-  writeAnimationLibraryCleanupFile
+  writeAnimationLibraryCleanupFile,
+  WebGPURenderer: null
 };
 
 installSceneAndControlMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
@@ -591,9 +602,11 @@ installRootMotionUnbakeMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 installOverlayAndRenderMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 installCurveEditorMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 installAutoKeySolverMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
+installTextureAirbrushWebGpuMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 installTextureAirbrushMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 installTutorialMacroMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 
+MODEL_CLEANUP_EDITOR_DEPS.WebGPURenderer = await loadOptionalWebGpuRenderer();
 
 async function writeJsonFile(fileName, text, description) {
   if (typeof window.showSaveFilePicker === "function") {
@@ -641,6 +654,26 @@ async function writeAnimationLibraryCleanupFile(folder, fileName, text) {
     return response.ok;
   } catch {
     return false;
+  }
+}
+
+async function loadOptionalWebGpuRenderer() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  if (!textureAirbrushWebGpuRendererRequestedFromSearch(window.location?.search || "")) {
+    return null;
+  }
+  if (!globalThis.navigator?.gpu) {
+    console.info("WebGPU renderer requested, but navigator.gpu is not available; using WebGL.");
+    return null;
+  }
+  try {
+    const module = await import("../node_modules/three/build/three.webgpu.js");
+    return typeof module.WebGPURenderer === "function" ? module.WebGPURenderer : null;
+  } catch (error) {
+    console.warn("Could not load Three.js WebGPU renderer; using WebGL.", error);
+    return null;
   }
 }
 

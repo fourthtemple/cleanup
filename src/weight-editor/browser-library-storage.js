@@ -47,7 +47,7 @@ function objectUrlForBlob(record) {
 function descriptor(record) {
   const relativePath = `browser-library/${record.folder}/${record.name}`;
   const cleanupFile = cleanupFileName(record.name);
-  return {
+  const item = {
     key: relativePath,
     name: record.name,
     label: record.name,
@@ -60,6 +60,21 @@ function descriptor(record) {
     cleanupPath: `browser-library/${record.folder}/${cleanupFile}`,
     cleanupUrl: record.cleanupBlob ? URL.createObjectURL(record.cleanupBlob) : ""
   };
+  if (record.blob) {
+    Object.defineProperty(item, "blob", {
+      value: record.blob,
+      enumerable: false,
+      configurable: true
+    });
+  }
+  if (record.cleanupBlob) {
+    Object.defineProperty(item, "cleanupBlob", {
+      value: record.cleanupBlob,
+      enumerable: false,
+      configurable: true
+    });
+  }
+  return item;
 }
 
 function requestToPromise(request) {

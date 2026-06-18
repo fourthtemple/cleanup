@@ -1,3 +1,13 @@
+const TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MIN_PIXELS = 6;
+const TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS = 18;
+const TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_RADIUS_SCALE = 0.75;
+const TEXTURE_AIRBRUSH_CONTINUOUS_MAX_SAMPLES = 24;
+
+function texturePaintPointerIsHighRateBrushInput(event = null) {
+  const pointerType = String(event?.pointerType || "").toLowerCase();
+  return pointerType === "pen" || pointerType === "touch";
+}
+
 export function installPaintToolMethods(BirdWeightEditor, deps) {
   const {
     THREE,
@@ -46,7 +56,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.pickTextureColorFromEvent(event);
         return;
       }
-      if (this.activeTool === "airbrush" || this.activeTool === "clone") {
+      if (this.activeTool === "airbrush") {
+        this.showTextureStrokeCursor?.(event);
+      } else if (this.activeTool === "clone") {
         this.updateTextureBrushCursor?.(event);
       } else if (this.usesSelectionBrushCursor?.(this.activeTool)) {
         this.updateSelectionBrushCursor?.(event);
@@ -158,7 +170,11 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       }
       event.preventDefault();
       if (this.activeTool === "airbrush" || this.activeTool === "clone") {
-        this.updateTextureBrushCursor?.(event);
+        if (this.activeTool === "airbrush") {
+          this.showTextureStrokeCursor?.(event);
+        } else {
+          this.updateTextureBrushCursor?.(event);
+        }
         this.paintTextureStrokeFromEvent?.(event);
         return;
       } else if (this.usesSelectionBrushCursor?.(this.activeTool)) {
@@ -193,6 +209,10 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         this.texturePaintSuppressClickUntil = now + 700;
         this.texturePaintStrokePoint = null;
+        this.textureAirbrushResetStrokeSpacing?.();
+        this.textureAirbrushResetStrokePressureState?.();
+        this.textureAirbrushResetStrokeBrushState?.();
+        this.textureAirbrushResetInputSamplingState?.();
         this.hideTextureBrushCursor?.();
       }
       this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
@@ -208,21 +228,317 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return action === "airbrush" || action === "clone";
     },
 
-    texturePaintEventAtPoint(sourceEvent, point) {
+    texturePaintEventAtPoint(sourceEvent, point, fallbackEvent = null) {
+      const eventValue = (name) => (
+        sourceEvent?.[name] !== undefined && sourceEvent?.[name] !== null
+          ? sourceEvent[name]
+          : fallbackEvent?.[name]
+      );
+      const pointerType = eventValue("pointerType");
+      const pressure = eventValue("pressure");
+      const tangentialPressure = eventValue("tangentialPressure");
+      const tiltX = eventValue("tiltX");
+      const tiltY = eventValue("tiltY");
+      const twist = eventValue("twist");
+      const width = eventValue("width");
+      const height = eventValue("height");
       return {
         clientX: point.clientX,
         clientY: point.clientY,
-        button: sourceEvent?.button ?? 0,
-        buttons: sourceEvent?.buttons ?? 1,
-        pointerId: sourceEvent?.pointerId,
-        pointerType: sourceEvent?.pointerType || "",
-        altKey: Boolean(sourceEvent?.altKey),
-        ctrlKey: Boolean(sourceEvent?.ctrlKey),
-        metaKey: Boolean(sourceEvent?.metaKey),
-        shiftKey: Boolean(sourceEvent?.shiftKey),
-        preventDefault: () => sourceEvent?.preventDefault?.(),
-        stopPropagation: () => sourceEvent?.stopPropagation?.()
+        button: eventValue("button") ?? 0,
+        buttons: eventValue("buttons") ?? 1,
+        pointerId: eventValue("pointerId"),
+        pointerType: pointerType || "",
+        pressure,
+        tangentialPressure,
+        tiltX,
+        tiltY,
+        twist,
+        width,
+        height,
+        altKey: Boolean(eventValue("altKey")),
+        ctrlKey: Boolean(eventValue("ctrlKey")),
+        metaKey: Boolean(eventValue("metaKey")),
+        shiftKey: Boolean(eventValue("shiftKey")),
+        timeStamp: eventValue("timeStamp"),
+        preventDefault: () => {
+          sourceEvent?.preventDefault?.();
+          if (fallbackEvent && fallbackEvent !== sourceEvent) {
+            fallbackEvent.preventDefault?.();
+          }
+        },
+        stopPropagation: () => {
+          sourceEvent?.stopPropagation?.();
+          if (fallbackEvent && fallbackEvent !== sourceEvent) {
+            fallbackEvent.stopPropagation?.();
+          }
+        }
       };
+    },
+
+    textureAirbrushInputEventAtPoint(sourceEvent, point, fallbackEvent = null) {
+      const eventValue = (name) => (
+        sourceEvent?.[name] !== undefined && sourceEvent?.[name] !== null
+          ? sourceEvent[name]
+          : fallbackEvent?.[name]
+      );
+      const pointerType = eventValue("pointerType");
+      return {
+        clientX: point.clientX,
+        clientY: point.clientY,
+        button: eventValue("button") ?? 0,
+        buttons: eventValue("buttons") ?? 1,
+        pointerId: eventValue("pointerId"),
+        pointerType: pointerType || "",
+        pressure: eventValue("pressure"),
+        tangentialPressure: eventValue("tangentialPressure"),
+        tiltX: eventValue("tiltX"),
+        tiltY: eventValue("tiltY"),
+        twist: eventValue("twist"),
+        width: eventValue("width"),
+        height: eventValue("height"),
+        altKey: Boolean(eventValue("altKey")),
+        ctrlKey: Boolean(eventValue("ctrlKey")),
+        metaKey: Boolean(eventValue("metaKey")),
+        shiftKey: Boolean(eventValue("shiftKey")),
+        timeStamp: eventValue("timeStamp")
+      };
+    },
+
+    texturePaintCoalescedEvents(event) {
+      const coalesced = typeof event?.getCoalescedEvents === "function"
+        ? event.getCoalescedEvents()
+        : [];
+      const events = Array.isArray(coalesced) && coalesced.length ? coalesced : [event];
+      const normalized = [];
+      for (const pointEvent of events) {
+        if (!Number.isFinite(pointEvent?.clientX) || !Number.isFinite(pointEvent?.clientY)) {
+          continue;
+        }
+        normalized.push(this.textureAirbrushInputEventAtPoint?.(pointEvent, {
+          clientX: pointEvent.clientX,
+          clientY: pointEvent.clientY
+        }, event) || pointEvent);
+      }
+      return normalized.length ? normalized : [event];
+    },
+
+    textureAirbrushRawInputEvents(event) {
+      const coalesced = typeof event?.getCoalescedEvents === "function"
+        ? event.getCoalescedEvents()
+        : [];
+      const events = Array.isArray(coalesced) && coalesced.length ? coalesced : [event];
+      const finiteEvents = [];
+      for (const pointEvent of events) {
+        if (!Number.isFinite(pointEvent?.clientX) || !Number.isFinite(pointEvent?.clientY)) {
+          continue;
+        }
+        finiteEvents.push(pointEvent);
+      }
+      return finiteEvents.length ? finiteEvents : [event];
+    },
+
+    textureAirbrushNormalizeInputEvents(events = [], fallbackEvent = null) {
+      const normalized = [];
+      for (const pointEvent of events) {
+        if (!Number.isFinite(pointEvent?.clientX) || !Number.isFinite(pointEvent?.clientY)) {
+          continue;
+        }
+        normalized.push(this.textureAirbrushInputEventAtPoint?.(pointEvent, {
+          clientX: pointEvent.clientX,
+          clientY: pointEvent.clientY
+        }, fallbackEvent) || pointEvent);
+      }
+      return normalized.length ? normalized : [fallbackEvent || events[0]];
+    },
+
+    textureAirbrushStrokeSourceEvents(event, { reset = false } = {}) {
+      return this.textureAirbrushRawInputEvents?.(event) || [event];
+    },
+
+    textureAirbrushStrokeInputEvents(event, { reset = false } = {}) {
+      const events = this.textureAirbrushStrokeSourceEvents?.(event, { reset })
+        || this.textureAirbrushRawInputEvents?.(event)
+        || [event];
+      return this.textureAirbrushNormalizeInputEvents?.(events, event) || events;
+    },
+
+    textureAirbrushResetInputSamplingState() {
+      this.textureAirbrushInputSamplingCache = null;
+    },
+
+    textureAirbrushCachedStrokeRadiusPixels() {
+      const brushRadius = Number(this.textureAirbrushStrokeBrushState?.radiusPixels);
+      if (Number.isFinite(brushRadius) && brushRadius > 0) {
+        return brushRadius;
+      }
+      const inputRadius = Number(this.textureAirbrushInputSamplingCache?.radiusPixels);
+      if (Number.isFinite(inputRadius) && inputRadius > 0) {
+        return inputRadius;
+      }
+      return null;
+    },
+
+    textureAirbrushInputSamplingState() {
+      if (this.textureAirbrushInputSamplingCache) {
+        return this.textureAirbrushInputSamplingCache;
+      }
+      const radius = Math.max(1, this.textureBrushRadiusScreenPixels?.() || 8);
+      const spacingPercent = Math.max(0.1, Math.min(200, Number(this.textureAirbrushSpacingPercent?.() ?? 1)));
+      const sampleStep = Math.max(
+        TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MIN_PIXELS,
+        Math.min(
+          TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS,
+          radius * TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_RADIUS_SCALE
+        )
+      );
+      const state = {
+        continuous: spacingPercent <= 100,
+        radiusPixels: radius,
+        sampleStep
+      };
+      this.textureAirbrushInputSamplingCache = state;
+      return state;
+    },
+
+    textureAirbrushContinuousSampleStepPixels() {
+      return this.textureAirbrushInputSamplingState?.().sampleStep
+        ?? TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS;
+    },
+
+    textureAirbrushShouldInterpolateContinuousStroke() {
+      return this.textureAirbrushInputSamplingState?.().continuous === true;
+    },
+
+    textureAirbrushInterpolatedStrokeEvents(sourceEvent, startPoint, endPoint) {
+      if (!this.textureAirbrushShouldInterpolateContinuousStroke?.()) {
+        return [sourceEvent];
+      }
+      if (
+        !Number.isFinite(startPoint?.clientX)
+        || !Number.isFinite(startPoint?.clientY)
+        || !Number.isFinite(endPoint?.clientX)
+        || !Number.isFinite(endPoint?.clientY)
+      ) {
+        return [sourceEvent];
+      }
+      const dx = endPoint.clientX - startPoint.clientX;
+      const dy = endPoint.clientY - startPoint.clientY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const sampleStep = this.textureAirbrushContinuousSampleStepPixels?.()
+        || TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS;
+      if (distance <= sampleStep + 0.001) {
+        return [sourceEvent];
+      }
+      const sampleCount = Math.max(
+        1,
+        Math.min(TEXTURE_AIRBRUSH_CONTINUOUS_MAX_SAMPLES, Math.ceil(distance / sampleStep))
+      );
+      const samples = [];
+      for (let index = 1; index <= sampleCount; index += 1) {
+        const ratio = index / sampleCount;
+        samples.push(this.textureAirbrushInputEventAtPoint?.(sourceEvent, {
+          clientX: startPoint.clientX + dx * ratio,
+          clientY: startPoint.clientY + dy * ratio
+        }) || sourceEvent);
+      }
+      return samples;
+    },
+
+    showTextureStrokeCursor(event) {
+      if (!this.textureBrushCursor || !this.canvas || !event) {
+        return false;
+      }
+      const remembered = this.rememberBrushCursorEvent?.(event);
+      if (!remembered) {
+        this.hideTextureBrushCursor?.();
+        return false;
+      }
+      const radius = this.textureAirbrushCachedStrokeRadiusPixels?.()
+        || this.textureBrushRadiusScreenPixels?.()
+        || 8;
+      if (this.showTextureBrushCursorElement) {
+        this.showTextureBrushCursorElement();
+      } else {
+        this.textureBrushCursor.hidden = false;
+      }
+      if (this.setTextureBrushCursorMode) {
+        this.setTextureBrushCursorMode("airbrush");
+      } else {
+        this.textureBrushCursor.classList.remove("is-selection", "is-deselect", "is-clone");
+      }
+      if (
+        this.painting
+        && texturePaintPointerIsHighRateBrushInput(event)
+        && this.scheduleBrushCursorPosition?.(event, radius)
+      ) {
+        return true;
+      }
+      this.positionBrushCursor?.(event, radius);
+      return true;
+    },
+
+    queueAirbrushTextureStrokeEvent(event, { reset = false } = {}) {
+      const events = this.textureAirbrushStrokeSourceEvents?.(event, { reset })
+        || this.texturePaintCoalescedEvents?.(event)
+        || [event];
+      const skipInterpolatedSamples = texturePaintPointerIsHighRateBrushInput(events[0])
+        || texturePaintPointerIsHighRateBrushInput(event);
+      let queued = false;
+      let previous = reset ? null : this.texturePaintStrokePoint;
+      let resetSpacing = reset;
+      if (reset) {
+        this.textureAirbrushScreenStrokeChanged = false;
+        this.textureAirbrushResetInputSamplingState?.();
+      }
+      for (const pointEvent of events) {
+        if (!Number.isFinite(pointEvent?.clientX) || !Number.isFinite(pointEvent?.clientY)) {
+          continue;
+        }
+        if (skipInterpolatedSamples) {
+          const sampleCurrent = {
+            clientX: pointEvent.clientX,
+            clientY: pointEvent.clientY
+          };
+          const strokeStart = previous || sampleCurrent;
+          const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
+          queued = queueStroke?.call(this, pointEvent, {
+            strokeStart,
+            reset: resetSpacing || !previous
+          }) || queued;
+          resetSpacing = false;
+          previous = sampleCurrent;
+          continue;
+        }
+        const current = {
+          clientX: pointEvent.clientX,
+          clientY: pointEvent.clientY
+        };
+        const strokeEvents = previous
+          ? this.textureAirbrushInterpolatedStrokeEvents?.(pointEvent, previous, current) || [pointEvent]
+          : [pointEvent];
+        for (const strokeEvent of strokeEvents) {
+          if (!Number.isFinite(strokeEvent?.clientX) || !Number.isFinite(strokeEvent?.clientY)) {
+            continue;
+          }
+          const sampleCurrent = {
+            clientX: strokeEvent.clientX,
+            clientY: strokeEvent.clientY
+          };
+          const strokeStart = previous || sampleCurrent;
+          const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
+          queued = queueStroke?.call(this, strokeEvent, {
+            strokeStart,
+            reset: resetSpacing || !previous
+          }) || queued;
+          resetSpacing = false;
+          previous = sampleCurrent;
+        }
+      }
+      if (previous) {
+        this.texturePaintStrokePoint = previous;
+      }
+      return queued;
     },
 
     paintTextureStrokeFromEvent(event, { reset = false } = {}) {
@@ -238,6 +554,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.paintFromEvent(event);
         this.texturePaintStrokePoint = current;
         return true;
+      }
+      if (this.textureAirbrushCanUseScreenStroke?.()) {
+        return this.queueAirbrushTextureStrokeEvent(event, { reset });
       }
       if (!previous) {
         this.paintFromEvent(event, { strokeStart: current });
@@ -515,10 +834,57 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       entry?.after?.dispose?.();
     },
 
-    endTexturePaintStrokeUndo() {
-      this.flushTextureAirbrushScreenStroke?.();
-      const stroke = this.texturePaintStrokeUndo;
-      this.texturePaintStrokeUndo = null;
+    prepareTexturePaintGpuUndoEntriesForCanvas(stroke = this.texturePaintStrokeUndo) {
+      const gpuEntries = (stroke?.before || []).filter((entry) => entry?.type === "gpu");
+      if (!gpuEntries.length) {
+        return false;
+      }
+      if (
+        typeof this.textureAirbrushCanvasFromRenderTarget !== "function"
+        || typeof this.flushTextureAirbrushGpuTargetsToCanvases !== "function"
+      ) {
+        return false;
+      }
+      const prepared = [];
+      for (const entry of gpuEntries) {
+        const beforeEditable = this.textureAirbrushCanvasFromRenderTarget({
+          target: entry.before,
+          width: entry.targetEntry?.width || entry.before?.width,
+          height: entry.targetEntry?.height || entry.before?.height
+        });
+        if (!beforeEditable?.canvas || !beforeEditable.context) {
+          return false;
+        }
+        prepared.push({
+          entry,
+          before: beforeEditable.context.getImageData(0, 0, beforeEditable.canvas.width, beforeEditable.canvas.height)
+        });
+      }
+
+      const flushed = this.flushTextureAirbrushGpuTargetsToCanvases();
+      if (!flushed) {
+        return false;
+      }
+
+      for (const { entry, before } of prepared) {
+        const userData = entry.material?.userData || {};
+        if (!userData.clonePaintCanvas || !userData.clonePaintContext) {
+          continue;
+        }
+        entry.before?.dispose?.();
+        entry.after?.dispose?.();
+        entry.type = "canvas";
+        entry.canvas = userData.clonePaintCanvas;
+        entry.context = userData.clonePaintContext;
+        entry.texture = userData.clonePaintTexture || entry.material?.map || null;
+        entry.before = before;
+        entry.after = null;
+        delete entry.targetEntry;
+      }
+      return true;
+    },
+
+    finalizeTexturePaintStrokeUndo(stroke = null) {
       if (!stroke?.changed || !stroke.before.length) {
         for (const entry of stroke?.before || []) {
           this.disposeTexturePaintSnapshotEntry(entry);
@@ -548,6 +914,41 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return true;
     },
 
+    endTexturePaintStrokeUndo() {
+      const screenFlush = this.finishTextureAirbrushScreenStrokeFlush?.() || (
+        this.flushTextureAirbrushScreenStroke?.(),
+        null
+      );
+      const stroke = this.texturePaintStrokeUndo;
+      if (!stroke) {
+        return false;
+      }
+      this.texturePaintStrokeUndo = null;
+      const finalizeAfterPendingPaint = () => {
+        if (
+          (
+            this.textureAirbrushPendingWebGpuPaints?.size
+            || this.textureAirbrushQueuedWebGpuStrokes?.length
+            || this.textureAirbrushWebGpuFlushInFlight
+          )
+          && typeof this.flushTextureAirbrushPendingWebGpuPaints === "function"
+        ) {
+          this.flushTextureAirbrushPendingWebGpuPaints().finally(() => {
+            this.finalizeTexturePaintStrokeUndo?.(stroke);
+          });
+          return false;
+        }
+        return this.finalizeTexturePaintStrokeUndo(stroke);
+      };
+      if (screenFlush && typeof screenFlush.then === "function") {
+        screenFlush.finally(() => {
+          finalizeAfterPendingPaint();
+        });
+        return false;
+      }
+      return finalizeAfterPendingPaint();
+    },
+
     restoreTexturePaintSnapshot(entries = [], field = "before") {
       for (const entry of entries) {
         if (entry.type === "canvas") {
@@ -562,6 +963,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           if (entry.material) {
             entry.material.needsUpdate = true;
           }
+          this.textureAirbrushInvalidateWebGpuCache?.(entry.texture || entry.canvas);
           this.refreshCloneSpotlightTextures?.(entry.record);
           continue;
         }

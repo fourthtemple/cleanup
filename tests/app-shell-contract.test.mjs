@@ -11,6 +11,14 @@ function indexHtml() {
   return fs.readFileSync(path.join(repoRoot, "index.html"), "utf8");
 }
 
+function modelCleanupEditorSource() {
+  return fs.readFileSync(path.join(repoRoot, "src/model-cleanup-editor.js"), "utf8");
+}
+
+function packageJson() {
+  return JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+}
+
 function sectionText(html, label) {
   const sectionStart = html.indexOf(`<span class="viewer-label">${label}</span>`);
   assert.notEqual(sectionStart, -1, `missing ${label} section`);
@@ -31,9 +39,17 @@ test("app shell keeps camera controls separate from background display settings"
   const html = indexHtml();
   const camera = sectionText(html, "Camera");
   const background = sectionText(html, "Background");
+  const settings = sectionText(html, "Settings");
 
   assert.match(camera, /id="camera-gizmo-toggle"/);
   assert.match(camera, /Camera gizmo/);
+  assert.match(camera, /id="save-orbit-view"/);
+  assert.match(camera, /id="restore-orbit-view"/);
+  assert.match(camera, /<span class="viewer-subheading">View<\/span>/);
+  assert.match(camera, /<button id="save-orbit-view"[^>]*>Save<\/button>/);
+  assert.match(camera, /<button id="restore-orbit-view"[^>]*>Restore<\/button>/);
+  assert.doesNotMatch(camera, />Save View<\/button>/);
+  assert.doesNotMatch(camera, />Restore View<\/button>/);
   assert.doesNotMatch(camera, /id="camera-background-color"/);
   assert.doesNotMatch(camera, /id="camera-mesh-color"/);
 
@@ -43,6 +59,9 @@ test("app shell keeps camera controls separate from background display settings"
   assert.match(background, /id="camera-key-light"/);
   assert.match(background, /id="camera-rim-light"/);
   assert.match(background, /id="camera-texture-gain"/);
+
+  assert.doesNotMatch(settings, /id="save-orbit-view"/);
+  assert.doesNotMatch(settings, /id="restore-orbit-view"/);
 });
 
 test("app shell exposes the camera gizmo stage control once", () => {
@@ -59,6 +78,32 @@ test("animation library exposes an explicit motion conversion action", () => {
   assert.match(animationLibrary, /id="motion-conversion-mode"/);
   assert.match(animationLibrary, /id="motion-conversion-apply"/);
   assert.match(animationLibrary, />Convert<\/button>/);
+});
+
+test("airbrush controls expose per-parameter pressure toggles", () => {
+  const html = indexHtml();
+  const airbrush = sectionText(html, "Airbrush");
+
+  assert.match(airbrush, /id="texture-pressure-radius" type="checkbox" checked/);
+  assert.doesNotMatch(airbrush, /id="texture-pressure-opacity" type="checkbox" checked/);
+  assert.match(airbrush, /id="texture-brush-opacity"[\s\S]*id="texture-brush-spacing"/);
+  assert.match(airbrush, /id="texture-brush-spacing" type="range" min="0\.1" max="200" step="0\.1" value="1"/);
+  assert.doesNotMatch(airbrush, /id="texture-pressure-hardness"/);
+  assert.doesNotMatch(airbrush, /id="texture-pressure-scatter"/);
+});
+
+test("app exposes a WebGPU airbrush runtime diagnostic helper", () => {
+  const source = modelCleanupEditorSource();
+
+  assert.match(source, /window\.modelCleanupEditor = this/);
+  assert.match(source, /window\.modelCleanupWebGpuStatus = \(\) => this\.textureAirbrushWebGpuRuntimeStatus\?\.\(\) \|\| null/);
+  assert.match(source, /window\.modelCleanupWebGpuSelfTest = \(options = \{\}\) => this\.textureAirbrushRunWebGpuSelfTest\?\.\(options\) \|\| Promise\.resolve\(null\)/);
+});
+
+test("package exposes a native WebGPU airbrush validation command", () => {
+  const manifest = packageJson();
+
+  assert.equal(manifest.scripts["validate:webgpu-airbrush"], "node ./scripts/validate-webgpu-airbrush.mjs");
 });
 
 test("tutorial recipes explain curve editing and motion conversion", () => {

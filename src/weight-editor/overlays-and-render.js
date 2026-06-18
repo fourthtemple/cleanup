@@ -751,6 +751,9 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       }
       this.controls.update();
       this.updateCameraRelativeLights?.();
+      if (this.textureAirbrushRendererMode === "webgpu" && this.textureAirbrushWebGpuRendererReady === false) {
+        return;
+      }
       this.renderer.render(this.scene, this.camera);
     }
   });

@@ -1198,7 +1198,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       }
       recording.lastPointerTime = time;
       const brush = this.activeTool === "airbrush" || this.activeTool === "clone"
-        ? this.tutorialMacroBrushSettingsSnapshot?.()
+        ? this.tutorialMacroBrushSettingsSnapshot?.(event)
         : null;
       const recorded = this.recordTutorialMacroEvent("pointer", {
         kind,
@@ -1217,16 +1217,22 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       return recorded;
     },
 
-    tutorialMacroBrushSettingsSnapshot() {
+    tutorialMacroBrushSettingsSnapshot(event = null) {
       const colorBytes = this.textureAirbrushColor?.() || null;
+      const pressure = this.textureAirbrushPressureValue?.(event) ?? 1;
+      const pressureSettings = this.textureAirbrushPressureSettings?.() || {};
       return {
         color: String(this.texturePaintColor?.value || "#c06f4f").toLowerCase(),
         ...(colorBytes ? { colorBytes: { r: colorBytes.r, g: colorBytes.g, b: colorBytes.b } } : {}),
         radius: rounded(this.textureBrushRadius?.value || this.brushRadius?.value || 0.035, 5),
         radiusPixels: rounded(this.textureBrushRadiusScreenPixels?.() || 24, 3),
+        spacing: rounded(this.textureAirbrushSpacingPercent?.() ?? this.textureBrushSpacing?.value ?? 1, 3),
         opacity: rounded(this.textureBrushOpacity?.value || 0.42, 5),
         hardness: rounded(this.textureBrushHardness?.value || 0.35, 5),
-        scatter: rounded(this.textureBrushScatter?.value || 0.35, 5)
+        scatter: rounded(this.textureBrushScatter?.value || 0.35, 5),
+        pressure: rounded(pressure, 5),
+        pressureRadius: pressureSettings.radius === true,
+        pressureOpacity: pressureSettings.opacity === true
       };
     },
 
@@ -1237,6 +1243,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       const entries = [
         [this.texturePaintColor, settings.color],
         [this.textureBrushRadius, settings.radius],
+        [this.textureBrushSpacing, settings.spacing],
         [this.textureBrushOpacity, settings.opacity],
         [this.textureBrushHardness, settings.hardness],
         [this.textureBrushScatter, settings.scatter]

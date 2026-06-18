@@ -1471,7 +1471,44 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
         };
       }
 
-      const sourceMap = material.map || null;
+      const gpuEntry = material.userData?.textureAirbrushGpuTarget;
+      if (gpuEntry?.target?.texture && material.map === gpuEntry.target.texture) {
+        const editable = this.textureAirbrushCanvasFromRenderTarget?.(gpuEntry);
+        if (!editable?.canvas || !editable.context) {
+          return null;
+        }
+        const texture = new THREE.CanvasTexture(editable.canvas);
+        texture.name = `${gpuEntry.target.texture.name || material.map?.name || "texture"} editable bake`;
+        if (typeof this.textureAirbrushCopyTextureRenderSettings === "function") {
+          this.textureAirbrushCopyTextureRenderSettings(texture, gpuEntry.target.texture);
+        } else {
+          texture.colorSpace = gpuEntry.target.texture.colorSpace || THREE.SRGBColorSpace;
+          texture.flipY = gpuEntry.target.texture.flipY ?? false;
+          texture.wrapS = gpuEntry.target.texture.wrapS || THREE.ClampToEdgeWrapping;
+          texture.wrapT = gpuEntry.target.texture.wrapT || THREE.ClampToEdgeWrapping;
+          texture.magFilter = gpuEntry.target.texture.magFilter || THREE.LinearFilter;
+          texture.minFilter = gpuEntry.target.texture.minFilter || THREE.LinearFilter;
+          texture.generateMipmaps = gpuEntry.target.texture.generateMipmaps ?? true;
+        }
+        texture.needsUpdate = true;
+        material.map = texture;
+        material.needsUpdate = true;
+        material.userData.clonePaintCanvas = editable.canvas;
+        material.userData.clonePaintContext = editable.context;
+        material.userData.clonePaintTexture = texture;
+        material.userData.clonePaintTextureScale = gpuEntry.sourceTexture?.userData?.clonePaintTextureScale || 1;
+        delete material.userData.textureAirbrushGpuTarget;
+        gpuEntry.target.dispose?.();
+        this.textureAirbrushGpuProxies?.clear?.();
+        return {
+          canvas: editable.canvas,
+          context: editable.context,
+          texture
+        };
+      }
+      const sourceMap = gpuEntry?.target?.texture && material.map === gpuEntry.target.texture && gpuEntry.sourceTexture
+        ? gpuEntry.sourceTexture
+        : material.map || null;
       if (!Object.prototype.hasOwnProperty.call(material.userData, "clonePaintOriginalMap")) {
         material.userData.clonePaintOriginalMap = sourceMap;
       }

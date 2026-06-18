@@ -1,7 +1,7 @@
 import {
   BrowserAnimationLibraryStorage,
   browserLibraryDefaultFolderName
-} from "./browser-library-storage.js?v=folder-delete-20260607a";
+} from "./browser-library-storage.js?v=static-library-load-20260618a";
 
 function animationLibraryActionIdFromFileName(value) {
   return String(value || "")

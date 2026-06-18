@@ -139,3 +139,52 @@ test("camera configuration includes and restores gizmo visibility", () => {
   assert.equal(editor.cameraTextureGain.value, "0.9");
   assert.equal(editor.sceneLightingApplied, true);
 });
+
+test("restoring a saved camera view prewarms airbrush when painting", () => {
+  const editor = new TestEditor();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 220);
+  const target = new THREE.Vector3();
+  let controlsUpdated = 0;
+  let lightsUpdated = 0;
+  let cursorUpdated = 0;
+  let prewarmScheduled = 0;
+  editor.camera = camera;
+  editor.controls = {
+    target,
+    update() {
+      controlsUpdated += 1;
+    }
+  };
+  editor.activeTool = "airbrush";
+  editor.savedOrbitViewSetting = () => ({
+    version: 1,
+    cameraPosition: [1, 2, 3],
+    cameraUp: [0, 1, 0],
+    target: [0.5, 1.5, 0],
+    zoom: 1.25,
+    fov: 34
+  });
+  editor.updateCameraRelativeLights = () => {
+    lightsUpdated += 1;
+  };
+  editor.updateBrushCursorForLastPointer = () => {
+    cursorUpdated += 1;
+  };
+  editor.scheduleTextureAirbrushPrewarm = () => {
+    prewarmScheduled += 1;
+    return true;
+  };
+  editor.setStatus = (message) => {
+    editor.lastStatus = message;
+  };
+
+  assert.equal(editor.restoreSavedOrbitView(), true);
+  assert.deepEqual(camera.position.toArray(), [1, 2, 3]);
+  assert.deepEqual(target.toArray(), [0.5, 1.5, 0]);
+  assert.equal(camera.zoom, 1.25);
+  assert.equal(camera.fov, 34);
+  assert.equal(controlsUpdated, 1);
+  assert.equal(lightsUpdated, 1);
+  assert.equal(cursorUpdated, 1);
+  assert.equal(prewarmScheduled, 1);
+});

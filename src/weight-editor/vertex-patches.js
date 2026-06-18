@@ -428,7 +428,10 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         const materials = this.texturePaintMaterialsForRecord(record);
         for (let materialIndex = 0; materialIndex < materials.length; materialIndex += 1) {
           const material = materials[materialIndex];
-          const canvas = material?.userData?.clonePaintCanvas;
+          const gpuCanvas = !material?.userData?.clonePaintCanvas && material?.userData?.textureAirbrushGpuTarget
+            ? this.textureAirbrushCanvasFromRenderTarget?.(material.userData.textureAirbrushGpuTarget)?.canvas
+            : null;
+          const canvas = material?.userData?.clonePaintCanvas || gpuCanvas;
           if (!canvas || typeof canvas.toDataURL !== "function") {
             continue;
           }

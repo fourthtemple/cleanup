@@ -165,12 +165,46 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
   Object.assign(BirdWeightEditor.prototype, {
     createScene() {
-      this.renderer = new THREE.WebGLRenderer({
+      const rendererOptions = {
         canvas: this.canvas,
         antialias: true,
         alpha: false,
         preserveDrawingBuffer: true
-      });
+      };
+      const rendererMode = this.textureAirbrushResolveRendererMode?.({
+        WebGPURenderer: deps.WebGPURenderer
+      }) || {
+        renderer: "webgl",
+        webGpuRendererStatus: "not-installed"
+      };
+      if (rendererMode.renderer === "webgpu" && deps.WebGPURenderer) {
+        try {
+          this.renderer = new deps.WebGPURenderer(rendererOptions);
+          this.textureAirbrushRendererMode = "webgpu";
+          if (typeof this.renderer.init === "function") {
+            this.textureAirbrushWebGpuRendererReady = false;
+            this.textureAirbrushWebGpuRendererInit = this.renderer.init()
+              .then(() => {
+                this.textureAirbrushWebGpuRendererReady = true;
+              })
+              .catch((error) => {
+                this.textureAirbrushWebGpuRendererDisabled = true;
+                console.warn("Three.js WebGPU renderer failed to initialize.", error);
+                this.setStatus?.("WebGPU renderer failed to initialize; reload without ?webgpu-renderer=1 to use WebGL.");
+              });
+          } else {
+            this.textureAirbrushWebGpuRendererReady = true;
+          }
+        } catch (error) {
+          this.textureAirbrushWebGpuRendererDisabled = true;
+          console.warn("Three.js WebGPU renderer failed; using WebGL.", error);
+          this.renderer = new THREE.WebGLRenderer(rendererOptions);
+          this.textureAirbrushRendererMode = "webgl";
+        }
+      } else {
+        this.renderer = new THREE.WebGLRenderer(rendererOptions);
+        this.textureAirbrushRendererMode = "webgl";
+      }
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
       this.applyBackgroundColor(this.backgroundColor || "#11171c");
       this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -754,7 +788,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     restoreSavedOrbitView(options = {}) {
-      return this.applyOrbitViewSetting(this.savedOrbitViewSetting(), options);
+      const restored = this.applyOrbitViewSetting(this.savedOrbitViewSetting(), options);
+      if (restored && this.activeTool === "airbrush") {
+        this.updateBrushCursorForLastPointer?.();
+        this.scheduleTextureAirbrushPrewarm?.();
+      }
+      return restored;
     },
 
     defaultCameraConfigurationSetting() {
@@ -2045,6 +2084,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.updateRangeOutputs();
         this.updateBrushCursorForLastPointer?.();
       });
+      this.textureBrushSpacing?.addEventListener("input", () => this.updateRangeOutputs());
       this.textureBrushOpacity?.addEventListener("input", () => this.updateRangeOutputs());
       this.textureBrushHardness?.addEventListener("input", () => this.updateRangeOutputs());
       this.textureBrushScatter?.addEventListener("input", () => this.updateRangeOutputs());
@@ -4655,6 +4695,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           ? this.textureBrushRadiusScreenPixels()
           : Math.max(1, Number(this.textureBrushRadius.value || 0.035) * 220);
         this.textureBrushRadiusOutput.textContent = `${Math.round(pixels)}px`;
+      }
+      if (this.textureBrushSpacingOutput && this.textureBrushSpacing) {
+        const spacing = Math.max(0.1, Math.min(200, Number(this.textureBrushSpacing.value || 1)));
+        this.textureBrushSpacingOutput.textContent = `${spacing < 10 && !Number.isInteger(spacing) ? spacing.toFixed(1) : Math.round(spacing)}%`;
       }
       if (this.textureBrushOpacityOutput && this.textureBrushOpacity) {
         this.textureBrushOpacityOutput.textContent = `${Math.round(Number(this.textureBrushOpacity.value) * 100)}%`;

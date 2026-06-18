@@ -668,6 +668,36 @@ button {
   gap: 6px;
 }
 
+.brush-pressure-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+}
+
+.brush-pressure-row > span {
+  min-width: 0;
+}
+
+.brush-pressure-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: max-content;
+  color: var(--text);
+  font-size: 10px;
+  line-height: 1;
+  text-transform: none;
+}
+
+.brush-pressure-toggle input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .viewer-range-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 48px;
@@ -802,6 +832,15 @@ input[type="color"] {
 
 .camera-roll-actions {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.camera-save-row {
+  display: grid;
+  gap: 5px;
+}
+
+.camera-save-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .weight-actions #redistribute-chain-weights {
@@ -1289,6 +1328,8 @@ input[type="color"] {
   position: absolute;
   z-index: 18;
   box-sizing: border-box;
+  left: 0;
+  top: 0;
   width: 28px;
   height: 28px;
   border: 1px solid rgba(244, 234, 214, 0.96);
@@ -1298,6 +1339,7 @@ input[type="color"] {
     0 0 0 1px rgba(16, 21, 26, 0.92),
     0 0 8px rgba(122, 247, 255, 0.28);
   pointer-events: none;
+  will-change: transform;
 }
 
 .texture-brush-cursor::after {
