@@ -40,7 +40,7 @@ import {
   installTextureAirbrushMethods,
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
-} from "./weight-editor/airbrush/index.js?v=airbrush-spacing-20260618a";
+} from "./weight-editor/airbrush/index.js?v=airbrush-smooth-coverage-20260618a";
 import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=airbrush-spacing-20260618a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=adaptive-delta-cache-20260609a";
 import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";

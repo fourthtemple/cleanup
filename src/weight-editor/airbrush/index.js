@@ -1,4 +1,4 @@
-export { installTextureAirbrushMethods } from "./install.js";
+export { installTextureAirbrushMethods } from "./install.js?v=airbrush-smooth-coverage-20260618a";
 export { installTextureAirbrushBrushSettingsMethods } from "./brush-settings.js";
 export { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
 export { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js";
@@ -22,7 +22,7 @@ export { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-re
 export { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
 export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js";
 export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js";
-export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js";
+export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=airbrush-smooth-coverage-20260618a";
 export {
   textureAirbrushCreateWebGpuPaintResources,
   textureAirbrushDispatchWebGpuPaint,

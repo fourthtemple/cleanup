@@ -3,12 +3,12 @@ import { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
 import { installTextureAirbrushPressureMethods } from "./pressure.js";
 import { installTextureAirbrushPointerMethods } from "./pointer.js";
 import { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js";
-import { installTextureAirbrushScreenStrokeMethods } from "./screen-strokes.js";
+import { installTextureAirbrushScreenStrokeMethods } from "./screen-strokes.js?v=airbrush-smooth-coverage-20260618a";
 import { installTextureAirbrushTexturePickingMethods } from "./texture-picking.js";
 import { installTextureAirbrushUvBrushMethods } from "./uv-brush.js";
 import { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 import { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-import { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js";
+import { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=airbrush-smooth-coverage-20260618a";
 
 export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
   // Painting module note:

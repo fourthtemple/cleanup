@@ -1,5 +1,5 @@
 import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js";
-import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js";
+import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=airbrush-smooth-coverage-20260618a";
 
 function materialsForAirbrushRecord(record = null) {
   return Array.isArray(record?.object?.material)

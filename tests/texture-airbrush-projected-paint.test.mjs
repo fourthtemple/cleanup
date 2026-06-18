@@ -712,6 +712,162 @@ test("airbrush WebGL projection renders only hit cached paint passes", () => {
   assert.deepEqual(renderedTargets, ["target-a"]);
 });
 
+test("airbrush low spacing renders continuous strokes across cached paint passes", () => {
+  class WebGlFrameEditor {}
+  const vector = () => ({
+    x: 0,
+    y: 0,
+    set(x, y) {
+      this.x = x;
+      this.y = y;
+      return this;
+    },
+    copy(value = {}) {
+      this.x = value.x ?? this.x;
+      this.y = value.y ?? this.y;
+      return this;
+    }
+  });
+  installTextureAirbrushWebGlBackendMethods(WebGlFrameEditor, {
+    THREE: {
+      Vector2: class {
+        constructor(x = 0, y = 0) {
+          this.x = x;
+          this.y = y;
+        }
+      }
+    }
+  });
+  const editor = new WebGlFrameEditor();
+  const targetA = { name: "target-a", texture: {} };
+  const targetB = { name: "target-b", texture: {} };
+  const materialA = {
+    uuid: "material-low-spacing-a",
+    map: targetA.texture,
+    userData: { textureAirbrushGpuTarget: { target: targetA } }
+  };
+  const materialB = {
+    uuid: "material-low-spacing-b",
+    map: targetB.texture,
+    userData: { textureAirbrushGpuTarget: { target: targetB } }
+  };
+  const objectA = { material: materialA };
+  const objectB = { material: materialB };
+  const recordA = {
+    object: objectA,
+    geometry: { attributes: { uv: {} } }
+  };
+  const recordB = {
+    object: objectB,
+    geometry: { attributes: { uv: {} } }
+  };
+  const renderedTargets = [];
+  const proxyRequests = [];
+  const undoCaptures = [];
+  let activeTarget = null;
+  let targetLookups = 0;
+  let raycasts = 0;
+  editor.renderer = {
+    autoClear: true,
+    getRenderTarget() {
+      return "previous-target";
+    },
+    setRenderTarget(target) {
+      activeTarget = target;
+    },
+    render() {
+      renderedTargets.push(activeTarget?.name || "unknown-target");
+    }
+  };
+  editor.canvas = {
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 220, height: 160 };
+    }
+  };
+  editor.camera = {
+    matrixWorldInverse: {},
+    projectionMatrix: {}
+  };
+  editor.model = { updateMatrixWorld() {} };
+  editor.paintRecords = [recordA, recordB];
+  editor.pointer = { x: 0, y: 0 };
+  editor.refreshSkinnedRaycastBounds = () => {};
+  editor.raycaster = {
+    setFromCamera() {},
+    intersectObjects() {
+      raycasts += 1;
+      return [];
+    }
+  };
+  editor.clonePaintMaterialForHit = (record) => (record === recordA ? materialA : materialB);
+  editor.textureAirbrushGpuTargetForMaterial = () => {
+    targetLookups += 1;
+    return null;
+  };
+  editor.captureTexturePaintGpuUndoTarget = (record) => {
+    undoCaptures.push(record);
+  };
+  editor.textureAirbrushRenderDepthTarget = () => ({ depthTexture: {} });
+  editor.textureAirbrushBrushShaderMaterial = () => ({
+    uniforms: {
+      paintViewMatrix: { value: { copy() {} } },
+      paintProjectionMatrix: { value: { copy() {} } },
+      depthTexture: { value: null },
+      brushCenter: { value: vector() },
+      brushStart: { value: vector() },
+      strokeSegmentCount: { value: 0 },
+      strokeStarts: { value: Array.from({ length: TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS }, () => vector()) },
+      strokeEnds: { value: Array.from({ length: TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS }, () => vector()) },
+      viewportSize: { value: vector() },
+      paintColor: { value: { setRGB() {} } },
+      radiusPixels: { value: 0 },
+      strength: { value: 0 },
+      brushOpacity: { value: 0 },
+      brushHardness: { value: 0 },
+      scatterAmount: { value: 0 },
+      depthEpsilon: { value: 0 },
+      uvOffset: { value: vector() }
+    },
+    needsUpdate: true
+  });
+  editor.textureAirbrushShaderColor = () => ({ r: 1, g: 0, b: 0 });
+  editor.textureBrushRadiusValue = () => 0.04;
+  editor.textureAirbrushGpuProxyForRecord = (record) => {
+    proxyRequests.push(record);
+    return { scene: {} };
+  };
+  editor.textureAirbrushGpuUvBleedOffsets = () => [vector()];
+  editor.markTexturePaintStrokeChanged = () => {};
+  editor.setStatus = () => {};
+
+  const projectionFrame = editor.textureAirbrushGpuProjectionFrame();
+  assert.equal(projectionFrame.paintPassCache.size, 2);
+
+  const changed = editor.textureAirbrushGpuProjectFromEvent({ clientX: 90, clientY: 70 }, {
+    gpu: true,
+    projectionFrame,
+    radiusPixels: 24,
+    color: { r: 255, g: 0, b: 0 },
+    opacity: 0.42,
+    hardness: 0.35,
+    scatter: 0.35,
+    spacing: 1,
+    strength: 1,
+    pressureApplied: true,
+    strokeSegments: [{
+      start: { clientX: 60, clientY: 70 },
+      end: { clientX: 90, clientY: 70 }
+    }]
+  });
+
+  assert.equal(changed > 0, true);
+  assert.equal(targetLookups, 0);
+  assert.equal(raycasts, 0);
+  assert.deepEqual(undoCaptures, [recordA, recordB]);
+  assert.deepEqual(proxyRequests, [recordA, recordB]);
+  assert.deepEqual(renderedTargets, ["target-a", "target-b"]);
+});
+
 test("airbrush WebGL projection stops probing after all cached passes are found", () => {
   class WebGlFrameEditor {}
   const vector = () => ({
@@ -2317,6 +2473,7 @@ test("airbrush low spacing queues continuous smooth stroke segments before flush
   editor.textureAirbrushProjectedMeshFromEvent = (event, options) => {
     projected.push({
       x: Math.round(event.clientX),
+      spacing: options.spacing,
       segments: options.strokeSegments.map((segment) => ({
         startX: Math.round(segment.start.clientX),
         endX: Math.round(segment.end.clientX)
@@ -2337,6 +2494,7 @@ test("airbrush low spacing queues continuous smooth stroke segments before flush
   assert.deepEqual(projected, [
     {
       x: 12,
+      spacing: 1,
       segments: [
         { startX: 0, endX: 0 },
         { startX: 0, endX: 12 }

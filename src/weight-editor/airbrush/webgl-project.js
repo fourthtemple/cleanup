@@ -321,7 +321,19 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         return pass;
       };
       const cachedPassCount = projectionFrame?.paintPassCache?.size || 0;
-      const probes = cachedPassCount && options.reusePaintPasses !== false
+      const spacingPercent = Number(options.spacing);
+      const shouldRenderCachedContinuousPasses = Number.isFinite(spacingPercent)
+        && spacingPercent <= 10
+        && cachedPassCount
+        && options.reusePaintPasses !== false;
+      if (shouldRenderCachedContinuousPasses) {
+        for (const pass of projectionFrame.paintPassCache.values()) {
+          paintPasses.set(pass.key, pass);
+        }
+      }
+      const probes = paintPasses.size
+        ? []
+        : cachedPassCount && options.reusePaintPasses !== false
         ? cachedPassProbePointsFromStroke(stroke, { radiusPixels: brushRadius, cachedPassCount })
         : textureAirbrushProbePointsFromStroke(stroke, brushRadius);
       const visitedProbeKeys = new Set();
@@ -366,7 +378,9 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           }
         }
       };
-      projectProbePoints(probes);
+      if (probes.length) {
+        projectProbePoints(probes);
+      }
       const shouldSupplementCachedProbes = cachedPassCount
         && options.reusePaintPasses !== false
         && !paintPasses.size;

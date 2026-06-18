@@ -981,6 +981,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             opacity: batch.opacity,
             hardness: batch.hardness,
             scatter: batch.scatter,
+            spacing: batch.spacing,
             strength: batch.strength,
             ...(backend?.backend === "webgl" ? { resolvedBackend: backend } : {}),
             ...(projectionFrame ? { projectionFrame } : {}),
