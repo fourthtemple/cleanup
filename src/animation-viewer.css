@@ -1422,6 +1422,10 @@ input[type="color"] {
   transform: translate(-50%, -50%);
 }
 
+.texture-brush-cursor:not(.is-selection)::after {
+  content: none;
+}
+
 .texture-brush-cursor.is-clone {
   border-color: rgba(255, 211, 110, 0.96);
   background: rgba(255, 211, 110, 0.045);
@@ -2061,6 +2065,12 @@ button.is-active {
 .weight-editor-app.is-side-panel-resizing,
 .weight-editor-app.is-side-panel-resizing * {
   cursor: col-resize !important;
+  user-select: none;
+}
+
+.weight-editor-app.is-side-panel-pen-scrolling .viewer-panel,
+.weight-editor-app.is-side-panel-pen-scrolling .viewer-panel * {
+  cursor: grabbing !important;
   user-select: none;
 }
 

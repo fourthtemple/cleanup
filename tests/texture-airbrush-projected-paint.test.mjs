@@ -1767,6 +1767,63 @@ test("airbrush texture strokes queue coalesced pointer samples without synchrono
   assert.deepEqual(editor.texturePaintStrokePoint, { clientX: 30, clientY: 8 });
 });
 
+test("primary pen pointer down still starts an airbrush stroke", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  let capturedPointer = null;
+  let undoLabel = null;
+  let cursorShown = null;
+  let painted = null;
+  let prevented = 0;
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {
+    setPointerCapture(pointerId) {
+      capturedPointer = pointerId;
+    }
+  };
+  editor.showTextureStrokeCursor = (event) => {
+    cursorShown = event.pointerType;
+  };
+  editor.beginTexturePaintStrokeUndo = (label) => {
+    undoLabel = label;
+  };
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted = {
+      pointerType: event.pointerType,
+      button: event.button,
+      reset: options?.reset === true
+    };
+    return true;
+  };
+
+  editor.onPointerDown({
+    button: 0,
+    buttons: 1,
+    pointerId: 23,
+    pointerType: "pen",
+    clientX: 120,
+    clientY: 80,
+    pressure: 0.5,
+    preventDefault() {
+      prevented += 1;
+    }
+  });
+
+  assert.equal(prevented, 1);
+  assert.equal(editor.painting, true);
+  assert.equal(editor.controls.enabled, false);
+  assert.equal(capturedPointer, 23);
+  assert.equal(cursorShown, "pen");
+  assert.equal(undoLabel, "Texture airbrush");
+  assert.deepEqual(painted, {
+    pointerType: "pen",
+    button: 0,
+    reset: true
+  });
+});
+
 test("airbrush coalesced samples use lightweight point events", () => {
   class PaintEditor {}
   installPaintToolMethods(PaintEditor, {});

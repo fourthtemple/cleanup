@@ -61,6 +61,112 @@ test("compact cleanup timeline hides curve and sequence-only areas", () => {
   assert.match(css, /\.weight-editor-app\.is-timeline-compact \.timeline-sequence-row/);
 });
 
+test("side panel pen drag scrolls panel content without grabbing controls", () => {
+  const editor = new TestEditor();
+  const app = { classList: classListMock() };
+  let capturedPointer = null;
+  let releasedPointer = null;
+  let prevented = 0;
+  let stopped = 0;
+  let selectionCleared = 0;
+  editor.app = app;
+  editor.viewerPanelScroll = {
+    scrollLeft: 3,
+    scrollTop: 40,
+    setPointerCapture(pointerId) {
+      capturedPointer = pointerId;
+    },
+    releasePointerCapture(pointerId) {
+      releasedPointer = pointerId;
+    }
+  };
+  const interactiveTarget = {
+    closest() {
+      return {};
+    }
+  };
+  const panelTextTarget = {
+    closest() {
+      return null;
+    }
+  };
+  const originalDocument = globalThis.document;
+  globalThis.document = {
+    getSelection() {
+      return {
+        removeAllRanges() {
+          selectionCleared += 1;
+        }
+      };
+    }
+  };
+
+  try {
+    assert.equal(editor.beginSidePanelPenScroll({
+      pointerType: "pen",
+      button: 0,
+      pointerId: 8,
+      clientX: 12,
+      clientY: 10,
+      target: interactiveTarget
+    }), false);
+
+    assert.equal(editor.beginSidePanelPenScroll({
+      pointerType: "pen",
+      button: 0,
+      pointerId: 8,
+      clientX: 12,
+      clientY: 10,
+      target: panelTextTarget
+    }), true);
+    assert.equal(capturedPointer, 8);
+    assert.equal(editor.dragSidePanelPenScroll({
+      pointerId: 8,
+      clientX: 13,
+      clientY: 12,
+      preventDefault() {
+        prevented += 1;
+      },
+      stopPropagation() {
+        stopped += 1;
+      }
+    }), false);
+    assert.equal(prevented, 0);
+    assert.equal(editor.dragSidePanelPenScroll({
+      pointerId: 8,
+      clientX: 10,
+      clientY: 30,
+      preventDefault() {
+        prevented += 1;
+      },
+      stopPropagation() {
+        stopped += 1;
+      }
+    }), true);
+    assert.equal(editor.viewerPanelScroll.scrollLeft, 5);
+    assert.equal(editor.viewerPanelScroll.scrollTop, 20);
+    assert.equal(app.classList.contains("is-side-panel-pen-scrolling"), true);
+    assert.equal(selectionCleared, 1);
+    assert.equal(prevented, 1);
+    assert.equal(stopped, 1);
+    assert.equal(editor.endSidePanelPenScroll({
+      pointerId: 8,
+      preventDefault() {
+        prevented += 1;
+      },
+      stopPropagation() {
+        stopped += 1;
+      }
+    }), true);
+    assert.equal(releasedPointer, 8);
+    assert.equal(app.classList.contains("is-side-panel-pen-scrolling"), false);
+    assert.equal(prevented, 2);
+    assert.equal(stopped, 2);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
 test("opening the timeline drawer does not auto-expand the selected or first bone", () => {
   const editor = new TestEditor();
   editor.app = { classList: classListMock(["is-timeline-compact"]) };

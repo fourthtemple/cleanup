@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "../node_modules/three/build/three.module.js";
+import { installPaintToolMethods } from "../src/weight-editor/paint-tools.js";
 import { installSceneAndControlMethods } from "../src/weight-editor/scene-and-controls.js";
 
 class TestEditor {}
@@ -12,6 +13,7 @@ installSceneAndControlMethods(TestEditor, {
     return Number.isFinite(number) ? number : 0;
   }
 });
+installPaintToolMethods(TestEditor, {});
 
 function classListMock(initial = []) {
   const names = new Set(initial);
@@ -262,4 +264,140 @@ test("restoring a saved camera view prewarms airbrush when painting", () => {
   assert.equal(lightsUpdated, 1);
   assert.equal(cursorUpdated, 1);
   assert.equal(prewarmScheduled, 1);
+});
+
+test("pen orbit button zoom is isolated to the orbit tool", () => {
+  const editor = new TestEditor();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 220);
+  const target = new THREE.Vector3(0, 0, 0);
+  let capturedPointer = null;
+  let releasedPointer = null;
+  let controlsUpdated = 0;
+  let rendered = 0;
+  let stopped = 0;
+  let prevented = 0;
+  camera.position.set(0, 0, 10);
+  editor.camera = camera;
+  editor.canvas = {
+    setPointerCapture(pointerId) {
+      capturedPointer = pointerId;
+    },
+    releasePointerCapture(pointerId) {
+      releasedPointer = pointerId;
+    }
+  };
+  editor.controls = {
+    enabled: true,
+    target,
+    minDistance: 2,
+    maxDistance: 20,
+    zoomSpeed: 1,
+    update() {
+      controlsUpdated += 1;
+    }
+  };
+  editor.render = () => {
+    rendered += 1;
+  };
+  const event = {
+    pointerType: "pen",
+    button: 2,
+    buttons: 2,
+    pointerId: 17,
+    clientY: 100,
+    preventDefault() {
+      prevented += 1;
+    },
+    stopImmediatePropagation() {
+      stopped += 1;
+    },
+    stopPropagation() {
+      stopped += 1;
+    }
+  };
+
+  editor.activeTool = "airbrush";
+  assert.equal(editor.beginPenOrbitButtonZoom(event), false);
+  assert.equal(capturedPointer, null);
+  assert.equal(editor.controls.enabled, true);
+
+  editor.activeTool = "orbit";
+  assert.equal(editor.beginPenOrbitButtonZoom(event), true);
+  assert.equal(capturedPointer, 17);
+  assert.equal(editor.controls.enabled, false);
+  assert.equal(prevented, 1);
+  assert.equal(stopped, 2);
+
+  assert.equal(editor.dragPenOrbitButtonZoom({
+    pointerId: 17,
+    clientY: 70,
+    preventDefault() {},
+    stopImmediatePropagation() {},
+    stopPropagation() {}
+  }), true);
+  assert.equal(camera.position.distanceTo(target) < 10, true);
+  assert.equal(controlsUpdated, 1);
+  assert.equal(rendered, 1);
+
+  assert.equal(editor.endPenOrbitButtonZoom({ pointerId: 17 }), true);
+  assert.equal(releasedPointer, 17);
+  assert.equal(editor.controls.enabled, true);
+});
+
+test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
+  const editor = new TestEditor();
+  let capturedPointer = null;
+  let prevented = 0;
+  let stopped = 0;
+  let painted = null;
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {
+    setPointerCapture(pointerId) {
+      capturedPointer = pointerId;
+    }
+  };
+  editor.showTextureStrokeCursor = () => {};
+  editor.beginTexturePaintStrokeUndo = () => {};
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted = {
+      pointerType: event.pointerType,
+      button: event.button,
+      reset: options?.reset === true
+    };
+    return true;
+  };
+  const event = {
+    pointerType: "pen",
+    button: 0,
+    buttons: 1,
+    pointerId: 42,
+    clientX: 160,
+    clientY: 140,
+    preventDefault() {
+      prevented += 1;
+    },
+    stopImmediatePropagation() {
+      stopped += 1;
+    },
+    stopPropagation() {
+      stopped += 1;
+    }
+  };
+
+  assert.equal(editor.beginPenOrbitButtonZoom(event), false);
+  assert.equal(prevented, 0);
+  assert.equal(stopped, 0);
+
+  editor.onPointerDown(event);
+  assert.equal(prevented, 1);
+  assert.equal(stopped, 0);
+  assert.equal(editor.painting, true);
+  assert.equal(editor.controls.enabled, false);
+  assert.equal(capturedPointer, 42);
+  assert.deepEqual(painted, {
+    pointerType: "pen",
+    button: 0,
+    reset: true
+  });
 });

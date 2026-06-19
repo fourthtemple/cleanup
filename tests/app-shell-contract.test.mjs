@@ -100,9 +100,10 @@ test("app exposes a WebGPU airbrush runtime diagnostic helper", () => {
   assert.match(source, /window\.modelCleanupWebGpuSelfTest = \(options = \{\}\) => this\.textureAirbrushRunWebGpuSelfTest\?\.\(options\) \|\| Promise\.resolve\(null\)/);
 });
 
-test("package exposes a native WebGPU airbrush validation command", () => {
+test("package exposes native airbrush validation commands", () => {
   const manifest = packageJson();
 
+  assert.equal(manifest.scripts["validate:airbrush"], "node ./scripts/validate-airbrush-runtime.mjs");
   assert.equal(manifest.scripts["validate:webgpu-airbrush"], "node ./scripts/validate-webgpu-airbrush.mjs");
 });
 

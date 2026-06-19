@@ -35,6 +35,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
   const SIDE_PANEL_ELASTIC_RESISTANCE = 0.2;
   const SIDE_PANEL_TRANSITION_MS = 180;
   const SIDE_PANEL_EDGE_GESTURE_THRESHOLD = 5;
+  const SIDE_PANEL_PEN_SCROLL_THRESHOLD = 4;
+  const PEN_ORBIT_BUTTON_ZOOM_SENSITIVITY = 0.012;
   const TIMELINE_DRAWER_HEIGHT_STORAGE_KEY = "fourth-temple-model-cleanup:timeline-drawer-height:v1";
   const TIMELINE_DRAWER_MIN_HEIGHT = 430;
   const TIMELINE_DRAWER_SNAP_HEIGHT = 280;
@@ -2049,16 +2051,20 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.undoLastEdit();
       });
 
+      this.canvas.addEventListener("pointerdown", (event) => this.beginPenOrbitButtonZoom(event), { capture: true });
+      this.canvas.addEventListener("pointermove", (event) => this.dragPenOrbitButtonZoom(event), { capture: true });
       this.canvas.addEventListener("pointerdown", (event) => this.onPointerDown(event));
       this.canvas.addEventListener("pointermove", (event) => this.onPointerMove(event));
       this.canvas.addEventListener("mousedown", (event) => this.onCanvasClick?.(event));
       this.canvas.addEventListener("click", (event) => this.onCanvasClick?.(event));
       this.canvas.addEventListener("pointerleave", () => this.hideTextureBrushCursor?.());
-      window.addEventListener("pointerup", () => {
+      window.addEventListener("pointerup", (event) => {
+        this.endPenOrbitButtonZoom(event);
         this.draggingPoseControl = false;
         this.endPoseControlUndo();
         this.onPointerUp();
       });
+      window.addEventListener("pointercancel", (event) => this.endPenOrbitButtonZoom(event));
 
       this.clearSelectionButton.addEventListener("click", () => this.withSelectionUndo?.("Clear selection", () => this.clearSelection()));
       this.clearAllSelectionButton.addEventListener("click", () => this.withUndo("Reset all", () => this.resetWeights()));
@@ -2505,6 +2511,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.sidePanelResizeHandle?.addEventListener("mousedown", (event) => this.beginSidePanelMouseResize(event));
       this.sidePanelResizeHandle?.addEventListener("keydown", (event) => this.handleSidePanelResizeKey(event));
       this.sidePanelResizeHandle?.addEventListener("dblclick", () => this.resetSidePanelWidth());
+      this.viewerPanelScroll?.addEventListener("pointerdown", (event) => this.beginSidePanelPenScroll(event));
+      this.viewerPanelScroll?.addEventListener("pointermove", (event) => this.dragSidePanelPenScroll(event));
+      this.viewerPanelScroll?.addEventListener("pointerup", (event) => this.endSidePanelPenScroll(event));
+      this.viewerPanelScroll?.addEventListener("pointercancel", (event) => this.endSidePanelPenScroll(event));
       this.tutorialsToggle?.addEventListener("click", () => {
         this.setTutorialDrawerOpen(!this.tutorialDrawerOpen);
       });
@@ -3734,6 +3744,113 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.setStatus(`Playing sequence: ${this.activeClipEntry.name || this.activeClipEntry.id} -> ${this.blendClipEntry.name || this.blendClipEntry.id}`);
     },
 
+    penOrbitButtonZoomIsPressed(event) {
+      if (String(event?.pointerType || "").toLowerCase() !== "pen") {
+        return false;
+      }
+      const button = Number(event?.button);
+      const buttons = Number(event?.buttons);
+      return button === 1
+        || button === 2
+        || button === 5
+        || (Number.isFinite(buttons) && ((buttons & 2) === 2 || (buttons & 4) === 4 || (buttons & 32) === 32));
+    },
+
+    beginPenOrbitButtonZoom(event) {
+      if (this.activeTool !== "orbit" || !this.camera || !this.controls || !this.penOrbitButtonZoomIsPressed(event)) {
+        return false;
+      }
+      this.endPenOrbitButtonZoom({ force: true });
+      this.penOrbitButtonZoom = {
+        pointerId: event.pointerId,
+        lastY: Number(event.clientY) || 0,
+        previousControlsEnabled: this.controls.enabled !== false
+      };
+      this.controls.enabled = false;
+      this.canvas?.setPointerCapture?.(event.pointerId);
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      event.stopPropagation?.();
+      return true;
+    },
+
+    dragPenOrbitButtonZoom(event) {
+      const drag = this.penOrbitButtonZoom;
+      if (!drag || event.pointerId !== drag.pointerId) {
+        return false;
+      }
+      const clientY = Number(event.clientY);
+      if (Number.isFinite(clientY)) {
+        const deltaY = clientY - drag.lastY;
+        drag.lastY = clientY;
+        if (deltaY !== 0) {
+          this.applyPenOrbitButtonZoom(deltaY);
+        }
+      }
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      event.stopPropagation?.();
+      return true;
+    },
+
+    endPenOrbitButtonZoom(event = {}) {
+      const drag = this.penOrbitButtonZoom;
+      if (!drag || (event.force !== true && event.pointerId !== undefined && event.pointerId !== drag.pointerId)) {
+        return false;
+      }
+      this.canvas?.releasePointerCapture?.(drag.pointerId);
+      if (this.controls) {
+        this.controls.enabled = drag.previousControlsEnabled;
+      }
+      this.penOrbitButtonZoom = null;
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      event.stopPropagation?.();
+      return true;
+    },
+
+    applyPenOrbitButtonZoom(deltaY) {
+      const camera = this.camera;
+      const controls = this.controls;
+      const target = controls?.target;
+      if (!camera || !controls || !target) {
+        return false;
+      }
+      const zoomSpeed = Math.max(0.01, Number(controls.zoomSpeed) || 1);
+      const scale = Math.exp(Number(deltaY) * PEN_ORBIT_BUTTON_ZOOM_SENSITIVITY * zoomSpeed);
+      if (!Number.isFinite(scale) || scale <= 0) {
+        return false;
+      }
+      if (camera.isOrthographicCamera) {
+        const minZoom = Number.isFinite(Number(controls.minZoom)) ? Number(controls.minZoom) : 0.01;
+        const maxZoom = Number.isFinite(Number(controls.maxZoom)) ? Number(controls.maxZoom) : 100;
+        camera.zoom = THREE.MathUtils.clamp((Number(camera.zoom) || 1) / scale, minZoom, maxZoom);
+        camera.updateProjectionMatrix?.();
+        controls.update?.();
+        this.updateCameraRelativeLights?.();
+        this.render?.();
+        return true;
+      }
+      const offset = new THREE.Vector3().copy(camera.position).sub(target);
+      const distance = offset.length();
+      if (!Number.isFinite(distance) || distance <= 0) {
+        return false;
+      }
+      const minDistance = Number.isFinite(Number(controls.minDistance)) ? Number(controls.minDistance) : 0.001;
+      const maxDistance = Number.isFinite(Number(controls.maxDistance)) ? Number(controls.maxDistance) : Infinity;
+      const nextDistance = THREE.MathUtils.clamp(distance * scale, minDistance, maxDistance);
+      if (!Number.isFinite(nextDistance) || nextDistance <= 0) {
+        return false;
+      }
+      offset.setLength(nextDistance);
+      camera.position.copy(target).add(offset);
+      camera.updateProjectionMatrix?.();
+      controls.update?.();
+      this.updateCameraRelativeLights?.();
+      this.render?.();
+      return true;
+    },
+
     sidePanelWidthBounds() {
       const viewportWidth = typeof window !== "undefined" ? Number(window.innerWidth) || 0 : 0;
       const viewportMax = viewportWidth > 0 ? Math.max(SIDE_PANEL_MIN_WIDTH, viewportWidth - 360) : SIDE_PANEL_MAX_WIDTH;
@@ -3968,6 +4085,72 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     resetSidePanelWidth() {
       this.applySidePanelWidth(SIDE_PANEL_DEFAULT_WIDTH);
       this.resize?.();
+    },
+
+    sidePanelPenScrollTargetIsInteractive(target) {
+      return Boolean(target?.closest?.(
+        "button, input, select, textarea, a, summary, [role='button'], [role='slider'], [contenteditable='true']"
+      ));
+    },
+
+    beginSidePanelPenScroll(event) {
+      if (!this.viewerPanelScroll || String(event?.pointerType || "").toLowerCase() !== "pen" || event.button !== 0) {
+        return false;
+      }
+      if (this.sidePanelPenScrollTargetIsInteractive(event.target)) {
+        return false;
+      }
+      this.sidePanelPenScroll = {
+        pointerId: event.pointerId,
+        startX: Number(event.clientX) || 0,
+        startY: Number(event.clientY) || 0,
+        startScrollLeft: Number(this.viewerPanelScroll.scrollLeft) || 0,
+        startScrollTop: Number(this.viewerPanelScroll.scrollTop) || 0,
+        active: false
+      };
+      this.viewerPanelScroll.setPointerCapture?.(event.pointerId);
+      return true;
+    },
+
+    dragSidePanelPenScroll(event) {
+      const drag = this.sidePanelPenScroll;
+      if (!drag || event.pointerId !== drag.pointerId || !this.viewerPanelScroll) {
+        return false;
+      }
+      const clientX = Number(event.clientX) || 0;
+      const clientY = Number(event.clientY) || 0;
+      const deltaX = clientX - drag.startX;
+      const deltaY = clientY - drag.startY;
+      if (!drag.active) {
+        if (Math.hypot(deltaX, deltaY) < SIDE_PANEL_PEN_SCROLL_THRESHOLD) {
+          return false;
+        }
+        drag.active = true;
+        this.app?.classList.add("is-side-panel-pen-scrolling");
+      }
+      this.viewerPanelScroll.scrollLeft = drag.startScrollLeft - deltaX;
+      this.viewerPanelScroll.scrollTop = drag.startScrollTop - deltaY;
+      if (typeof document !== "undefined") {
+        document.getSelection?.()?.removeAllRanges?.();
+      }
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      return true;
+    },
+
+    endSidePanelPenScroll(event) {
+      const drag = this.sidePanelPenScroll;
+      if (!drag || event.pointerId !== drag.pointerId) {
+        return false;
+      }
+      this.viewerPanelScroll?.releasePointerCapture?.(event.pointerId);
+      this.sidePanelPenScroll = null;
+      this.app?.classList.remove("is-side-panel-pen-scrolling");
+      if (drag.active) {
+        event.preventDefault?.();
+        event.stopPropagation?.();
+      }
+      return true;
     },
 
     beginSidePanelHiddenDrag(event) {
