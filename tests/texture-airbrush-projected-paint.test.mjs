@@ -9,6 +9,7 @@ import "./texture-airbrush-projected-paint/projection-continuous-rendering.mjs";
 import "./texture-airbrush-projected-paint/layer-gpu-projection.mjs";
 import "./texture-airbrush-projected-paint/layer-projection-fast-paths.mjs";
 import "./texture-airbrush-projected-paint/pointer-and-flush-foundations.mjs";
+import "./texture-airbrush-projected-paint/neighbor-paint.mjs";
 import "./texture-airbrush-projected-paint/screen-queue-cached-start.mjs";
 import "./texture-airbrush-projected-paint/pressure-and-curves.mjs";
 import "./texture-airbrush-projected-paint/live-flush-budget.mjs";

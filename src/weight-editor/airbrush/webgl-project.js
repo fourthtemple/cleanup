@@ -6,6 +6,9 @@ import {
   textureAirbrushScreenStrokeFromEvent
 } from "./projection.js";
 
+const TEXTURE_AIRBRUSH_NEIGHBOR_MASK_ATTRIBUTE = "textureAirbrushNeighborMask";
+const TEXTURE_AIRBRUSH_NEIGHBOR_VIEW_NORMAL_THRESHOLD = 0.18;
+
 function projectionProbeKey(point = null) {
   return `${Math.round(point?.x || 0)}:${Math.round(point?.y || 0)}`;
 }
@@ -22,6 +25,24 @@ function projectionPointDistance(left = null, right = null) {
   const dx = right.x - left.x;
   const dy = right.y - left.y;
   return Math.sqrt(dx * dx + dy * dy);
+}
+
+function normalizedProjectionNormal(normal = null) {
+  const x = Number(normal?.x);
+  const y = Number(normal?.y);
+  const z = Number(normal?.z);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return null;
+  }
+  const length = Math.sqrt(x * x + y * y + z * z);
+  if (!Number.isFinite(length) || length <= 0) {
+    return null;
+  }
+  return {
+    x: x / length,
+    y: y / length,
+    z: z / length
+  };
 }
 
 function projectionLayerEffectivelyEmpty(layer = null) {
@@ -213,6 +234,59 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
   const { THREE } = deps;
 
   Object.assign(BirdWeightEditor.prototype, {
+    textureAirbrushNeighborGpuMaskAttribute(seed = null, record = null) {
+      if (
+        !seed?.enabled
+        || !seed.component?.size
+        || !record?.geometry?.attributes?.position
+        || this.textureAirbrushNeighborRecordMatches?.(seed, record) === false
+      ) {
+        return null;
+      }
+      const geometry = record.geometry;
+      const vertexCount = Math.max(0, Math.floor(Number(geometry.attributes.position.count) || 0));
+      if (!vertexCount || typeof THREE.BufferAttribute !== "function") {
+        return null;
+      }
+      geometry.userData ||= {};
+      const cacheKey = [
+        seed.key || this.textureAirbrushNeighborSeedKey?.(seed) || "neighbor",
+        geometry.uuid || geometry.id || "geometry",
+        vertexCount
+      ].join(":");
+      const cached = geometry.userData.textureAirbrushNeighborMask;
+      if (
+        cached?.key === cacheKey
+        && cached.attribute
+        && geometry.attributes?.[TEXTURE_AIRBRUSH_NEIGHBOR_MASK_ATTRIBUTE] === cached.attribute
+      ) {
+        return cached.attribute;
+      }
+
+      const values = cached?.attribute?.array?.length === vertexCount
+        ? cached.attribute.array
+        : new Float32Array(vertexCount);
+      values.fill(0);
+      for (const vertexIndex of seed.component) {
+        if (Number.isInteger(vertexIndex) && vertexIndex >= 0 && vertexIndex < vertexCount) {
+          values[vertexIndex] = 1;
+        }
+        for (const linkedIndex of this.textureAirbrushNeighborLinkedVertices?.(record, vertexIndex) || []) {
+          if (Number.isInteger(linkedIndex) && linkedIndex >= 0 && linkedIndex < vertexCount) {
+            values[linkedIndex] = 1;
+          }
+        }
+      }
+
+      const attribute = cached?.attribute?.array === values
+        ? cached.attribute
+        : new THREE.BufferAttribute(values, 1);
+      attribute.needsUpdate = true;
+      geometry.setAttribute?.(TEXTURE_AIRBRUSH_NEIGHBOR_MASK_ATTRIBUTE, attribute);
+      geometry.userData.textureAirbrushNeighborMask = { key: cacheKey, attribute };
+      return attribute;
+    },
+
     textureAirbrushGpuProjectionFrame(options = {}) {
       if (!this.canvas || !this.camera || !this.model) {
         return null;
@@ -476,20 +550,69 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       const recordByObject = projectionFrame?.recordByObject || new Map(paintRecords.map((record) => [record.object, record]));
       const recordIndices = projectionFrame?.recordIndices || null;
       const probePaintPassCache = projectionFrame?.probePaintPassCache || null;
+      const neighborPaintSeed = options.neighborPaintSeed || null;
+      const neighborAllowsHit = (record, hit, material = null, materialIndex = null) => (
+        this.textureAirbrushNeighborHitAllowed?.(
+          neighborPaintSeed,
+          record,
+          hit,
+          material,
+          materialIndex
+        ) !== false
+      );
+      const neighborAllowsPass = (pass) => (
+        this.textureAirbrushNeighborPassAllowed?.(neighborPaintSeed, pass) !== false
+      );
+      const canReuseNeighborCachedPasses = this.textureAirbrushNeighborCanReuseCachedPasses?.(neighborPaintSeed) !== false;
       this.textureAirbrushSeedProjectionFramePaintPasses?.(projectionFrame);
       const stroke = textureAirbrushScreenStrokeFromEvent(event, rect, options);
       if (!stroke) {
         return 0;
       }
-      const screenCenter = stroke.center;
-      const screenStart = stroke.start;
-      const screenSegments = stroke.strokeSegments;
+      let screenCenter = stroke.center;
+      let screenStart = stroke.start;
+      let screenSegments = stroke.strokeSegments;
       let brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
       for (const segment of screenSegments) {
         const segmentRadius = Number(segment?.radiusPixels);
         if (Number.isFinite(segmentRadius) && segmentRadius > 0) {
           brushRadius = Math.max(brushRadius, segmentRadius);
         }
+      }
+      const neighborPointAllowed = (point = null) => {
+        if (!neighborPaintSeed?.enabled) {
+          return true;
+        }
+        if (!textureAirbrushPointInRect(point, rect)) {
+          return false;
+        }
+        this.pointer.x = (point.x / rect.width) * 2 - 1;
+        this.pointer.y = -(point.y / rect.height) * 2 + 1;
+        this.raycaster.setFromCamera(this.pointer, this.camera);
+        const intersections = this.raycaster.intersectObjects(paintObjects, false);
+        for (const hit of textureAirbrushFrontIntersections(intersections)) {
+          const record = recordByObject.get(hit.object);
+          const materialIndex = hit.face?.materialIndex ?? 0;
+          const material = record ? this.clonePaintMaterialForHit?.(record, hit) : null;
+          if (neighborAllowsHit(record, hit, material, materialIndex)) {
+            return true;
+          }
+        }
+        return false;
+      };
+      if (neighborPaintSeed?.enabled && !neighborPaintSeed.component?.size) {
+        screenSegments = screenSegments.filter((segment) => (
+          neighborPointAllowed(segment?.start)
+          && neighborPointAllowed(segment?.end)
+        ));
+        if (!screenSegments.length) {
+          return 0;
+        }
+        screenStart = screenSegments[0]?.start || screenStart;
+        screenCenter = screenSegments.at(-1)?.end || screenCenter;
+        stroke.start = screenStart;
+        stroke.center = screenCenter;
+        stroke.strokeSegments = screenSegments;
       }
       let depthTarget = projectionFrame?.depthTarget || null;
       if (!depthTarget) {
@@ -581,8 +704,20 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         projectionFrame?.paintPassCache?.set(key, pass);
         return pass;
       };
+      if (neighborPaintSeed?.enabled && neighborPaintSeed.component?.size) {
+        const seedMaterialIndex = Number.isInteger(neighborPaintSeed.materialIndex)
+          ? neighborPaintSeed.materialIndex
+          : 0;
+        const seedMaterial = neighborPaintSeed.material
+          || materialsForProjectionRecord(neighborPaintSeed.record)[seedMaterialIndex]
+          || null;
+        const seedPass = addPaintPass(neighborPaintSeed.record, seedMaterialIndex, seedMaterial);
+        if (seedPass && neighborAllowsPass(seedPass)) {
+          paintPasses.set(seedPass.key, seedPass);
+        }
+      }
       const cachedPasses = projectionFrame?.paintPassCache
-        ? [...projectionFrame.paintPassCache.values()]
+        ? [...projectionFrame.paintPassCache.values()].filter(neighborAllowsPass)
         : [];
       const paintPassCacheComplete = projectionFrame?.paintPassCacheSeeded === true
         && projectionFrame?.seedPaintPasses !== false;
@@ -599,6 +734,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         && spacingPercent <= 10
         && cachedPassCount
         && options.reusePaintPasses !== false
+        && canReuseNeighborCachedPasses
         && (
           cachedPassCount <= 1
           || hasLayerCachedPasses !== true
@@ -628,20 +764,26 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
             continue;
           }
           visitedProbeKeys.add(probeKey);
-          if (probePaintPassCache?.has(probeKey)) {
+          if (canReuseNeighborCachedPasses && probePaintPassCache?.has(probeKey)) {
             for (const pass of probePaintPassCache.get(probeKey) || []) {
-              paintPasses.set(pass.key, pass);
+              if (neighborAllowsPass(pass)) {
+                paintPasses.set(pass.key, pass);
+              }
             }
             continue;
           }
-          const cachedLayerHitPasses = this.textureAirbrushCachedLayerHitPassesForProbe?.(
-            projectionFrame,
-            probe,
-            { radiusPixels: brushRadius }
-          ) || [];
+          const cachedLayerHitPasses = canReuseNeighborCachedPasses
+            ? this.textureAirbrushCachedLayerHitPassesForProbe?.(
+                projectionFrame,
+                probe,
+                { radiusPixels: brushRadius }
+              ) || []
+            : [];
           if (cachedLayerHitPasses.length) {
             for (const pass of cachedLayerHitPasses) {
-              paintPasses.set(pass.key, pass);
+              if (neighborAllowsPass(pass)) {
+                paintPasses.set(pass.key, pass);
+              }
             }
             continue;
           }
@@ -655,6 +797,9 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
             const record = recordByObject.get(hit.object);
             const materialIndex = hit.face?.materialIndex ?? 0;
             const material = record ? this.clonePaintMaterialForHit?.(record, hit) : null;
+            if (!neighborAllowsHit(record, hit, material, materialIndex)) {
+              continue;
+            }
             const pass = addPaintPass(record, materialIndex, material);
             if (pass && !probePassKeys.has(pass.key)) {
               probePassKeys.add(pass.key);
@@ -757,6 +902,38 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         }
         if (uniforms.eraseMode) {
           uniforms.eraseMode.value = options.erase === true;
+        }
+        const useNeighborMask = Boolean(
+          neighborPaintSeed?.enabled
+          && this.textureAirbrushNeighborGpuMaskAttribute?.(neighborPaintSeed, pass.record)
+        );
+        const neighborSeedNormal = useNeighborMask
+          ? normalizedProjectionNormal(neighborPaintSeed?.seedNormal)
+          : null;
+        if (uniforms.useNeighborMask) {
+          uniforms.useNeighborMask.value = useNeighborMask;
+        }
+        if (uniforms.useNeighborNormalMask) {
+          uniforms.useNeighborNormalMask.value = Boolean(neighborSeedNormal);
+        }
+        if (uniforms.neighborSeedNormal && neighborSeedNormal) {
+          uniforms.neighborSeedNormal.value.set(
+            neighborSeedNormal.x,
+            neighborSeedNormal.y,
+            neighborSeedNormal.z
+          );
+        }
+        if (uniforms.neighborNormalThreshold) {
+          uniforms.neighborNormalThreshold.value = 0;
+        }
+        if (uniforms.neighborViewNormalThreshold) {
+          const viewThreshold = Number(options.neighborViewNormalThreshold);
+          uniforms.neighborViewNormalThreshold.value = Number.isFinite(viewThreshold)
+            ? Math.max(0, Math.min(1, viewThreshold))
+            : TEXTURE_AIRBRUSH_NEIGHBOR_VIEW_NORMAL_THRESHOLD;
+        }
+        if (uniforms.paintOccludedNeighborFragments) {
+          uniforms.paintOccludedNeighborFragments.value = useNeighborMask;
         }
         shaderMaterial.blending = useStrokeSource
           ? THREE.NoBlending
@@ -943,6 +1120,15 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       }
       if (shaderMaterial.uniforms.eraseMode) {
         shaderMaterial.uniforms.eraseMode.value = false;
+      }
+      if (shaderMaterial.uniforms.useNeighborMask) {
+        shaderMaterial.uniforms.useNeighborMask.value = false;
+      }
+      if (shaderMaterial.uniforms.useNeighborNormalMask) {
+        shaderMaterial.uniforms.useNeighborNormalMask.value = false;
+      }
+      if (shaderMaterial.uniforms.paintOccludedNeighborFragments) {
+        shaderMaterial.uniforms.paintOccludedNeighborFragments.value = false;
       }
       shaderMaterial.blending = previousShaderBlending;
       shaderMaterial.transparent = previousShaderTransparent;

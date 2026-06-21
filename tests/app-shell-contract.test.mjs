@@ -100,6 +100,7 @@ test("airbrush controls expose per-parameter pressure toggles", () => {
   assert.match(airbrush, /id="texture-pressure-radius" type="checkbox" checked/);
   assert.doesNotMatch(airbrush, /id="texture-pressure-opacity" type="checkbox" checked/);
   assert.match(airbrush, /id="texture-eraser-tool" type="button" data-tool="texture-eraser"/);
+  assert.match(airbrush, /id="texture-neighbor-toggle" type="checkbox"[\s\S]*Airbrush radius/);
   assert.match(airbrush, /id="texture-brush-opacity"[\s\S]*id="texture-brush-spacing"/);
   assert.match(airbrush, /id="texture-brush-spacing" type="range" min="0\.1" max="200" step="0\.1" value="1"/);
   assert.doesNotMatch(airbrush, /id="texture-pressure-hardness"/);

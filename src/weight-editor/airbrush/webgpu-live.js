@@ -1,6 +1,6 @@
 import { TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS } from "./constants.js";
-import { installTextureAirbrushWebGpuCandidateMethods } from "./webgpu-candidates.js";
-import { textureAirbrushWebGpuStrokeEstimate } from "./webgpu-stroke.js";
+import { installTextureAirbrushWebGpuCandidateMethods } from "./webgpu-candidates.js?v=layer-undo-fix-20260621a";
+import { textureAirbrushWebGpuStrokeEstimate } from "./webgpu-stroke.js?v=layer-undo-fix-20260621a";
 
 function clampByte(value) {
   const number = Number(value);

@@ -954,8 +954,13 @@ input[type="color"] {
 
 .texture-paint-actions {
   display: grid;
-  grid-template-columns: 34px repeat(3, minmax(0, 1fr));
+  grid-template-columns: 34px minmax(0, 1fr);
   gap: 5px;
+}
+
+.texture-paint-actions #texture-airbrush-tool,
+.texture-paint-actions #texture-eraser-tool {
+  grid-column: 1 / -1;
 }
 
 .texture-layer-panel {
@@ -1154,11 +1159,11 @@ input[type="color"] {
 
 .texture-layer-list {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   min-height: 44px;
   max-height: 176px;
   overflow: auto;
-  padding: 3px;
+  padding: 2px;
   border: 1px solid rgba(244, 234, 214, 0.16);
   border-radius: 6px;
   background: rgba(9, 12, 16, 0.78);
@@ -1175,14 +1180,14 @@ input[type="color"] {
 
 .texture-layer-row {
   display: grid;
-  grid-template-columns: 24px 38px minmax(0, 1fr) 38px;
+  grid-template-columns: 14px 28px minmax(38px, 1fr) 25px;
   grid-template-areas: "eye thumb name opacity";
-  gap: 6px;
+  gap: 4px;
   align-items: center;
-  min-height: 34px;
-  padding: 4px 5px;
+  min-height: 28px;
+  padding: 2px 3px;
   border: 1px solid rgba(244, 234, 214, 0.12);
-  border-radius: 6px;
+  border-radius: 5px;
   background: rgba(24, 27, 32, 0.92);
 }
 
@@ -1203,10 +1208,10 @@ input[type="color"] {
 .texture-layer-visibility {
   position: relative;
   grid-area: eye;
-  width: 22px;
-  min-width: 22px;
-  height: 22px;
-  min-height: 22px;
+  width: 14px;
+  min-width: 14px;
+  height: 20px;
+  min-height: 20px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1215,9 +1220,9 @@ input[type="color"] {
 .texture-layer-visibility::before {
   position: absolute;
   top: 7px;
-  left: 4px;
-  width: 12px;
-  height: 7px;
+  left: 1px;
+  width: 10px;
+  height: 6px;
   content: "";
   border: 1px solid rgba(220, 230, 231, 0.78);
   border-radius: 50%;
@@ -1226,9 +1231,9 @@ input[type="color"] {
 .texture-layer-visibility::after {
   position: absolute;
   top: 9px;
-  left: 8px;
-  width: 4px;
-  height: 4px;
+  left: 5px;
+  width: 3px;
+  height: 3px;
   content: "";
   border-radius: 50%;
   background: rgba(220, 230, 231, 0.9);
@@ -1241,10 +1246,10 @@ input[type="color"] {
 .texture-layer-thumbnail-button {
   grid-area: thumb;
   display: grid;
-  width: 34px;
-  min-width: 34px;
-  height: 24px;
-  min-height: 24px;
+  width: 28px;
+  min-width: 28px;
+  height: 20px;
+  min-height: 20px;
   place-items: center;
   padding: 0;
   border: 1px solid rgba(244, 234, 214, 0.18);
@@ -1260,26 +1265,40 @@ input[type="color"] {
 }
 
 .texture-layer-thumbnail {
-  width: 32px;
-  height: 22px;
-  border-radius: 4px;
+  width: 26px;
+  height: 18px;
+  border-radius: 3px;
   background: #101317;
 }
 
 .texture-layer-name {
   grid-area: name;
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
-  min-height: 24px;
+  min-height: 20px;
   overflow: hidden;
-  padding: 0;
-  border: 0;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  border-radius: 4px;
   background: transparent;
   color: rgba(255, 247, 223, 0.9);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
+  line-height: 1.2;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  appearance: none;
+  cursor: text;
+  outline: none;
+  user-select: text;
+}
+
+.texture-layer-name:focus {
+  border: 1px solid rgba(236, 190, 96, 0.75);
+  background: rgba(10, 12, 14, 0.76);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.65);
 }
 
 .texture-layer-row.is-active .texture-layer-name {
@@ -1289,8 +1308,11 @@ input[type="color"] {
 .texture-layer-opacity-label {
   grid-area: opacity;
   color: rgba(255, 247, 223, 0.62);
-  font-size: 10px;
+  min-width: 0;
+  font-size: 9px;
+  line-height: 1;
   text-align: right;
+  white-space: nowrap;
 }
 
 .selection-tool-actions {
@@ -1757,8 +1779,8 @@ input[type="color"] {
   box-sizing: border-box;
   left: 0;
   top: 0;
-  width: 28px;
-  height: 28px;
+  width: 8px;
+  height: 8px;
   border: 1px solid rgba(244, 234, 214, 0.96);
   border-radius: 999px;
   background: rgba(122, 247, 255, 0.045);
@@ -2609,40 +2631,39 @@ button.is-active {
 }
 
 .weight-editor-app .viewer-panel .texture-layer-visibility {
-  width: 20px;
-  min-width: 20px;
+  width: 14px;
+  min-width: 14px;
   height: 20px;
   min-height: 20px;
   padding: 0;
 }
 
 .weight-editor-app.is-side-panel-narrow .viewer-panel .texture-layer-visibility {
-  width: 20px;
-  min-width: 20px;
+  width: 14px;
+  min-width: 14px;
   height: 20px;
   min-height: 20px;
   padding: 0;
 }
 
 .weight-editor-app .viewer-panel .texture-layer-thumbnail-button {
-  width: 34px;
-  min-width: 34px;
-  height: 24px;
-  min-height: 24px;
+  width: 28px;
+  min-width: 28px;
+  height: 20px;
+  min-height: 20px;
   padding: 0;
 }
 
 .weight-editor-app.is-side-panel-narrow .viewer-panel .texture-layer-thumbnail-button {
-  width: 34px;
-  min-width: 34px;
-  height: 24px;
-  min-height: 24px;
+  width: 28px;
+  min-width: 28px;
+  height: 20px;
+  min-height: 20px;
   padding: 0;
 }
 
 .weight-editor-app .viewer-panel .texture-layer-name {
-  min-height: 22px;
-  padding: 0;
+  min-height: 20px;
 }
 
 .weight-editor-app .viewer-panel .panel-resize-handle {

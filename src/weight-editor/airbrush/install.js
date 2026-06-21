@@ -1,14 +1,15 @@
 import { installTextureAirbrushBrushSettingsMethods } from "./brush-settings.js";
 import { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
+import { installTextureAirbrushNeighborPaintMethods } from "./neighbor.js?v=layer-undo-fix-20260621a";
 import { installTextureAirbrushPressureMethods } from "./pressure.js";
 import { installTextureAirbrushPointerMethods } from "./pointer.js?v=layer-hover-preserve-display-20260621a";
-import { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=stroke-opacity-cap-20260620c";
-import { installTextureAirbrushScreenStrokeMethods } from "./screen-strokes.js?v=layer-live-baked-display-20260621a";
+import { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=layer-undo-fix-20260621a";
+import { installTextureAirbrushScreenStrokeMethods } from "./screen-strokes.js?v=layer-undo-fix-20260621a";
 import { installTextureAirbrushTexturePickingMethods } from "./texture-picking.js";
 import { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=stroke-opacity-cap-20260620c";
 import { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 import { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-import { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=layer-live-baked-display-20260621a";
+import { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=layer-undo-fix-20260621a";
 
 export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
   // Painting module note:
@@ -25,6 +26,7 @@ export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
 
   installTextureAirbrushPressureMethods(BirdWeightEditor);
   installTextureAirbrushPointerMethods(BirdWeightEditor);
+  installTextureAirbrushNeighborPaintMethods(BirdWeightEditor);
   installTextureAirbrushScreenStrokeMethods(BirdWeightEditor);
   installTextureAirbrushBrushSettingsMethods(BirdWeightEditor, deps);
   installTextureAirbrushCloneReplayMethods(BirdWeightEditor, deps);

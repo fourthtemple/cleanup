@@ -32,7 +32,7 @@ test("installing the live layer shader marks the material for precompile", () =>
   assert.equal(material.needsUpdate, true);
 });
 
-test("live layer shader scales layer alpha by the layer opacity uniform", () => {
+test("live layer shader blends the layer over the background map with opacity", () => {
   class WebGlPrewarmEditor {}
   installTextureAirbrushWebGlBackendMethods(WebGlPrewarmEditor, { THREE: {} });
   const editor = new WebGlPrewarmEditor();
@@ -44,6 +44,7 @@ test("live layer shader scales layer alpha by the layer opacity uniform", () => 
   const state = editor.texturePaintInstallLiveLayerShaderComposite(material);
   state.layerTexture = "layer-texture";
   state.layerOpacity = 0.35;
+  state.layerBlendMode = 1;
   const shader = {
     uniforms: {},
     fragmentShader: "#include <map_pars_fragment>\n#include <map_fragment>"
@@ -53,12 +54,16 @@ test("live layer shader scales layer alpha by the layer opacity uniform", () => 
 
   assert.equal(shader.uniforms.texturePaintLiveLayerMap.value, "layer-texture");
   assert.equal(shader.uniforms.texturePaintLiveLayerOpacity.value, 0.35);
+  assert.equal(shader.uniforms.texturePaintLiveLayerBlendMode.value, 1);
   assert.equal(shader.fragmentShader.includes("uniform float texturePaintLiveLayerOpacity"), true);
+  assert.equal(shader.fragmentShader.includes("uniform int texturePaintLiveLayerBlendMode"), true);
+  assert.equal(shader.fragmentShader.includes("texturePaintLiveBlendColor"), true);
+  assert.equal(shader.fragmentShader.includes("sampledDiffuseColor.rgb"), true);
   assert.equal(
     shader.fragmentShader.includes("texturePaintLiveLayerColor.a * texturePaintLiveLayerOpacity"),
     true
   );
-  assert.equal(material.customProgramCacheKey().includes("texture-paint-live-layer-v2"), true);
+  assert.equal(material.customProgramCacheKey().includes("texture-paint-live-layer-v3"), true);
 });
 
 test("muting a hidden live layer keeps the shader warm for visibility restore", () => {
@@ -399,6 +404,123 @@ test("active layer opacity updates reuse the live shader composite path", () => 
   assert.equal(opacityUniform.value, 0.25);
   assert.equal(targetEntry.liveCompositeLayerOpacity, 0.25);
   assert.equal(editor.textureAirbrushLayerTargetReadyForLiveReset(material), true);
+});
+
+test("live shader composite uses non-normal layer modes over the background texture", () => {
+  class WebGlPrewarmEditor {}
+  installTextureAirbrushWebGlBackendMethods(WebGlPrewarmEditor, { THREE: {} });
+  const editor = new WebGlPrewarmEditor();
+  const baseCanvas = { width: 4, height: 4 };
+  const baseTexture = { image: baseCanvas, uuid: "background-texture" };
+  const layerTexture = { uuid: "multiply-layer-texture" };
+  const layer = {
+    id: "paint-1",
+    visible: true,
+    opacity: 0.6,
+    blendMode: "multiply",
+    isEmpty: false
+  };
+  const stack = {
+    width: 4,
+    height: 4,
+    activeLayerId: layer.id,
+    baseCanvas,
+    layers: [layer]
+  };
+  const material = {
+    map: { uuid: "old-map" },
+    userData: {
+      texturePaintLayerStack: stack
+    },
+    needsUpdate: false
+  };
+  const targetEntry = {
+    target: { texture: layerTexture },
+    layer,
+    layerStack: stack,
+    layerMode: true
+  };
+  layer.gpuTarget = targetEntry;
+  editor.texturePaintLayerMutationSerialValue = () => 11;
+  editor.texturePaintLayerBlendMode = (candidateLayer) => candidateLayer?.blendMode || "normal";
+  editor.texturePaintLayerBlendShaderCode = (mode) => (mode === "multiply" ? 1 : 0);
+  editor.textureAirbrushCanvasTextureForLayerCanvas = (owner, key, canvas) => {
+    assert.equal(owner, stack);
+    assert.equal(key, "base");
+    assert.equal(canvas, baseCanvas);
+    return baseTexture;
+  };
+  editor.texturePaintLiveLayerUnderlayBaseTextureForLayerGpuPaint = () => ({
+    texture: baseTexture,
+    key: "background-only"
+  });
+  editor.texturePaintPrecompileLiveLayerShaderComposite = () => false;
+
+  const composite = editor.texturePaintLiveCompositeTargetForLayerGpuPaint(material, targetEntry);
+
+  assert.equal(composite?.target.texture, layerTexture);
+  assert.equal(material.map, baseTexture);
+  assert.equal(material.userData.texturePaintLiveLayerShaderComposite.layerBlendMode, 1);
+  assert.equal(targetEntry.liveCompositeLayerBlendMode, "multiply");
+  assert.equal(editor.texturePaintLayerCanUseLiveShaderComposite(material, targetEntry), true);
+});
+
+test("cached live shader composite is invalidated when the layer blend mode changes", () => {
+  class WebGlPrewarmEditor {}
+  installTextureAirbrushWebGlBackendMethods(WebGlPrewarmEditor, { THREE: {} });
+  const editor = new WebGlPrewarmEditor();
+  const baseTexture = { uuid: "background-texture" };
+  const layerTexture = { uuid: "layer-texture" };
+  const cachedComposite = { target: { texture: layerTexture }, shaderComposite: true };
+  const layer = {
+    id: "paint-1",
+    visible: true,
+    opacity: 1,
+    blendMode: "multiply",
+    isEmpty: false
+  };
+  const stack = {
+    activeLayerId: layer.id,
+    baseCanvas: {},
+    layers: [layer]
+  };
+  const material = {
+    map: baseTexture,
+    userData: {
+      texturePaintLiveLayerShaderCompileKey: layerTexture.uuid,
+      texturePaintLiveLayerShaderComposite: {
+        shader: {
+          uniforms: {
+            texturePaintLiveLayerMap: { value: null },
+            texturePaintLiveLayerOpacity: { value: 1 },
+            texturePaintLiveLayerBlendMode: { value: 0 }
+          }
+        }
+      },
+      texturePaintLayerStack: stack
+    }
+  };
+  const targetEntry = {
+    target: cachedComposite.target,
+    layer,
+    layerStack: stack,
+    layerMode: true,
+    liveCompositeTarget: cachedComposite,
+    liveCompositeBaseTexture: baseTexture,
+    liveCompositeLayer: layer,
+    liveCompositeLayerCount: 1,
+    liveCompositeLayerIndex: 0,
+    liveCompositeLayerOpacity: 1,
+    liveCompositeLayerBlendMode: "normal",
+    liveCompositeUnderlayKey: "",
+    liveCompositeLayerMutationSerial: 5
+  };
+  layer.gpuTarget = targetEntry;
+  editor.texturePaintLayerMutationSerialValue = () => 5;
+  editor.texturePaintLayerBlendMode = (candidateLayer) => candidateLayer?.blendMode || "normal";
+  editor.texturePaintLayerBlendShaderCode = (mode) => (mode === "multiply" ? 1 : 0);
+
+  assert.equal(editor.texturePaintCachedLiveCompositeTargetForLayerGpuPaint(material, targetEntry), null);
 });
 
 test("layer live composite reuses a warmed shader target during stroke projection", () => {

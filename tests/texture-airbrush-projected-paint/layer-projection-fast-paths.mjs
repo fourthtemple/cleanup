@@ -687,7 +687,7 @@ test("airbrush brush cursor skips subpixel duplicate transform writes", () => {
   ]);
 });
 
-test("airbrush brush cursor skips repeated class writes for the same mode", () => {
+test("airbrush brush cursor cleans stale classes even when the mode is unchanged", () => {
   class PointerEditor {}
   installTextureAirbrushPointerMethods(PointerEditor);
   const editor = new PointerEditor();
@@ -710,16 +710,19 @@ test("airbrush brush cursor skips repeated class writes for the same mode", () =
   assert.deepEqual(toggles, [
     ["is-clone", false],
     ["is-selection", false],
+    ["is-deselect", false],
+    ["is-clone", false],
+    ["is-selection", false],
     ["is-deselect", false]
   ]);
 
   assert.equal(editor.setTextureBrushCursorMode("clone"), true);
-  assert.equal(toggles.length, 6);
+  assert.equal(toggles.length, 9);
 
   editor.hideTextureBrushCursor();
   assert.equal(removes.length, 1);
   assert.equal(editor.setTextureBrushCursorMode("clone"), true);
-  assert.equal(toggles.length, 9);
+  assert.equal(toggles.length, 12);
 });
 
 test("active airbrush cursor reuses cached stroke radius", () => {

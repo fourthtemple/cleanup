@@ -334,7 +334,10 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
     captureExportMaterialState() {
       return this.exportMaterials().map((material) => ({
         material,
-        userData: material.userData,
+        userData: { ...(material.userData || {}) },
+        onBeforeCompile: material.onBeforeCompile,
+        customProgramCacheKey: material.customProgramCacheKey,
+        needsUpdate: material.needsUpdate,
         textures: EXPORT_TEXTURE_FIELDS.map((field) => ({
           field,
           texture: material[field],
@@ -375,6 +378,68 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       } finally {
         target.dispose();
       }
+    },
+
+    mergeTexturePaintLayersForAssetExport({ format = "fbx" } = {}) {
+      let merged = 0;
+      for (const material of this.exportMaterials()) {
+        const userData = material?.userData || {};
+        const stack = userData.texturePaintLayerStack || null;
+        const canvas = userData.clonePaintCanvas || null;
+        const context = userData.clonePaintContext || null;
+        if (!stack?.baseCanvas || !canvas || !context || typeof THREE.CanvasTexture !== "function") {
+          continue;
+        }
+        let composited = false;
+        if (typeof this.texturePaintRestoreMaterialLayerDisplay === "function") {
+          composited = this.texturePaintRestoreMaterialLayerDisplay(material) === true;
+        } else {
+          this.flushTexturePaintLayerGpuTargetsToCanvases?.({
+            material,
+            composite: false
+          });
+          composited = this.texturePaintCompositeMaterialLayers?.(material, {
+            skipGpuFlush: true,
+            preferCpuDisplay: true
+          }) === true;
+        }
+        if (!composited) {
+          continue;
+        }
+        const sourceTexture = userData.clonePaintTexture || material.map || userData.clonePaintOriginalMap || null;
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.name = `${sourceTexture?.name || material.name || "texture"} merged`;
+        if (typeof this.textureAirbrushCopyTextureRenderSettings === "function" && sourceTexture) {
+          this.textureAirbrushCopyTextureRenderSettings(texture, sourceTexture);
+        } else if (sourceTexture) {
+          texture.colorSpace = sourceTexture.colorSpace;
+          texture.flipY = sourceTexture.flipY;
+          texture.wrapS = sourceTexture.wrapS;
+          texture.wrapT = sourceTexture.wrapT;
+          texture.minFilter = sourceTexture.minFilter;
+          texture.magFilter = sourceTexture.magFilter;
+          texture.generateMipmaps = sourceTexture.generateMipmaps;
+        }
+        texture.userData = {
+          ...(sourceTexture?.userData || {}),
+          mimeType: "image/png",
+          width: canvas.width,
+          height: canvas.height,
+          texturePaintMergedExport: true,
+          exportFormat: format
+        };
+        delete texture.userData.content;
+        delete texture.userData.bytes;
+        delete texture.userData.data;
+        delete texture.userData.src;
+        material.map = texture;
+        material.needsUpdate = true;
+        userData.clonePaintTexture = texture;
+        userData.textureAirbrushBakedTexture = texture;
+        userData.texturePaintMergedExportTexture = texture;
+        merged += 1;
+      }
+      return merged;
     },
 
     prepareTextureForAssetExport(material, field, format) {
@@ -460,6 +525,7 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
         delete cleanMaterialUserData.texturePaintLayerStack;
         delete cleanMaterialUserData.textureAirbrushBakedTexture;
         delete cleanMaterialUserData.textureAirbrushGpuTarget;
+        delete cleanMaterialUserData.texturePaintMergedExportTexture;
         material.userData = cleanMaterialUserData;
       }
     },
@@ -507,6 +573,9 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
     restoreExportMaterialState(states = []) {
       for (const state of states) {
         state.material.userData = state.userData || {};
+        state.material.onBeforeCompile = state.onBeforeCompile;
+        state.material.customProgramCacheKey = state.customProgramCacheKey;
+        state.material.needsUpdate = state.needsUpdate;
         for (const textureState of state.textures || []) {
           state.material[textureState.field] = textureState.texture || null;
           if (textureState.texture) {
@@ -711,6 +780,7 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
         this.bakePendingTextureAirbrushTargetsForExport();
         objectState = this.removeNonExportableObjectsForAssetExport();
         materialState = this.captureExportMaterialState();
+        this.mergeTexturePaintLayersForAssetExport?.({ format });
         this.prepareMaterialsForAssetExport({ format });
         if (format === "fbx") {
           fbxRotationMetadataState = this.captureFbxRotationMetadataState();

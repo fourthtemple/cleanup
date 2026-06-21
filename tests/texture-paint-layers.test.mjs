@@ -74,6 +74,7 @@ function fakeElement(tagName = "div") {
     dataset: {},
     disabled: false,
     title: "",
+    value: "",
     _textContent: "",
     classList: {
       toggle() {},
@@ -91,7 +92,8 @@ function fakeElement(tagName = "div") {
       this[name] = value;
     },
     get textContent() {
-      return `${this._textContent}${this.children.map((child) => child.textContent || "").join("")}`;
+      const visibleValue = this.tagName === "input" ? this.value : "";
+      return `${this._textContent}${visibleValue}${this.children.map((child) => child.textContent || "").join("")}`;
     },
     set textContent(value) {
       this._textContent = String(value);
@@ -385,6 +387,380 @@ test("adding later blank texture paint layers keeps them empty and warms display
   }
 });
 
+test("adding a layer pushes a layer undo above the previous paint stroke", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = {
+    createElement(tag) {
+      assert.equal(tag, "canvas");
+      return fakeCanvas();
+    }
+  };
+  try {
+    const editor = new TestEditor();
+    editor.model = {};
+    editor.texturePaintLayersEnabled = true;
+    editor.undoStack = [{ kind: "texture-paint", label: "Texture airbrush", entries: [] }];
+    editor.redoStack = [];
+    editor.maxUndoSteps = 40;
+    editor.renderTexturePaintLayerPanel = () => true;
+    editor.setStatus = () => {};
+    let undoButtonUpdates = 0;
+    editor.updateUndoButton = () => {
+      undoButtonUpdates += 1;
+    };
+    const material = {
+      map: null,
+      needsUpdate: false,
+      userData: {}
+    };
+    const composite = fakeCanvas();
+    composite.data.set([10, 20, 30, 255, 10, 20, 30, 255]);
+    const texture = { needsUpdate: false };
+    material.userData.clonePaintCanvas = composite;
+    material.userData.clonePaintContext = composite.getContext("2d");
+    material.userData.clonePaintTexture = texture;
+    editor.texturePaintActiveMaterial = material;
+
+    assert.equal(editor.addTexturePaintLayer(), true);
+    const stack = material.userData.texturePaintLayerStack;
+    assert.equal(stack.layers.length, 1);
+    assert.equal(editor.undoStack.length, 2);
+    assert.equal(editor.undoStack[0].kind, "texture-paint");
+    assert.equal(editor.undoStack[1].kind, "texture-layer");
+    assert.match(editor.undoStack[1].label, /^Add Paint 1/);
+
+    const addLayerUndo = editor.undoStack.pop();
+    assert.equal(editor.restoreTexturePaintLayerHistorySnapshot(addLayerUndo.before), true);
+    assert.equal(stack.layers.length, 0);
+    assert.equal(stack.activeLayerId, "");
+    assert.equal(editor.undoStack.length, 1);
+    assert.equal(editor.undoStack[0].kind, "texture-paint");
+
+    assert.equal(editor.restoreTexturePaintLayerHistorySnapshot(addLayerUndo.after), true);
+    assert.equal(stack.layers.length, 1);
+    assert.equal(stack.layers[0].name, "Paint 1");
+    assert.equal(stack.activeLayerId, stack.layers[0].id);
+    assert.equal(undoButtonUpdates >= 1, true);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test("delayed paint undo finalization stays below later layer actions", () => {
+  const editor = new PaintUndoEditor();
+  editor.undoStack = [];
+  editor.redoStack = [];
+  editor.maxUndoSteps = 40;
+  editor.updateUndoButton = () => {};
+  const canvas = fakeCanvas();
+  const context = canvas.getContext("2d");
+
+  assert.equal(editor.beginTexturePaintStrokeUndo("Texture airbrush"), true);
+  const stroke = editor.texturePaintStrokeUndo;
+  const before = context.getImageData(0, 0, canvas.width, canvas.height);
+  canvas.data[0] = 255;
+  canvas.data[3] = 255;
+  stroke.changed = true;
+  stroke.before.push({
+    type: "canvas",
+    key: "canvas:0",
+    canvas,
+    context,
+    before,
+    after: null
+  });
+
+  editor.undoStack.push({ kind: "texture-layer", label: "Add Paint 1" });
+
+  assert.equal(editor.finalizeTexturePaintStrokeUndo(stroke), true);
+  assert.equal(editor.undoStack.length, 2);
+  assert.equal(editor.undoStack[0].kind, "texture-paint");
+  assert.equal(editor.undoStack[1].kind, "texture-layer");
+  assert.deepEqual([...editor.undoStack[0].entries[0].after.data], [...canvas.data]);
+});
+
+test("background paint undo after layer restore updates the current base canvas", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = {
+    createElement(tag) {
+      assert.equal(tag, "canvas");
+      return fakeCanvas();
+    }
+  };
+  try {
+    const editor = new PaintUndoEditor();
+    editor.updateClonePaintPreviews = () => {};
+    editor.syncPatchJson = () => {};
+    editor.updateUndoButton = () => {};
+    editor.renderTexturePaintLayerPanel = () => true;
+
+    const material = {
+      needsUpdate: false,
+      userData: {}
+    };
+    const texture = { needsUpdate: false };
+    const displayCanvas = fakeCanvas();
+    const currentBaseCanvas = fakeCanvas();
+    const staleUndoCanvas = fakeCanvas();
+    const staleUndoContext = staleUndoCanvas.getContext("2d");
+    const before = staleUndoContext.getImageData(0, 0, staleUndoCanvas.width, staleUndoCanvas.height);
+    const paintedPixels = [240, 90, 30, 255, 240, 90, 30, 255];
+    displayCanvas.data.set(paintedPixels);
+    currentBaseCanvas.data.set(paintedPixels);
+    staleUndoCanvas.data.set(paintedPixels);
+    const after = staleUndoContext.getImageData(0, 0, staleUndoCanvas.width, staleUndoCanvas.height);
+    material.userData.clonePaintCanvas = displayCanvas;
+    material.userData.clonePaintContext = displayCanvas.getContext("2d");
+    material.userData.clonePaintTexture = texture;
+    material.userData.texturePaintLayerStack = {
+      baseCanvas: currentBaseCanvas,
+      baseContext: currentBaseCanvas.getContext("2d"),
+      width: currentBaseCanvas.width,
+      height: currentBaseCanvas.height,
+      activeLayerId: "",
+      selectedLayerIds: [],
+      selectionAnchorLayerId: "",
+      layers: []
+    };
+
+    assert.equal(editor.restoreTexturePaintSnapshot([{
+      type: "canvas",
+      canvas: staleUndoCanvas,
+      context: staleUndoContext,
+      texture,
+      material,
+      before,
+      after
+    }], "before"), true);
+
+    assert.deepEqual([...staleUndoCanvas.data], [...before.data]);
+    assert.deepEqual([...currentBaseCanvas.data], [...before.data]);
+    assert.deepEqual([...displayCanvas.data], [...before.data]);
+    assert.equal(texture.needsUpdate, true);
+    assert.equal(material.needsUpdate, true);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test("adding a layer drains pending background paint before capturing layer undo", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = {
+    createElement(tag) {
+      assert.equal(tag, "canvas");
+      return fakeCanvas();
+    }
+  };
+  try {
+    const editor = new TestEditor();
+    editor.model = {};
+    editor.texturePaintLayersEnabled = true;
+    editor.undoStack = [];
+    editor.redoStack = [];
+    editor.maxUndoSteps = 40;
+    editor.updateUndoButton = () => {};
+    editor.renderTexturePaintLayerPanel = () => true;
+    editor.setStatus = () => {};
+    const material = {
+      map: null,
+      needsUpdate: false,
+      userData: {}
+    };
+    const composite = fakeCanvas();
+    const texture = { needsUpdate: false };
+    const baseCanvas = fakeCanvas();
+    material.userData.clonePaintCanvas = composite;
+    material.userData.clonePaintContext = composite.getContext("2d");
+    material.userData.clonePaintTexture = texture;
+    material.userData.texturePaintLayerStack = {
+      baseCanvas,
+      baseContext: baseCanvas.getContext("2d"),
+      width: baseCanvas.width,
+      height: baseCanvas.height,
+      activeLayerId: "",
+      selectedLayerIds: [],
+      selectionAnchorLayerId: "",
+      layers: []
+    };
+    editor.texturePaintActiveMaterial = material;
+    const paintedPixels = [220, 100, 40, 255, 220, 100, 40, 255];
+    let flushedBeforeSnapshot = false;
+    editor.flushTexturePaintPendingBrushWorkBeforeLayerMutation = () => {
+      const stack = material.userData.texturePaintLayerStack;
+      stack.baseCanvas.data.set(paintedPixels);
+      composite.data.set(paintedPixels);
+      flushedBeforeSnapshot = true;
+      return true;
+    };
+
+    assert.equal(editor.addTexturePaintLayer(), true);
+    assert.equal(flushedBeforeSnapshot, true);
+    assert.equal(editor.undoStack.length, 1);
+    const addLayerUndo = editor.undoStack[0];
+    assert.equal(addLayerUndo.kind, "texture-layer");
+    assert.deepEqual([...addLayerUndo.before.baseCanvas.data], paintedPixels);
+    assert.deepEqual([...addLayerUndo.after.baseCanvas.data], paintedPixels);
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test("layer mutation drain prepares pending GPU undo before baking GPU targets", () => {
+  const editor = new TestEditor();
+  const order = [];
+  editor.texturePaintStrokeUndo = { label: "Texture airbrush" };
+  editor.textureAirbrushScreenStrokeQueue = [{ strokeUndo: null }];
+  editor.textureAirbrushAttachStrokeUndoToPendingScreenWork = (stroke) => {
+    editor.textureAirbrushScreenStrokeQueue[0].strokeUndo = stroke;
+    return true;
+  };
+  editor.flushTextureAirbrushScreenStroke = () => {
+    order.push("screen");
+    return 1;
+  };
+  editor.prepareTexturePaintPendingGpuUndoEntriesForCanvas = () => {
+    order.push("prepare-undo");
+    return true;
+  };
+  editor.flushTextureAirbrushGpuTargetsToCanvases = () => {
+    order.push("bake-gpu");
+    return 1;
+  };
+
+  assert.equal(editor.flushTexturePaintPendingBrushWorkBeforeLayerMutation(), true);
+  assert.equal(editor.textureAirbrushScreenStrokeQueue[0].strokeUndo, editor.texturePaintStrokeUndo);
+  assert.deepEqual(order, ["screen", "prepare-undo", "bake-gpu"]);
+});
+
+test("layer mutation drain closes an active texture stroke before baking", () => {
+  const editor = new TestEditor();
+  const activeStroke = { label: "Texture airbrush" };
+  const order = [];
+  editor.texturePaintStrokeUndo = activeStroke;
+  editor.endTexturePaintStrokeUndo = () => {
+    order.push("end-stroke");
+    editor.texturePaintStrokeUndo = null;
+    editor.texturePaintPendingStrokeUndoFinalizations = new Set([activeStroke]);
+    return false;
+  };
+  editor.textureAirbrushAttachStrokeUndoToPendingScreenWork = () => {
+    order.push("attach");
+    return true;
+  };
+  editor.flushTextureAirbrushScreenStroke = () => {
+    order.push("screen");
+    return 1;
+  };
+  editor.prepareTexturePaintPendingGpuUndoEntriesForCanvas = () => {
+    order.push("prepare-undo");
+    return true;
+  };
+  editor.flushTextureAirbrushGpuTargetsToCanvases = () => {
+    order.push("bake-gpu");
+    return 1;
+  };
+
+  assert.equal(editor.flushTexturePaintPendingBrushWorkBeforeLayerMutation(), true);
+  assert.deepEqual(order, ["end-stroke", "attach", "screen", "prepare-undo", "bake-gpu"]);
+  assert.equal(editor.texturePaintPendingStrokeUndoFinalizations.has(activeStroke), true);
+});
+
+test("pending GPU undo conversion includes async finalization strokes", () => {
+  const editor = new PaintUndoEditor();
+  const pendingStroke = { label: "Texture airbrush", before: [] };
+  editor.texturePaintPendingStrokeUndoFinalizations = new Set([pendingStroke]);
+  let preparedStroke = null;
+  editor.prepareTexturePaintGpuUndoEntriesForCanvas = (stroke) => {
+    preparedStroke = stroke;
+    return true;
+  };
+
+  assert.equal(editor.prepareTexturePaintPendingGpuUndoEntriesForCanvas(), true);
+  assert.equal(preparedStroke, pendingStroke);
+});
+
+test("layer mutation converts finalized background GPU paint undo to canvas", () => {
+  const editor = new PaintUndoEditor();
+  editor.undoStack = [];
+  editor.redoStack = [];
+  editor.maxUndoSteps = 40;
+  editor.updateUndoButton = () => {};
+  editor.updateClonePaintPreviews = () => {};
+  editor.syncPatchJson = () => {};
+  editor.renderTexturePaintLayerPanel = () => true;
+  editor.flushTextureAirbrushScreenStroke = () => 0;
+  editor.flushTextureAirbrushGpuTargetsToCanvases = () => 1;
+  editor.textureAirbrushCanvasFromRenderTarget = ({ target }) => ({
+    canvas: target,
+    context: target.getContext("2d")
+  });
+
+  const displayCanvas = fakeCanvas();
+  const baseCanvas = fakeCanvas();
+  const beforeSnapshot = fakeCanvas();
+  const afterSnapshot = fakeCanvas();
+  const restoredBaseCanvas = fakeCanvas();
+  const beforePixels = [0, 0, 0, 0, 0, 0, 0, 0];
+  const afterPixels = [230, 80, 20, 255, 230, 80, 20, 255];
+  beforeSnapshot.data.set(beforePixels);
+  afterSnapshot.data.set(afterPixels);
+  displayCanvas.data.set(afterPixels);
+  baseCanvas.data.set(afterPixels);
+
+  const material = {
+    map: null,
+    needsUpdate: false,
+    userData: {
+      clonePaintCanvas: displayCanvas,
+      clonePaintContext: displayCanvas.getContext("2d"),
+      clonePaintTexture: { needsUpdate: false },
+      texturePaintLayerStack: {
+        baseCanvas,
+        baseContext: baseCanvas.getContext("2d"),
+        width: baseCanvas.width,
+        height: baseCanvas.height,
+        activeLayerId: "",
+        selectedLayerIds: [],
+        selectionAnchorLayerId: "",
+        layers: []
+      }
+    }
+  };
+  const entry = {
+    type: "gpu",
+    material,
+    targetEntry: {
+      width: 2,
+      height: 1,
+      target: { texture: {} }
+    },
+    before: beforeSnapshot,
+    after: afterSnapshot
+  };
+  editor.undoStack.push({
+    kind: "texture-paint",
+    label: "Texture airbrush",
+    entries: [entry]
+  });
+
+  assert.equal(editor.flushTexturePaintPendingBrushWorkBeforeLayerMutation(), true);
+  assert.equal(entry.type, "canvas");
+  assert.equal(entry.canvas, displayCanvas);
+  assert.equal(entry.context, displayCanvas.getContext("2d"));
+  assert.deepEqual([...entry.before.data], beforePixels);
+  assert.deepEqual([...entry.after.data], afterPixels);
+  assert.equal("targetEntry" in entry, false);
+
+  material.userData.texturePaintLayerStack.baseCanvas = restoredBaseCanvas;
+  material.userData.texturePaintLayerStack.baseContext = restoredBaseCanvas.getContext("2d");
+  displayCanvas.data.set(afterPixels);
+  restoredBaseCanvas.data.set(afterPixels);
+
+  assert.equal(editor.restoreTexturePaintSnapshot([entry], "before"), true);
+  assert.deepEqual([...displayCanvas.data], beforePixels);
+  assert.deepEqual([...restoredBaseCanvas.data], beforePixels);
+});
+
 test("adding a layer reuses an empty airbrush-prewarmed layer", () => {
   const previousDocument = globalThis.document;
   globalThis.document = {
@@ -587,6 +963,60 @@ test("layer panel shows Background instead of Paint 1 placeholder before paintin
     assert.equal(editor.texturePaintLayerList.textContent.includes("Background"), true);
     assert.equal(editor.texturePaintLayerList.textContent.includes("Add a layer"), false);
     assert.equal(editor.texturePaintLayerList.children[0].className, "texture-layer-row is-locked");
+  } finally {
+    globalThis.document = previousDocument;
+  }
+});
+
+test("layer panel names are editable inputs and rename matching layers", () => {
+  const previousDocument = globalThis.document;
+  globalThis.document = {
+    createElement(tag) {
+      return tag === "canvas" ? fakeCanvas() : fakeElement(tag);
+    }
+  };
+  try {
+    const editor = new TestEditor();
+    const material = { userData: {} };
+    const mirrorMaterial = { userData: {} };
+    const layer = { id: "paint-shared", name: "Paint 1", visible: true, opacity: 1, canvas: fakeCanvas() };
+    const mirrorLayer = { id: "paint-shared", name: "Paint 1", visible: true, opacity: 1, canvas: fakeCanvas() };
+    const stack = {
+      activeLayerId: layer.id,
+      selectedLayerIds: [layer.id],
+      selectionAnchorLayerId: layer.id,
+      baseCanvas: fakeCanvas(),
+      layers: [layer]
+    };
+    const mirrorStack = {
+      activeLayerId: mirrorLayer.id,
+      selectedLayerIds: [mirrorLayer.id],
+      selectionAnchorLayerId: mirrorLayer.id,
+      baseCanvas: fakeCanvas(),
+      layers: [mirrorLayer]
+    };
+    material.userData.texturePaintLayerStack = stack;
+    mirrorMaterial.userData.texturePaintLayerStack = mirrorStack;
+    editor.model = {};
+    editor.texturePaintActiveMaterial = material;
+    editor.texturePaintLayerList = fakeElement("div");
+    editor.texturePaintFirstLayerMaterial = () => material;
+    editor.texturePaintLayerEntriesForId = (layerId) => [
+      { material, stack, layer },
+      { material: mirrorMaterial, stack: mirrorStack, layer: mirrorLayer }
+    ].filter((entry) => entry.layer.id === layerId);
+
+    assert.equal(editor.renderTexturePaintLayerPanel(), true);
+    const nameInput = editor.texturePaintLayerList.children[0].children[2];
+    assert.equal(nameInput.tagName, "input");
+    assert.equal(nameInput.dataset.layerRename, layer.id);
+    assert.equal(nameInput.value, "Paint 1");
+
+    assert.equal(editor.renameTexturePaintLayer(layer.id, "  Fur   cleanup  "), true);
+    assert.equal(layer.name, "Fur cleanup");
+    assert.equal(mirrorLayer.name, "Fur cleanup");
+    assert.equal(editor.renameTexturePaintLayer(layer.id, "   "), false);
+    assert.equal(layer.name, "Fur cleanup");
   } finally {
     globalThis.document = previousDocument;
   }

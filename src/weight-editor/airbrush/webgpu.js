@@ -12,7 +12,7 @@ import {
 import { installTextureAirbrushWebGpuDiagnosticMethods } from "./webgpu-diagnostics.js";
 import { textureAirbrushWebGpuKernelSource } from "./webgpu-kernel.js?v=stroke-opacity-photoshop-cap-20260620a";
 import { textureAirbrushWebGpuPaintPlan } from "./webgpu-plan.js?v=stroke-opacity-photoshop-cap-20260620a";
-import { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js";
+import { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js?v=layer-undo-fix-20260621a";
 import { installTextureAirbrushWebGpuPrewarmMethods } from "./webgpu-prewarm.js";
 import {
   resolveTextureAirbrushBackend,
@@ -32,7 +32,7 @@ export {
   textureAirbrushWebGpuRendererRequestedFromSearch,
   textureAirbrushWebGpuRequestedFromSearch
 } from "./webgpu-resolver.js";
-export { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js";
+export { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js?v=layer-undo-fix-20260621a";
 
 export function installTextureAirbrushWebGpuMethods(BirdWeightEditor) {
   Object.assign(BirdWeightEditor.prototype, {

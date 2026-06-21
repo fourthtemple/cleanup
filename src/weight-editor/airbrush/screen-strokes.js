@@ -361,7 +361,8 @@ function payloadStyleKey(payload = null) {
     Math.round(Math.max(0.08, Math.min(1, Number(payload.strength ?? 1))) * 1000),
     payload.erase === true ? "erase" : "paint",
     payload.layerMode === true ? "layer" : "texture",
-    payload.layerMode === true ? layerMutationSerial(payload.layerMutationSerial) : 0
+    payload.layerMode === true ? layerMutationSerial(payload.layerMutationSerial) : 0,
+    payload.neighborPaintKey || "all"
   ].join(":");
 }
 
@@ -391,7 +392,8 @@ function payloadBrushStyle(payload = null, fallbacks = {}) {
       Math.round(strength * 1000),
       payload?.erase === true ? "erase" : "paint",
       payload?.layerMode === true ? "layer" : "texture",
-      payload?.layerMode === true ? layerMutationSerial(payload?.layerMutationSerial) : 0
+      payload?.layerMode === true ? layerMutationSerial(payload?.layerMutationSerial) : 0,
+      payload?.neighborPaintKey || "all"
     ].join(":"),
     radiusPixels,
     color: colorBytes,
@@ -932,6 +934,13 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         layerMutationSerial: this.texturePaintLayerMutationSerialValue?.() ?? 0,
         strokeReset: false
       };
+      const neighborPaintSeed = this.textureAirbrushActiveNeighborPaintSeed || null;
+      if (neighborPaintSeed?.enabled) {
+        payload.neighborPaintSeed = neighborPaintSeed;
+        payload.neighborPaintKey = this.textureAirbrushNeighborSeedKey?.(neighborPaintSeed)
+          || neighborPaintSeed.key
+          || "neighbor";
+      }
       const strokeUndo = this.texturePaintActiveStrokeUndo?.()
         || this.texturePaintStrokeUndoContext
         || this.texturePaintStrokeUndo
@@ -1281,6 +1290,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         this.textureAirbrushResetLiveProjectionFrame?.({ keepCurrent: true });
         this.textureAirbrushResetStrokePressureState?.();
         this.textureAirbrushResetStrokeBrushState?.();
+        this.textureAirbrushBeginNeighborPaintStroke?.(event, this.activeTool);
       }
       const baseOptions = this.textureAirbrushScreenStrokeBaseOptions?.() || {};
       if (
@@ -1520,7 +1530,14 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         const styleKey = style.styleKey;
         const mutationSerial = layerMutationSerial(segment.layerMutationSerial);
         const strokeUndo = segment.strokeUndo || null;
-        if (!activeBatch || activeBatch.styleKey !== styleKey || (activeBatch.strokeUndo || null) !== strokeUndo) {
+        const neighborPaintSeed = segment.neighborPaintSeed || null;
+        const neighborPaintKey = segment.neighborPaintKey || "";
+        if (
+          !activeBatch
+          || activeBatch.styleKey !== styleKey
+          || (activeBatch.strokeUndo || null) !== strokeUndo
+          || (activeBatch.neighborPaintKey || "") !== neighborPaintKey
+        ) {
           const strokeStartedWithReset = segment.strokeReset === true
             || segment.strokeStartedWithReset === true
             || segment.layerCachedStartContinuation === true;
@@ -1532,20 +1549,22 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             hardness,
             scatter,
             spacing: Math.max(0.1, Math.min(200, Number(segment.spacing ?? this.textureAirbrushSpacingPercent?.() ?? 1))),
-          strength,
-          pressureApplied: true,
-          erase: segment.erase === true,
-          layerMode: segment.layerMode === true,
-          layerMutationSerial: mutationSerial,
-          strokeReset: segment.strokeReset === true,
-          strokeStartedWithReset,
-          layerCachedStartContinuation: segment.layerCachedStartContinuation === true,
-          strokeSegments: []
-        };
-        if (strokeUndo) {
-          activeBatch.strokeUndo = strokeUndo;
-        }
-        batches.push(activeBatch);
+            strength,
+            pressureApplied: true,
+            erase: segment.erase === true,
+            layerMode: segment.layerMode === true,
+            layerMutationSerial: mutationSerial,
+            neighborPaintSeed,
+            neighborPaintKey,
+            strokeReset: segment.strokeReset === true,
+            strokeStartedWithReset,
+            layerCachedStartContinuation: segment.layerCachedStartContinuation === true,
+            strokeSegments: []
+          };
+          if (strokeUndo) {
+            activeBatch.strokeUndo = strokeUndo;
+          }
+          batches.push(activeBatch);
         }
         const strokeSegment = {
           start: {
@@ -1814,6 +1833,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
               ...(layerGpuBatch ? { deferLayerComposite: true } : {}),
               ...(renderAllCachedLayerPasses ? { renderAllCachedPasses: true } : {}),
               ...(reusePartialLayerPasses ? { reusePartialLayerPasses: true } : {}),
+              ...(batch.neighborPaintSeed ? { neighborPaintSeed: batch.neighborPaintSeed } : {}),
               pressureApplied: true
             }) || 0;
           } finally {

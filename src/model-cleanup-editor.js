@@ -12,9 +12,9 @@ import {
   remainingClipStartOffsetSeconds
 } from "./animation/animation-clip-utils.js";
 import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
-import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=layer-stroke-fix-20260619a";
+import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=export-merged-layers-20260621a";
 import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=static-library-load-20260618a";
-import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=layer-background-always-fix-20260619a";
+import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=layer-save-reload-20260621a";
 import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=layer-stroke-fix-20260619a";
 import { installClonePaintReplayMethods } from "./weight-editor/clone-paint-replay.js?v=airbrush-command-20260602a";
 import { installCurveEditorMethods } from "./weight-editor/curve-editor.js?v=adaptive-context-key-20260609a";
@@ -22,7 +22,7 @@ import { installCurveHandleMethods } from "./weight-editor/curve-handles.js?v=ad
 import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js?v=adaptive-delta-cache-20260609a";
 import { installJointConstraintMethods } from "./weight-editor/joint-constraints.js?v=joint-limit-capture-20260604a";
 import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=layer-camera-stable-frame-prewarm-20260620a";
-import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=radius-brush-fix-20260621a";
+import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=selection-pen-perf-20260621a";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-replay-state-20260606a";
 import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=adaptive-context-key-20260609a";
 import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=responsive-drawer-polish-20260612a";
@@ -34,14 +34,14 @@ import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=responsive-drawer-polish-20260612a";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js?v=macro-live-follow-20260608a";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=radius-brush-fix-20260621a";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=layer-rename-20260621a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
-import { installTexturePaintLayerMethods } from "./weight-editor/texture-layers.js?v=layer-effects-20260621a";
+import { installTexturePaintLayerMethods } from "./weight-editor/texture-layers.js?v=layer-rename-20260621a";
 import {
   installTextureAirbrushMethods,
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
-} from "./weight-editor/airbrush/index.js?v=layer-live-baked-display-20260621a";
+} from "./weight-editor/airbrush/index.js?v=layer-undo-fix-20260621a";
 import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=airbrush-spacing-20260618a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=layer-stroke-fix-20260619a";
 import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
@@ -252,6 +252,7 @@ class ModelCleanupEditor {
     this.texturePickColorToolButton = document.getElementById("texture-pick-color-tool");
     this.textureAirbrushToolButton = document.getElementById("texture-airbrush-tool");
     this.textureEraserToolButton = document.getElementById("texture-eraser-tool");
+    this.texturePaintNeighborToggle = document.getElementById("texture-neighbor-toggle");
     this.texturePaintLayerAddButton = document.getElementById("texture-layer-add");
     this.texturePaintLayerDuplicateButton = document.getElementById("texture-layer-duplicate");
     this.texturePaintLayerMergeButton = document.getElementById("texture-layer-merge");

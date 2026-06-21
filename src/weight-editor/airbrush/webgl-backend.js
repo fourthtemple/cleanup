@@ -1,5 +1,5 @@
-import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=stroke-opacity-photoshop-cap-20260620a";
-import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=layer-live-baked-display-20260621a";
+import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=layer-undo-fix-20260621a";
+import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=layer-undo-fix-20260621a";
 
 const TEXTURE_AIRBRUSH_LAYER_HIT_SEED_MAX_AGE_MS = 10000;
 
@@ -407,18 +407,124 @@ export function installTextureAirbrushWebGlBackendMethods(BirdWeightEditor, deps
         originalCustomProgramCacheKey,
         layerTexture: null,
         layerOpacity: 1,
+        layerBlendMode: 0,
         shader: null
       };
       material.onBeforeCompile = function onBeforeCompileTexturePaintLiveLayer(shader, renderer) {
         originalOnBeforeCompile?.call(this, shader, renderer);
         shader.uniforms.texturePaintLiveLayerMap = { value: state.layerTexture || null };
         shader.uniforms.texturePaintLiveLayerOpacity = { value: state.layerOpacity };
+        shader.uniforms.texturePaintLiveLayerBlendMode = { value: state.layerBlendMode };
         shader.fragmentShader = shader.fragmentShader
           .replace(
             "#include <map_pars_fragment>",
             `#include <map_pars_fragment>
 uniform sampler2D texturePaintLiveLayerMap;
-uniform float texturePaintLiveLayerOpacity;`
+uniform float texturePaintLiveLayerOpacity;
+uniform int texturePaintLiveLayerBlendMode;
+
+float texturePaintLiveBlendSoftLightChannel(float base, float source) {
+  if (source <= 0.5) {
+    return base - (1.0 - 2.0 * source) * base * (1.0 - base);
+  }
+  float d = base <= 0.25
+    ? ((16.0 * base - 12.0) * base + 4.0) * base
+    : sqrt(base);
+  return base + (2.0 * source - 1.0) * (d - base);
+}
+
+vec3 texturePaintLiveBlendSoftLight(vec3 base, vec3 source) {
+  return vec3(
+    texturePaintLiveBlendSoftLightChannel(base.r, source.r),
+    texturePaintLiveBlendSoftLightChannel(base.g, source.g),
+    texturePaintLiveBlendSoftLightChannel(base.b, source.b)
+  );
+}
+
+float texturePaintLiveBlendLuminance(vec3 color) {
+  return dot(color, vec3(0.3, 0.59, 0.11));
+}
+
+float texturePaintLiveBlendSaturation(vec3 color) {
+  return max(max(color.r, color.g), color.b) - min(min(color.r, color.g), color.b);
+}
+
+vec3 texturePaintLiveClipColor(vec3 color) {
+  float l = texturePaintLiveBlendLuminance(color);
+  float n = min(min(color.r, color.g), color.b);
+  float x = max(max(color.r, color.g), color.b);
+  if (n < 0.0) {
+    color = l + ((color - l) * l) / (l - n);
+  }
+  if (x > 1.0) {
+    color = l + ((color - l) * (1.0 - l)) / (x - l);
+  }
+  return clamp(color, 0.0, 1.0);
+}
+
+vec3 texturePaintLiveSetLuminance(vec3 color, float l) {
+  return texturePaintLiveClipColor(color + (l - texturePaintLiveBlendLuminance(color)));
+}
+
+vec3 texturePaintLiveSetSaturation(vec3 color, float s) {
+  float cMin = min(min(color.r, color.g), color.b);
+  float cMax = max(max(color.r, color.g), color.b);
+  if (cMax <= cMin) {
+    return vec3(0.0);
+  }
+  return (color - cMin) * s / (cMax - cMin);
+}
+
+vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
+  if (mode == 1) {
+    return base * source;
+  }
+  if (mode == 2) {
+    return base + source - base * source;
+  }
+  if (mode == 3) {
+    return mix(2.0 * base * source, 1.0 - 2.0 * (1.0 - base) * (1.0 - source), step(0.5, base));
+  }
+  if (mode == 4) {
+    return min(base, source);
+  }
+  if (mode == 5) {
+    return max(base, source);
+  }
+  if (mode == 6) {
+    vec3 dodge = min(vec3(1.0), base / max(vec3(0.0001), vec3(1.0) - source));
+    return mix(dodge, vec3(1.0), step(vec3(0.9999), source));
+  }
+  if (mode == 7) {
+    vec3 burn = 1.0 - min(vec3(1.0), (1.0 - base) / max(vec3(0.0001), source));
+    return mix(vec3(0.0), burn, step(vec3(0.0001), source));
+  }
+  if (mode == 8) {
+    return mix(2.0 * base * source, 1.0 - 2.0 * (1.0 - base) * (1.0 - source), step(0.5, source));
+  }
+  if (mode == 9) {
+    return texturePaintLiveBlendSoftLight(base, source);
+  }
+  if (mode == 10) {
+    return abs(base - source);
+  }
+  if (mode == 11) {
+    return base + source - 2.0 * base * source;
+  }
+  if (mode == 12) {
+    return texturePaintLiveSetLuminance(texturePaintLiveSetSaturation(source, texturePaintLiveBlendSaturation(base)), texturePaintLiveBlendLuminance(base));
+  }
+  if (mode == 13) {
+    return texturePaintLiveSetLuminance(texturePaintLiveSetSaturation(base, texturePaintLiveBlendSaturation(source)), texturePaintLiveBlendLuminance(base));
+  }
+  if (mode == 14) {
+    return texturePaintLiveSetLuminance(source, texturePaintLiveBlendLuminance(base));
+  }
+  if (mode == 15) {
+    return texturePaintLiveSetLuminance(base, texturePaintLiveBlendLuminance(source));
+  }
+  return source;
+}`
           )
           .replace(
             "#include <map_fragment>",
@@ -429,9 +535,14 @@ uniform float texturePaintLiveLayerOpacity;`
   #endif
   vec4 texturePaintLiveLayerColor = texture2D( texturePaintLiveLayerMap, vMapUv );
   float texturePaintLiveLayerAlpha = clamp(texturePaintLiveLayerColor.a * texturePaintLiveLayerOpacity, 0.0, 1.0);
-  sampledDiffuseColor.rgb = mix(
+  vec3 texturePaintLiveBlendedColor = texturePaintLiveBlendColor(
     sampledDiffuseColor.rgb,
     texturePaintLiveLayerColor.rgb,
+    texturePaintLiveLayerBlendMode
+  );
+  sampledDiffuseColor.rgb = mix(
+    sampledDiffuseColor.rgb,
+    texturePaintLiveBlendedColor,
     texturePaintLiveLayerAlpha
   );
   sampledDiffuseColor.a = max(sampledDiffuseColor.a, texturePaintLiveLayerAlpha);
@@ -444,7 +555,7 @@ uniform float texturePaintLiveLayerOpacity;`
         const baseKey = typeof originalCustomProgramCacheKey === "function"
           ? originalCustomProgramCacheKey.call(this)
           : "";
-        return `${baseKey}|texture-paint-live-layer-v2`;
+        return `${baseKey}|texture-paint-live-layer-v3`;
       };
       material.userData.texturePaintLiveLayerShaderComposite = state;
       material.needsUpdate = true;
@@ -489,8 +600,11 @@ uniform float texturePaintLiveLayerOpacity;`
         return null;
       }
       const layerOpacity = texturePaintLayerOpacity(targetEntry.layer);
+      const layerBlendMode = this.texturePaintLayerBlendMode?.(targetEntry.layer) || "normal";
+      const layerBlendCode = Number(this.texturePaintLayerBlendShaderCode?.(layerBlendMode)) || 0;
       state.layerTexture = layerTexture;
       state.layerOpacity = layerOpacity;
+      state.layerBlendMode = layerBlendCode;
       let updatedUniform = false;
       if (state.shader?.uniforms?.texturePaintLiveLayerMap) {
         state.shader.uniforms.texturePaintLiveLayerMap.value = layerTexture;
@@ -498,6 +612,10 @@ uniform float texturePaintLiveLayerOpacity;`
       }
       if (state.shader?.uniforms?.texturePaintLiveLayerOpacity) {
         state.shader.uniforms.texturePaintLiveLayerOpacity.value = layerOpacity;
+        updatedUniform = true;
+      }
+      if (state.shader?.uniforms?.texturePaintLiveLayerBlendMode) {
+        state.shader.uniforms.texturePaintLiveLayerBlendMode.value = layerBlendCode;
         updatedUniform = true;
       }
       if (!updatedUniform) {
@@ -520,6 +638,7 @@ uniform float texturePaintLiveLayerOpacity;`
       targetEntry.liveCompositeLayerCount = stackLayers.length;
       targetEntry.liveCompositeLayerIndex = stackLayers.indexOf(targetEntry.layer);
       targetEntry.liveCompositeLayerOpacity = layerOpacity;
+      targetEntry.liveCompositeLayerBlendMode = layerBlendMode;
       targetEntry.liveCompositeUnderlayKey = options.underlayKey || "";
       targetEntry.liveCompositeLayerMutationSerial = this.texturePaintLayerMutationSerialValue?.() ?? 0;
       return compositeTarget;
@@ -601,16 +720,29 @@ uniform float texturePaintLiveLayerOpacity;`
       const previousTarget = this.renderer.getRenderTarget();
       const previousAutoClear = this.renderer.autoClear;
       const opacity = Math.max(0, Math.min(1, Number(display.activeLayerOpacity) || 0));
+      const blendMode = this.texturePaintLayerBlendMode?.(targetEntry.layer) || "normal";
       try {
-        const copyMaterial = this.textureAirbrushLayerCompositeMaterial(opacity);
-        copyMaterial.map = layerTexture;
-        copyMaterial.needsUpdate = true;
-        this.textureAirbrushGpuCopyMesh.material = copyMaterial;
         this.renderer.setRenderTarget(displayTarget);
         this.renderer.autoClear = false;
-        this.textureAirbrushWithRawTextureMatrix(layerTexture, () => {
-          this.renderer.render(this.textureAirbrushGpuCopyScene, this.textureAirbrushGpuCopyCamera);
-        });
+        if (blendMode === "normal") {
+          const copyMaterial = this.textureAirbrushLayerCompositeMaterial(opacity);
+          copyMaterial.map = layerTexture;
+          copyMaterial.needsUpdate = true;
+          this.textureAirbrushGpuCopyMesh.material = copyMaterial;
+          this.textureAirbrushWithRawTextureMatrix(layerTexture, () => {
+            this.renderer.render(this.textureAirbrushGpuCopyScene, this.textureAirbrushGpuCopyCamera);
+          });
+        } else {
+          const blendMaterial = this.textureAirbrushLayerBlendCompositeMaterial(blendMode, opacity);
+          blendMaterial.uniforms.baseTexture.value = underlayTexture;
+          blendMaterial.uniforms.layerTexture.value = layerTexture;
+          this.textureAirbrushGpuCopyMesh.material = blendMaterial;
+          this.textureAirbrushWithRawTextureMatrix(underlayTexture, () => {
+            this.textureAirbrushWithRawTextureMatrix(layerTexture, () => {
+              this.renderer.render(this.textureAirbrushGpuCopyScene, this.textureAirbrushGpuCopyCamera);
+            });
+          });
+        }
       } finally {
         this.renderer.setRenderTarget(previousTarget);
         this.renderer.autoClear = previousAutoClear;
@@ -632,6 +764,8 @@ uniform float texturePaintLiveLayerOpacity;`
       const layers = stack?.layers || [];
       const currentMutationSerial = this.texturePaintLayerMutationSerialValue?.() ?? 0;
       const layerOpacity = texturePaintLayerOpacity(layer);
+      const layerBlendMode = this.texturePaintLayerBlendMode?.(layer) || "normal";
+      const layerBlendCode = Number(this.texturePaintLayerBlendShaderCode?.(layerBlendMode)) || 0;
       if (
         !cached?.target
         || cached.target !== targetEntry?.target
@@ -648,6 +782,7 @@ uniform float texturePaintLiveLayerOpacity;`
         || layers.length !== 1
         || layers[0] !== layer
         || targetEntry.liveCompositeLayerIndex !== 0
+        || (targetEntry.liveCompositeLayerBlendMode || "normal") !== layerBlendMode
         || targetEntry.liveCompositeLayerMutationSerial !== currentMutationSerial
         || layer?.visible === false
       ) {
@@ -659,8 +794,13 @@ uniform float texturePaintLiveLayerOpacity;`
       if (state.shader?.uniforms?.texturePaintLiveLayerOpacity) {
         state.shader.uniforms.texturePaintLiveLayerOpacity.value = layerOpacity;
       }
+      if (state.shader?.uniforms?.texturePaintLiveLayerBlendMode) {
+        state.shader.uniforms.texturePaintLiveLayerBlendMode.value = layerBlendCode;
+      }
       state.layerOpacity = layerOpacity;
+      state.layerBlendMode = layerBlendCode;
       targetEntry.liveCompositeLayerOpacity = layerOpacity;
+      targetEntry.liveCompositeLayerBlendMode = layerBlendMode;
       return cached;
     },
 
@@ -678,6 +818,8 @@ uniform float texturePaintLiveLayerOpacity;`
       const layerIndex = layers.indexOf(layer);
       const underlayKey = this.texturePaintLiveLayerUnderlayKey?.(targetEntry) || "";
       const layerOpacity = texturePaintLayerOpacity(layer);
+      const layerBlendMode = this.texturePaintLayerBlendMode?.(layer) || "normal";
+      const layerBlendCode = Number(this.texturePaintLayerBlendShaderCode?.(layerBlendMode)) || 0;
       const lowerLayers = layerIndex >= 0
         ? layers.slice(0, layerIndex).filter((stackLayer) => texturePaintLayerContributesVisiblePaint(stackLayer))
         : [];
@@ -697,6 +839,7 @@ uniform float texturePaintLiveLayerOpacity;`
         || targetEntry.liveCompositeLayer !== layer
         || targetEntry.liveCompositeLayerCount !== layers.length
         || targetEntry.liveCompositeLayerIndex !== layerIndex
+        || (targetEntry.liveCompositeLayerBlendMode || "normal") !== layerBlendMode
         || targetEntry.liveCompositeUnderlayKey !== underlayKey
         || (needsUnderlayTarget && (
           !underlay?.target?.texture
@@ -721,8 +864,13 @@ uniform float texturePaintLiveLayerOpacity;`
       if (state.shader?.uniforms?.texturePaintLiveLayerOpacity) {
         state.shader.uniforms.texturePaintLiveLayerOpacity.value = layerOpacity;
       }
+      if (state.shader?.uniforms?.texturePaintLiveLayerBlendMode) {
+        state.shader.uniforms.texturePaintLiveLayerBlendMode.value = layerBlendCode;
+      }
       state.layerOpacity = layerOpacity;
+      state.layerBlendMode = layerBlendCode;
       targetEntry.liveCompositeLayerOpacity = layerOpacity;
+      targetEntry.liveCompositeLayerBlendMode = layerBlendMode;
       return cached;
     },
 
@@ -767,7 +915,6 @@ uniform float texturePaintLiveLayerOpacity;`
         layerIndex < 0
         || layer?.visible === false
         || !stack?.baseCanvas
-        || (this.texturePaintLayerBlendMode?.(layer) || "normal") !== "normal"
       ) {
         return false;
       }

@@ -180,14 +180,15 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
     },
 
     setTextureBrushCursorMode(mode = "airbrush") {
-      if (!this.textureBrushCursor || this.textureBrushCursorClassMode === mode) {
+      if (!this.textureBrushCursor) {
         return false;
       }
+      const previousMode = this.textureBrushCursorClassMode;
       this.textureBrushCursor.classList.toggle("is-clone", mode === "clone");
       this.textureBrushCursor.classList.toggle("is-selection", mode === "selection" || mode === "deselect");
       this.textureBrushCursor.classList.toggle("is-deselect", mode === "deselect");
       this.textureBrushCursorClassMode = mode;
-      return true;
+      return previousMode !== mode;
     },
 
     showTextureBrushCursorElement() {

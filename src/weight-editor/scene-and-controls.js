@@ -2298,6 +2298,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       };
       this.textureBrushRadius?.addEventListener("input", () => syncTextureBrushSetting());
       this.textureBrushRadius?.addEventListener("change", () => syncTextureBrushSetting());
+      this.installTextureBrushRadiusPointerFallback?.(this.textureBrushRadius);
       this.textureBrushSpacing?.addEventListener("input", () => syncTextureBrushSetting());
       this.textureBrushSpacing?.addEventListener("change", () => syncTextureBrushSetting());
       this.textureBrushOpacity?.addEventListener("input", () => syncTextureBrushSetting({ resetLiveProjection: false }));
@@ -2311,6 +2312,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.texturePaintColor?.addEventListener("input", () => {
         this.textureAirbrushInvalidateBrushSettings?.({ resetLiveProjection: false });
       });
+      this.texturePaintNeighborToggle?.addEventListener("change", () => {
+        this.setTexturePaintNeighborMode?.(this.texturePaintNeighborToggle.checked === true);
+      });
+      this.syncTexturePaintNeighborMode?.();
       this.clonePaintSourceButton?.addEventListener("click", () => {
         this.captureClonePaintSource?.();
       });
@@ -2348,6 +2353,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.deleteActiveTexturePaintLayer?.();
       });
       this.texturePaintLayerList?.addEventListener("click", (event) => {
+        if (event.target.closest?.("[data-layer-rename]")) {
+          return;
+        }
         const visibility = event.target.closest?.("[data-layer-visibility]");
         if (visibility) {
           this.toggleTexturePaintLayerVisibility?.(visibility.dataset.layerVisibility);
@@ -2365,6 +2373,31 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
             range: event.shiftKey
           });
         }
+      });
+      this.texturePaintLayerList?.addEventListener("keydown", (event) => {
+        const input = event.target.closest?.("[data-layer-rename]");
+        if (!input) {
+          return;
+        }
+        if (event.key === "Enter") {
+          event.preventDefault();
+          input.blur?.();
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          const entries = this.texturePaintLayerEntriesForId?.(input.dataset.layerRename) || [];
+          const activeEntry = entries.find((entry) => entry.material === this.texturePaintActiveMaterial) || entries[0] || null;
+          input.value = activeEntry?.layer?.name || "Layer";
+          input.blur?.();
+        }
+      });
+      this.texturePaintLayerList?.addEventListener("focusout", (event) => {
+        const input = event.target.closest?.("[data-layer-rename]");
+        if (!input) {
+          return;
+        }
+        this.renameTexturePaintLayer?.(input.dataset.layerRename, input.value);
       });
       this.texturePaintLayerOpacity?.addEventListener("input", () => {
         const material = this.texturePaintActiveMaterial || this.texturePaintFirstLayerMaterial?.();
@@ -3480,7 +3513,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     isFastHistoryState(state) {
-      return state?.kind === "selection" || state?.kind === "texture-paint" || state?.kind === "rig";
+      return state?.kind === "selection"
+        || state?.kind === "texture-paint"
+        || state?.kind === "texture-layer"
+        || state?.kind === "rig";
     },
 
     disposeFastHistoryState(state) {
@@ -3488,6 +3524,8 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         for (const entry of state.entries || []) {
           this.disposeTexturePaintSnapshotEntry?.(entry);
         }
+      } else if (state?.kind === "texture-layer") {
+        this.disposeTexturePaintLayerHistoryState?.(state);
       }
     },
 
@@ -3500,6 +3538,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.restoreSelectionSnapshot?.(snapshot);
       } else if (state?.kind === "texture-paint") {
         this.restoreTexturePaintSnapshot?.(state.entries, direction === "redo" ? "after" : "before");
+      } else if (state?.kind === "texture-layer") {
+        if (!this.restoreTexturePaintLayerHistorySnapshot?.(direction === "redo" ? state.after : state.before)) {
+          return false;
+        }
       } else if (state?.kind === "rig") {
         this.restoreRigHistorySnapshot?.(direction === "redo" ? state.after : state.before);
       } else {
@@ -5166,6 +5208,87 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
 
     pausePlayback() {
       this.setPlayback(false);
+    },
+
+    rangeValueFromPointer(input = null, clientX = 0) {
+      const rect = input?.getBoundingClientRect?.();
+      if (!rect || rect.width <= 0) {
+        return null;
+      }
+      const min = Number(input.min);
+      const max = Number(input.max);
+      const step = Number(input.step);
+      const rangeMin = Number.isFinite(min) ? min : 0;
+      const rangeMax = Number.isFinite(max) ? max : 100;
+      if (rangeMax <= rangeMin) {
+        return null;
+      }
+      const ratio = Math.max(0, Math.min(1, (Number(clientX) - rect.left) / rect.width));
+      const rawValue = rangeMin + (rangeMax - rangeMin) * ratio;
+      const steppedValue = Number.isFinite(step) && step > 0
+        ? rangeMin + Math.round((rawValue - rangeMin) / step) * step
+        : rawValue;
+      const clampedValue = Math.max(rangeMin, Math.min(rangeMax, steppedValue));
+      const decimals = Number.isFinite(step) && step > 0 && String(input.step).includes(".")
+        ? Math.min(6, String(input.step).split(".")[1]?.length || 0)
+        : 6;
+      return Number(clampedValue.toFixed(decimals));
+    },
+
+    setRangeValueFromPointer(input = null, event = null) {
+      const nextValue = this.rangeValueFromPointer?.(input, event?.clientX);
+      if (!Number.isFinite(nextValue)) {
+        return false;
+      }
+      const previousValue = input.value;
+      input.value = String(nextValue);
+      if (input.value !== previousValue) {
+        input.dispatchEvent?.(new Event("input", { bubbles: true }));
+      }
+      return true;
+    },
+
+    installTextureBrushRadiusPointerFallback(input = null) {
+      if (!input || input.textureBrushRadiusPointerFallbackInstalled === true) {
+        return false;
+      }
+      input.textureBrushRadiusPointerFallbackInstalled = true;
+      const activePointers = new Set();
+      const finish = (event, canceled = false) => {
+        if (!activePointers.has(event.pointerId)) {
+          return false;
+        }
+        activePointers.delete(event.pointerId);
+        input.releasePointerCapture?.(event.pointerId);
+        if (!canceled) {
+          this.setRangeValueFromPointer?.(input, event);
+          input.dispatchEvent?.(new Event("change", { bubbles: true }));
+        }
+        event.preventDefault?.();
+        event.stopPropagation?.();
+        return true;
+      };
+      input.addEventListener("pointerdown", (event) => {
+        if (event.button > 0 || event.isPrimary === false) {
+          return;
+        }
+        activePointers.add(event.pointerId);
+        input.setPointerCapture?.(event.pointerId);
+        this.setRangeValueFromPointer?.(input, event);
+        event.preventDefault?.();
+        event.stopPropagation?.();
+      });
+      input.addEventListener("pointermove", (event) => {
+        if (!activePointers.has(event.pointerId)) {
+          return;
+        }
+        this.setRangeValueFromPointer?.(input, event);
+        event.preventDefault?.();
+        event.stopPropagation?.();
+      });
+      input.addEventListener("pointerup", (event) => finish(event));
+      input.addEventListener("pointercancel", (event) => finish(event, true));
+      return true;
     },
 
     updateRangeOutputs() {

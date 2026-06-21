@@ -105,7 +105,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.canvas.setPointerCapture?.(event.pointerId);
         const changed = this.beginNeighborStroke(event);
         if (changed > 0) {
-          this.finishPaintChange(changed, "neighbor");
+          this.queueSelectionPaintChange?.(changed, "neighbor");
         }
         return;
       }
@@ -141,6 +141,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       }
       this.updateTextureBrushCursor?.(event);
       this.paintTextureStrokeFromEvent?.(event, { reset: true });
+      this.textureAirbrushEndNeighborPaintStroke?.();
       this.endTexturePaintStrokeUndo?.();
     },
 
@@ -172,7 +173,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         event.preventDefault();
         const changed = this.continueNeighborStroke(event);
         if (changed > 0) {
-          this.finishPaintChange(changed, "neighbor");
+          this.queueSelectionPaintChange?.(changed, "neighbor");
         }
         return;
       }
@@ -222,6 +223,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         this.texturePaintSuppressClickUntil = now + 700;
         this.texturePaintStrokePoint = null;
+        this.textureAirbrushEndNeighborPaintStroke?.();
         this.textureAirbrushResetStrokeSpacing?.();
         this.textureAirbrushResetStrokePressureState?.();
         this.textureAirbrushResetStrokeBrushState?.();
@@ -229,6 +231,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.hideTextureBrushCursor?.();
       }
       this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
+      this.flushSelectionStrokeFinalChange?.();
       this.endSelectionStrokeUndo?.();
       this.endTexturePaintStrokeUndo?.();
     },
@@ -592,6 +595,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (!event || (this.activeTool !== "airbrush" && this.activeTool !== "texture-eraser" && this.activeTool !== "clone")) {
         return false;
       }
+      if (reset === true && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser")) {
+        this.textureAirbrushBeginNeighborPaintStroke?.(event, this.activeTool);
+      }
       const current = {
         clientX: event.clientX,
         clientY: event.clientY
@@ -670,6 +676,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     beginSelectionStrokeUndo(label = "Paint stroke") {
+      this.cancelPendingSelectionPaintVisualFlush?.();
+      this.pendingSelectionPaintChange = null;
+      this.selectionStrokePendingChangeSummary = null;
       this.selectionStrokeUndo = {
         label,
         before: this.captureSelectionSnapshot(),
@@ -687,12 +696,114 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     endSelectionStrokeUndo() {
+      this.flushSelectionStrokeFinalChange?.();
       const stroke = this.selectionStrokeUndo;
       this.selectionStrokeUndo = null;
       if (!stroke?.changed) {
         return false;
       }
       return this.pushSelectionUndoState(stroke.label, stroke.before, this.captureSelectionSnapshot());
+    },
+
+    selectionPaintChangeScheduler() {
+      const host = typeof window !== "undefined" ? window : globalThis;
+      if (typeof host?.requestAnimationFrame === "function") {
+        return {
+          schedule: (callback) => host.requestAnimationFrame(callback),
+          cancel: (handle) => host.cancelAnimationFrame?.(handle)
+        };
+      }
+      if (typeof host?.setTimeout === "function") {
+        return {
+          schedule: (callback) => host.setTimeout(callback, 16),
+          cancel: (handle) => host.clearTimeout?.(handle)
+        };
+      }
+      return {
+        schedule: (callback) => {
+          callback();
+          return null;
+        },
+        cancel: () => {}
+      };
+    },
+
+    cancelPendingSelectionPaintVisualFlush() {
+      if (this.selectionPaintChangeFlushTimer === null || this.selectionPaintChangeFlushTimer === undefined) {
+        return false;
+      }
+      this.selectionPaintChangeScheduler?.().cancel?.(this.selectionPaintChangeFlushTimer);
+      this.selectionPaintChangeFlushTimer = null;
+      return true;
+    },
+
+    scheduleSelectionPaintVisualFlush() {
+      if (this.selectionPaintChangeFlushTimer !== null && this.selectionPaintChangeFlushTimer !== undefined) {
+        return true;
+      }
+      const scheduler = this.selectionPaintChangeScheduler?.();
+      this.selectionPaintChangeFlushTimer = scheduler?.schedule?.(() => {
+        this.selectionPaintChangeFlushTimer = null;
+        this.flushPendingSelectionPaintVisualChange?.();
+      });
+      return true;
+    },
+
+    queueSelectionPaintChange(changed, action) {
+      const amount = Math.max(0, Math.floor(Number(changed) || 0));
+      if (!amount) {
+        return false;
+      }
+      this.markSelectionStrokeChanged?.(action);
+      const pending = this.pendingSelectionPaintChange || {
+        changed: 0,
+        action
+      };
+      pending.changed += amount;
+      pending.action = action;
+      this.pendingSelectionPaintChange = pending;
+
+      const summary = this.selectionStrokePendingChangeSummary || {
+        changed: 0,
+        action
+      };
+      summary.changed += amount;
+      summary.action = action;
+      this.selectionStrokePendingChangeSummary = summary;
+      this.scheduleSelectionPaintVisualFlush?.();
+      return true;
+    },
+
+    flushPendingSelectionPaintVisualChange() {
+      const pending = this.pendingSelectionPaintChange;
+      this.pendingSelectionPaintChange = null;
+      if (!pending?.changed) {
+        return false;
+      }
+      this.finishPaintChange(pending.changed, pending.action, {
+        syncPatch: false,
+        updateCounts: false,
+        updateMoveGizmo: false,
+        updateCloneRegion: false,
+        updateAllVertexMarkers: false,
+        updateStatus: false
+      });
+      return true;
+    },
+
+    flushSelectionStrokeFinalChange() {
+      this.cancelPendingSelectionPaintVisualFlush?.();
+      this.flushPendingSelectionPaintVisualChange?.();
+      const summary = this.selectionStrokePendingChangeSummary;
+      this.selectionStrokePendingChangeSummary = null;
+      if (!summary?.changed) {
+        return false;
+      }
+      this.finishPaintChange(summary.changed, summary.action, {
+        updateColors: false,
+        updateMarkers: false
+      });
+      return true;
     },
 
     restoreSelectionSnapshot(snapshot = []) {
@@ -962,6 +1073,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     beginTexturePaintStrokeUndo(label = "Texture paint") {
       this.texturePaintStrokeUndo = {
         label,
+        undoStackInsertIndex: Array.isArray(this.undoStack) ? this.undoStack.length : null,
         before: [],
         touched: new Map(),
         changed: false
@@ -1094,6 +1206,99 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return false;
     },
 
+    texturePaintImageDataFromGpuSnapshot(snapshot = null, targetEntry = null) {
+      if (!snapshot) {
+        return null;
+      }
+      if (snapshot.clear === true && typeof ImageData !== "undefined") {
+        const width = Math.max(1, Math.round(snapshot.width || targetEntry?.width || targetEntry?.target?.width || 1));
+        const height = Math.max(1, Math.round(snapshot.height || targetEntry?.height || targetEntry?.target?.height || 1));
+        return new ImageData(width, height);
+      }
+      if (typeof this.textureAirbrushCanvasFromRenderTarget !== "function") {
+        return null;
+      }
+      const editable = this.textureAirbrushCanvasFromRenderTarget({
+        target: snapshot,
+        width: targetEntry?.width || snapshot?.width,
+        height: targetEntry?.height || snapshot?.height
+      });
+      if (!editable?.canvas || !editable.context) {
+        return null;
+      }
+      return editable.context.getImageData(0, 0, editable.canvas.width, editable.canvas.height);
+    },
+
+    texturePaintCanvasUndoTargetFromGpuEntry(entry = null) {
+      if (!entry?.material) {
+        return null;
+      }
+      const layer = entry.targetEntry?.layer || null;
+      if (entry.targetEntry?.layerMode === true && layer?.canvas && layer.context) {
+        return {
+          canvas: layer.canvas,
+          context: layer.context,
+          texture: layer.gpuLayerTexture || entry.material.userData?.clonePaintTexture || entry.material.map || null,
+          layer,
+          layerStack: entry.targetEntry.layerStack || entry.material.userData?.texturePaintLayerStack || null
+        };
+      }
+      const userData = entry.material.userData || {};
+      if (!userData.clonePaintCanvas || !userData.clonePaintContext) {
+        return null;
+      }
+      return {
+        canvas: userData.clonePaintCanvas,
+        context: userData.clonePaintContext,
+        texture: userData.clonePaintTexture || entry.material.map || null,
+        layer: null,
+        layerStack: userData.texturePaintLayerStack || null
+      };
+    },
+
+    convertTexturePaintGpuUndoEntryToCanvas(entry = null, options = {}) {
+      if (entry?.type !== "gpu") {
+        return false;
+      }
+      const target = this.texturePaintCanvasUndoTargetFromGpuEntry?.(entry);
+      if (!target?.canvas || !target.context) {
+        return false;
+      }
+      const before = this.texturePaintImageDataFromGpuSnapshot?.(entry.before, entry.targetEntry);
+      if (!before) {
+        return false;
+      }
+      let after = null;
+      if (options.includeAfter !== false && entry.after) {
+        after = this.texturePaintImageDataFromGpuSnapshot?.(entry.after, entry.targetEntry);
+        if (!after) {
+          return false;
+        }
+      }
+      if (typeof this.releaseTexturePaintSnapshot === "function") {
+        this.releaseTexturePaintSnapshot(entry.before);
+      } else {
+        entry.before?.dispose?.();
+      }
+      if (entry.after) {
+        if (typeof this.releaseTexturePaintSnapshot === "function") {
+          this.releaseTexturePaintSnapshot(entry.after);
+        } else {
+          entry.after?.dispose?.();
+        }
+      }
+      entry.type = "canvas";
+      entry.canvas = target.canvas;
+      entry.context = target.context;
+      entry.texture = target.texture;
+      entry.layer = target.layer;
+      entry.layerStack = target.layerStack;
+      entry.before = before;
+      entry.after = after;
+      delete entry.targetEntry;
+      return true;
+    },
+
     disposeTexturePaintSnapshotEntry(entry) {
       this.releaseTexturePaintSnapshot?.(entry?.before);
       this.releaseTexturePaintSnapshot?.(entry?.after);
@@ -1112,21 +1317,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       }
       const prepared = [];
       for (const entry of gpuEntries) {
-        let before = null;
-        if (entry.before?.clear === true && typeof ImageData !== "undefined") {
-          const width = Math.max(1, Math.round(entry.before.width || entry.targetEntry?.width || 1));
-          const height = Math.max(1, Math.round(entry.before.height || entry.targetEntry?.height || 1));
-          before = new ImageData(width, height);
-        } else {
-          const beforeEditable = this.textureAirbrushCanvasFromRenderTarget({
-            target: entry.before,
-            width: entry.targetEntry?.width || entry.before?.width,
-            height: entry.targetEntry?.height || entry.before?.height
-          });
-          if (!beforeEditable?.canvas || !beforeEditable.context) {
-            return false;
-          }
-          before = beforeEditable.context.getImageData(0, 0, beforeEditable.canvas.width, beforeEditable.canvas.height);
+        const before = this.texturePaintImageDataFromGpuSnapshot?.(entry.before, entry.targetEntry);
+        if (!before) {
+          return false;
         }
         prepared.push({
           entry,
@@ -1140,21 +1333,86 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       }
 
       for (const { entry, before } of prepared) {
-        const userData = entry.material?.userData || {};
-        if (!userData.clonePaintCanvas || !userData.clonePaintContext) {
+        const target = this.texturePaintCanvasUndoTargetFromGpuEntry?.(entry);
+        if (!target?.canvas || !target.context) {
           continue;
         }
-        entry.before?.dispose?.();
-        entry.after?.dispose?.();
+        if (typeof this.releaseTexturePaintSnapshot === "function") {
+          this.releaseTexturePaintSnapshot(entry.before);
+        } else {
+          entry.before?.dispose?.();
+        }
+        if (entry.after) {
+          if (typeof this.releaseTexturePaintSnapshot === "function") {
+            this.releaseTexturePaintSnapshot(entry.after);
+          } else {
+            entry.after?.dispose?.();
+          }
+        }
         entry.type = "canvas";
-        entry.canvas = userData.clonePaintCanvas;
-        entry.context = userData.clonePaintContext;
-        entry.texture = userData.clonePaintTexture || entry.material?.map || null;
+        entry.canvas = target.canvas;
+        entry.context = target.context;
+        entry.texture = target.texture;
+        entry.layer = target.layer;
+        entry.layerStack = target.layerStack;
         entry.before = before;
         entry.after = null;
         delete entry.targetEntry;
       }
       return true;
+    },
+
+    texturePaintPendingStrokeUndoContexts() {
+      const strokes = new Set();
+      const add = (stroke) => {
+        if (stroke) {
+          strokes.add(stroke);
+        }
+      };
+      add(this.texturePaintStrokeUndo);
+      add(this.texturePaintStrokeUndoContext);
+      for (const stroke of this.texturePaintPendingStrokeUndoFinalizations || []) {
+        add(stroke);
+      }
+      for (const segment of this.textureAirbrushScreenStrokeQueue || []) {
+        add(segment?.strokeUndo);
+      }
+      for (const batch of this.textureAirbrushPendingScreenStrokeBatches || []) {
+        add(batch?.strokeUndo);
+      }
+      return [...strokes];
+    },
+
+    prepareTexturePaintPendingGpuUndoEntriesForCanvas() {
+      let prepared = false;
+      for (const stroke of this.texturePaintPendingStrokeUndoContexts?.() || []) {
+        if (this.prepareTexturePaintGpuUndoEntriesForCanvas?.(stroke)) {
+          prepared = true;
+        }
+      }
+      return prepared;
+    },
+
+    prepareTexturePaintUndoStackGpuEntriesForCanvas(options = {}) {
+      let prepared = false;
+      const material = options.material || null;
+      for (const state of this.undoStack || []) {
+        if (state?.kind !== "texture-paint") {
+          continue;
+        }
+        for (const entry of state.entries || []) {
+          if (entry?.type !== "gpu") {
+            continue;
+          }
+          if (material && entry.material !== material) {
+            continue;
+          }
+          if (this.convertTexturePaintGpuUndoEntryToCanvas?.(entry, { includeAfter: true })) {
+            prepared = true;
+          }
+        }
+      }
+      return prepared;
     },
 
     finalizeTexturePaintStrokeUndo(stroke = null) {
@@ -1171,11 +1429,15 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         }
         return false;
       }
-      this.undoStack.push({
+      const state = {
         kind: "texture-paint",
         label: stroke.label,
         entries
-      });
+      };
+      const insertIndex = Number.isInteger(stroke.undoStackInsertIndex)
+        ? Math.max(0, Math.min(this.undoStack.length, stroke.undoStackInsertIndex))
+        : this.undoStack.length;
+      this.undoStack.splice(insertIndex, 0, state);
       if (this.undoStack.length > this.maxUndoSteps) {
         this.disposeFastHistoryState?.(this.undoStack.shift());
       }
@@ -1198,6 +1460,11 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         return false;
       }
       this.texturePaintStrokeUndo = null;
+      this.texturePaintPendingStrokeUndoFinalizations ||= new Set();
+      this.texturePaintPendingStrokeUndoFinalizations.add(stroke);
+      const forgetPendingStrokeUndo = () => {
+        this.texturePaintPendingStrokeUndoFinalizations?.delete(stroke);
+      };
       const finalizeAfterPendingPaint = () => {
         if (this.texturePaintNeedsExactFirstPaintDisplayRefresh === true) {
           this.flushTexturePaintExactFirstPaintDisplayRefresh?.()
@@ -1212,15 +1479,26 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           && typeof this.flushTextureAirbrushPendingWebGpuPaints === "function"
         ) {
           this.flushTextureAirbrushPendingWebGpuPaints().finally(() => {
-            this.finalizeTexturePaintStrokeUndo?.(stroke);
+            try {
+              const finalized = this.finalizeTexturePaintStrokeUndo?.(stroke);
+              if (finalized) {
+                this.scheduleTextureAirbrushPostStrokePrewarm?.(stroke);
+              }
+            } finally {
+              forgetPendingStrokeUndo();
+            }
           });
           return false;
         }
-        const finalized = this.finalizeTexturePaintStrokeUndo(stroke);
-        if (finalized) {
-          this.scheduleTextureAirbrushPostStrokePrewarm?.(stroke);
+        try {
+          const finalized = this.finalizeTexturePaintStrokeUndo(stroke);
+          if (finalized) {
+            this.scheduleTextureAirbrushPostStrokePrewarm?.(stroke);
+          }
+          return finalized;
+        } finally {
+          forgetPendingStrokeUndo();
         }
-        return finalized;
       };
       if (screenFlush && typeof screenFlush.then === "function") {
         screenFlush.finally(() => {
@@ -1249,6 +1527,17 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           if (entry.layer) {
             this.texturePaintUpdateLayerEmptyState?.(entry.layer);
             this.texturePaintCompositeMaterialLayers?.(entry.material);
+            restoredLayerPanel = true;
+          } else if (entry.material?.userData?.texturePaintLayerStack) {
+            this.texturePaintSyncBackgroundFromEditable?.(entry.material, {
+              canvas: entry.canvas,
+              context: entry.context,
+              texture: entry.texture
+            }, { renderPanel: false });
+            this.texturePaintCompositeMaterialLayers?.(entry.material, {
+              skipGpuFlush: true,
+              preferCpuDisplay: true
+            });
             restoredLayerPanel = true;
           }
           this.textureAirbrushInvalidateWebGpuCache?.(entry.texture || entry.canvas);
@@ -2075,7 +2364,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (this.activeTool === "deselect" || this.activeTool === "erase") {
         const screenSpaceChanged = this.paintScreenSpaceVertices(event, this.activeTool);
         if (screenSpaceChanged > 0) {
-          this.finishPaintChange(screenSpaceChanged, this.activeTool);
+          this.queueSelectionPaintChange?.(screenSpaceChanged, this.activeTool);
           return;
         }
       }
@@ -2084,7 +2373,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (shouldPaintThrough) {
         const throughChanged = this.paintScreenSpaceVertices(event, this.activeTool, { includeAllVertices: true });
         if (throughChanged > 0) {
-          this.finishPaintChange(throughChanged, this.activeTool);
+          this.queueSelectionPaintChange?.(throughChanged, this.activeTool);
           return;
         }
       }
@@ -2105,6 +2394,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           gpu: !layerMode || layerGpuPaint,
           ...(layerMode && !layerGpuPaint ? { resolvedBackend: { backend: "cpu", webGpuStatus: "layer-paint" } } : {}),
           strokeStart: options.strokeStart || null,
+          neighborPaintSeed: this.textureAirbrushActiveNeighborPaintSeed || null,
           erase: this.activeTool === "texture-eraser",
           ...macroBrushOptions
         }) || 0;
@@ -2157,7 +2447,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
 
       const changed = this.paintVerticesNear(record, hit, this.activeTool);
       if (changed > 0) {
-        this.finishPaintChange(changed, this.activeTool);
+        this.queueSelectionPaintChange?.(changed, this.activeTool);
       }
     },
 
@@ -2191,7 +2481,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       }
     },
 
-    finishPaintChange(changed, action) {
+    finishPaintChange(changed, action, options = {}) {
       this.markSelectionStrokeChanged?.(action);
       if (action === "erase" && this.viewMode === "edit") {
         for (const record of this.paintRecords) {
@@ -2199,17 +2489,32 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           this.applyDeletedVertices?.(record);
         }
       }
-      for (const record of this.paintRecords) {
-        this.updateRecordColors(record);
+      if (options.updateColors !== false) {
+        for (const record of this.paintRecords) {
+          this.updateRecordColors(record);
+        }
       }
-      this.syncPatchJson();
-      this.updateCounts();
-      this.updateSelectionMarkers();
-      if (this.viewMode === "edit") {
+      if (options.syncPatch !== false) {
+        this.syncPatchJson();
+      }
+      if (options.updateCounts !== false) {
+        this.updateCounts();
+      }
+      if (options.updateMarkers !== false) {
+        this.updateSelectionMarkers();
+      }
+      if (options.updateAllVertexMarkers !== false && this.viewMode === "edit") {
         this.updateAllVertexMarkers();
       }
-      this.updateMoveGizmo();
-      const refinedRegionCount = this.refreshClonePaintTargetFromSelection?.({ status: false }) || 0;
+      if (options.updateMoveGizmo !== false) {
+        this.updateMoveGizmo();
+      }
+      const refinedRegionCount = options.updateCloneRegion === false
+        ? 0
+        : this.refreshClonePaintTargetFromSelection?.({ status: false }) || 0;
+      if (options.updateStatus === false) {
+        return;
+      }
       const actionLabels = {
         paint: "Selected",
         neighbor: "Neighbor selected",

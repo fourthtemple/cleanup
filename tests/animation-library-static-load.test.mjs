@@ -3,8 +3,18 @@ import test from "node:test";
 import { installActorAndModelMethods } from "../src/weight-editor/actors-and-models.js";
 
 class TestEditor {}
+class SaveEditor {}
 
 installActorAndModelMethods(TestEditor, {});
+
+let savedCleanupRecord = null;
+installActorAndModelMethods(SaveEditor, {
+  writeAnimationLibraryCleanupFile: async (folder, fileName, text) => {
+    savedCleanupRecord = { folder, fileName, text };
+    return true;
+  },
+  writeJsonFile: async () => "download"
+});
 
 function withFetchGuard(t) {
   const originalFetch = globalThis.fetch;
@@ -137,8 +147,13 @@ test("browser-library cleanup JSON loads directly from its stored blob", async (
   withFetchGuard(t);
   const editor = editorForStaticLibraryLoad();
   editor.weightJson = { value: "" };
+  const order = [];
   editor.applyPatchJson = ({ status }) => {
+    order.push("apply");
     editor.patchAppliedWithStatus = status;
+    editor.pendingSerializedTexturePaintsApply = Promise.resolve().then(() => {
+      order.push("layers");
+    });
   };
   editor.animationLibraryCleanupTargetForEntry = async () => ({
     folder: "test",
@@ -151,4 +166,40 @@ test("browser-library cleanup JSON loads directly from its stored blob", async (
   assert.equal(loaded, true);
   assert.deepEqual(JSON.parse(editor.weightJson.value), { assignments: [{ bone: "Hips" }] });
   assert.equal(editor.patchAppliedWithStatus, false);
+  assert.deepEqual(order, ["apply", "layers"]);
+});
+
+test("saving a cleanup waits for restored layers and flushes brush work before serializing", async () => {
+  savedCleanupRecord = null;
+  const editor = new SaveEditor();
+  const order = [];
+  const patch = { texturePaintLayers: [{ layers: [{ name: "Paint 1" }] }] };
+  editor.animationLibraryCleanupSaveTarget = () => ({
+    folder: "cat",
+    fileName: "walk-weight-patch.json"
+  });
+  editor.pendingSerializedTexturePaintsApply = Promise.resolve().then(() => {
+    order.push("restore");
+  });
+  editor.flushTexturePaintPendingBrushWorkBeforeLayerMutation = () => {
+    order.push("brush");
+  };
+  editor.flushTexturePaintLayerGpuTargetsToCanvases = () => {
+    order.push("gpu");
+  };
+  editor.syncPatchJson = () => {
+    order.push("sync");
+    return patch;
+  };
+  editor.serializePatchText = (value) => `${JSON.stringify(value, null, 2)}\n`;
+  editor.refreshAnimationLibrary = async () => {};
+  editor.setStatus = (message) => {
+    editor.status = message;
+  };
+
+  assert.equal(await editor.savePatchFile(), true);
+  assert.deepEqual(order, ["restore", "brush", "gpu", "sync"]);
+  assert.equal(savedCleanupRecord.folder, "cat");
+  assert.equal(savedCleanupRecord.fileName, "walk-weight-patch.json");
+  assert.deepEqual(JSON.parse(savedCleanupRecord.text), patch);
 });

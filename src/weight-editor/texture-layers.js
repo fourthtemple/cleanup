@@ -106,6 +106,7 @@ function resetLayerGpuDisplayCache(targetEntry = null) {
   delete targetEntry.liveCompositeLayerCount;
   delete targetEntry.liveCompositeLayerIndex;
   delete targetEntry.liveCompositeLayerOpacity;
+  delete targetEntry.liveCompositeLayerBlendMode;
   delete targetEntry.liveCompositeUnderlayKey;
   delete targetEntry.liveCompositeLayerMutationSerial;
   delete targetEntry.liveShaderComposite;
@@ -228,8 +229,33 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       return cleared;
     },
 
+    flushTexturePaintPendingBrushWorkBeforeLayerMutation(options = {}) {
+      const activeStrokeUndo = this.texturePaintStrokeUndo || null;
+      if (activeStrokeUndo && this.texturePaintEndingStrokeForLayerMutation !== true) {
+        this.texturePaintEndingStrokeForLayerMutation = true;
+        try {
+          this.endTexturePaintStrokeUndo?.();
+        } finally {
+          this.texturePaintEndingStrokeForLayerMutation = false;
+        }
+      }
+      this.textureAirbrushAttachStrokeUndoToPendingScreenWork?.(this.texturePaintStrokeUndo || activeStrokeUndo);
+      this.flushTextureAirbrushScreenStroke?.();
+      this.prepareTexturePaintPendingGpuUndoEntriesForCanvas?.();
+      this.flushTextureAirbrushGpuTargetsToCanvases?.({
+        mutatedOnly: options.mutatedOnlyBackgroundTargets === true
+      });
+      this.prepareTexturePaintUndoStackGpuEntriesForCanvas?.({
+        material: options.material || null
+      });
+      return true;
+    },
+
     prepareTexturePaintLayerMutation(options = {}) {
       this.cancelTextureAirbrushDeferredBroadLayerPrewarm?.();
+      if (options.flushPendingBrushWork !== false) {
+        this.flushTexturePaintPendingBrushWorkBeforeLayerMutation?.(options);
+      }
       this.bumpTexturePaintLayerMutationSerial();
       this.clearPendingTexturePaintLayerBrushWork();
       this.textureAirbrushResetLiveProjectionFrame?.();
@@ -243,10 +269,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
 
     prepareTexturePaintLayerTargetChange(options = {}) {
       this.cancelTextureAirbrushDeferredBroadLayerPrewarm?.();
-      this.flushTextureAirbrushScreenStroke?.();
-      this.flushTextureAirbrushGpuTargetsToCanvases?.({
-        mutatedOnly: options.mutatedOnlyBackgroundTargets === true
-      });
+      this.flushTexturePaintPendingBrushWorkBeforeLayerMutation?.(options);
       this.bumpTexturePaintLayerMutationSerial();
       this.clearPendingTexturePaintLayerBrushWork();
       this.textureAirbrushResetLiveProjectionFrame?.();
@@ -480,9 +503,153 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       return canvas;
     },
 
+    captureTexturePaintLayerHistorySnapshot(material = null) {
+      const stack = material?.userData?.texturePaintLayerStack || null;
+      if (!material || !stack?.baseCanvas || !stack.baseContext) {
+        return null;
+      }
+      const baseCanvas = this.copyTexturePaintCanvas(stack.baseCanvas);
+      if (!baseCanvas) {
+        return null;
+      }
+      const layers = [];
+      for (const layer of stack.layers || []) {
+        const canvas = this.copyTexturePaintCanvas(layer?.canvas);
+        if (!canvas) {
+          return null;
+        }
+        layers.push({
+          id: layer.id,
+          name: layer.name,
+          visible: layer.visible !== false,
+          opacity: clamp01(layer.opacity, 1),
+          blendMode: this.texturePaintLayerBlendMode?.(layer) || "normal",
+          isEmpty: layerEffectivelyEmpty(layer),
+          autoCreated: layer.autoCreated === true,
+          canvas
+        });
+      }
+      return {
+        material,
+        activeLayerId: stack.activeLayerId || "",
+        selectedLayerIds: Array.isArray(stack.selectedLayerIds) ? [...stack.selectedLayerIds] : [],
+        selectionAnchorLayerId: stack.selectionAnchorLayerId || "",
+        width: stack.width || baseCanvas.width,
+        height: stack.height || baseCanvas.height,
+        baseCanvas,
+        layers
+      };
+    },
+
+    restoreTexturePaintLayerHistorySnapshot(snapshot = null) {
+      const material = snapshot?.material || null;
+      if (!material?.userData || !snapshot?.baseCanvas) {
+        return false;
+      }
+      this.cancelTexturePaintLayerDisplayComposite?.(material);
+      this.discardTexturePaintMaterialAirbrushGpuTarget?.(material);
+      this.discardTexturePaintMaterialGpuComposite?.(material);
+      this.texturePaintDisableLiveLayerShaderComposite?.(material);
+      const stack = material.userData.texturePaintLayerStack || {
+        activeLayerId: "",
+        selectedLayerIds: [],
+        selectionAnchorLayerId: "",
+        layers: []
+      };
+      for (const layer of stack.layers || []) {
+        this.disposeTexturePaintLayerGpuState?.(layer);
+      }
+      const baseCanvas = this.copyTexturePaintCanvas(snapshot.baseCanvas);
+      const baseContext = canvasContext2d(baseCanvas);
+      if (!baseCanvas || !baseContext) {
+        return false;
+      }
+      stack.baseCanvas = baseCanvas;
+      stack.baseContext = baseContext;
+      stack.width = snapshot.width || baseCanvas.width;
+      stack.height = snapshot.height || baseCanvas.height;
+      stack.layers = [];
+      material.userData.texturePaintLayerStack = stack;
+      for (const layerSnapshot of snapshot.layers || []) {
+        const layer = this.texturePaintNewLayer(stack, {
+          id: layerSnapshot.id,
+          name: layerSnapshot.name || this.texturePaintLayerName(stack),
+          visible: layerSnapshot.visible !== false,
+          opacity: layerSnapshot.opacity,
+          blendMode: layerSnapshot.blendMode,
+          autoCreated: layerSnapshot.autoCreated === true,
+          isEmpty: layerSnapshot.isEmpty === true
+        });
+        if (!layer) {
+          continue;
+        }
+        layer.context.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+        layer.context.drawImage(layerSnapshot.canvas, 0, 0, layer.canvas.width, layer.canvas.height);
+        layer.isEmpty = layerSnapshot.isEmpty === true || layerCanvasIsEmpty(layer.canvas);
+        stack.layers.push(layer);
+      }
+      const activeLayerId = snapshot.activeLayerId || "";
+      if (activeLayerId && stack.layers.some((layer) => layer.id === activeLayerId)) {
+        stack.activeLayerId = activeLayerId;
+        const validIds = new Set(stack.layers.map((layer) => layer.id));
+        stack.selectedLayerIds = (snapshot.selectedLayerIds || []).filter((id) => validIds.has(id));
+        if (!stack.selectedLayerIds.length) {
+          stack.selectedLayerIds = [activeLayerId];
+        }
+        stack.selectionAnchorLayerId = validIds.has(snapshot.selectionAnchorLayerId)
+          ? snapshot.selectionAnchorLayerId
+          : activeLayerId;
+        const activeLayer = stack.layers.find((layer) => layer.id === activeLayerId) || null;
+        this.rememberTexturePaintLayerSelection?.(stack, activeLayer);
+      } else {
+        this.texturePaintSetBackgroundSelection?.(stack);
+        this.rememberTexturePaintBackgroundSelection?.();
+      }
+      this.texturePaintActiveMaterial = material;
+      this.texturePaintCompositeMaterialLayers?.(material, {
+        skipGpuFlush: true,
+        preferCpuDisplay: true
+      });
+      this.bumpTexturePaintLayerMutationSerial?.();
+      this.textureAirbrushResetLiveProjectionFrame?.();
+      this.renderTexturePaintLayerPanel?.();
+      return true;
+    },
+
+    pushTexturePaintLayerUndoState(label = "Layer edit", before = null, after = null, options = {}) {
+      if (!Array.isArray(this.undoStack) || !before || !after) {
+        return false;
+      }
+      this.undoStack.push({
+        kind: "texture-layer",
+        label,
+        before,
+        after
+      });
+      if (this.undoStack.length > this.maxUndoSteps) {
+        this.disposeFastHistoryState?.(this.undoStack.shift());
+      }
+      if (!options.preserveRedo) {
+        for (const redoState of this.redoStack || []) {
+          this.disposeFastHistoryState?.(redoState);
+        }
+        this.redoStack = [];
+      }
+      this.updateUndoButton?.();
+      return true;
+    },
+
     texturePaintLayerName(stack = null) {
       const nextNumber = (stack?.layers?.length || 0) + 1;
       return `Paint ${nextNumber}`;
+    },
+
+    normalizeTexturePaintLayerName(name = "", fallback = "Paint") {
+      const normalized = String(name || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 64);
+      return normalized || fallback;
     },
 
     texturePaintBackgroundLayerName() {
@@ -1394,6 +1561,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         this.setStatus?.("Load a textured model before adding paint layers");
         return false;
       }
+      this.flushTexturePaintPendingBrushWorkBeforeLayerMutation?.();
       this.flushTextureAirbrushGpuTargetsToCanvases?.();
       const editable = material.userData?.clonePaintCanvas && material.userData?.clonePaintContext
         ? {
@@ -1403,6 +1571,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
           }
         : this.editableClonePaintTexture?.(material);
       const stack = this.texturePaintLayerStackForMaterial(material, editable, { create: true });
+      const undoBefore = this.captureTexturePaintLayerHistorySnapshot?.(material);
       const reusableLayer = this.texturePaintReusableAutoLayer?.(stack);
       if (reusableLayer) {
         this.prepareTexturePaintLayerTargetChange?.();
@@ -1419,6 +1588,11 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         this.prewarmTexturePaintActiveLayerForAction?.(material);
         this.renderTexturePaintLayerPanel?.();
         this.setStatus?.(`Added ${reusableLayer.name || "Paint 1"}`);
+        this.pushTexturePaintLayerUndoState?.(
+          `Add ${reusableLayer.name || "Paint 1"}`,
+          undoBefore,
+          this.captureTexturePaintLayerHistorySnapshot?.(material)
+        );
         return true;
       }
 
@@ -1444,11 +1618,15 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       );
       this.renderTexturePaintLayerPanel?.();
       this.setStatus?.(`Added ${layer.name}`);
+      this.pushTexturePaintLayerUndoState?.(
+        `Add ${layer.name}`,
+        undoBefore,
+        this.captureTexturePaintLayerHistorySnapshot?.(material)
+      );
       return true;
     },
 
     deleteActiveTexturePaintLayer() {
-      this.prepareTexturePaintLayerMutation?.();
       const material = this.texturePaintActiveMaterial || this.texturePaintFirstLayerMaterial?.();
       const stack = material?.userData?.texturePaintLayerStack;
       if (!material || !stack?.layers?.length) {
@@ -1457,6 +1635,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       if (!this.texturePaintActivePaintLayerForStack?.(stack, { fallback: false })?.layer) {
         return false;
       }
+      this.flushTexturePaintPendingBrushWorkBeforeLayerMutation?.();
+      const undoBefore = this.captureTexturePaintLayerHistorySnapshot?.(material);
+      this.prepareTexturePaintLayerMutation?.();
       const selectedIds = this.texturePaintSelectedLayerIds(stack);
       const deleteIds = selectedIds.length > 1 ? new Set(selectedIds) : new Set([stack.activeLayerId]);
       const deleteIndex = stack.layers.findIndex((layer) => deleteIds.has(layer.id));
@@ -1488,11 +1669,15 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       this.setStatus?.(removedLayers.length > 1
         ? `Deleted ${removedLayers.length} layers`
         : `Deleted ${removedLayers[0]?.name || "layer"}`);
+      this.pushTexturePaintLayerUndoState?.(
+        removedLayers.length > 1 ? `Delete ${removedLayers.length} layers` : `Delete ${removedLayers[0]?.name || "layer"}`,
+        undoBefore,
+        this.captureTexturePaintLayerHistorySnapshot?.(material)
+      );
       return true;
     },
 
     duplicateActiveTexturePaintLayer() {
-      this.prepareTexturePaintLayerMutation?.();
       const material = this.texturePaintActiveMaterial || this.texturePaintFirstLayerMaterial?.();
       const stack = material?.userData?.texturePaintLayerStack;
       if (!material || !stack?.layers?.length) {
@@ -1506,6 +1691,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       if (!source?.canvas) {
         return false;
       }
+      this.flushTexturePaintPendingBrushWorkBeforeLayerMutation?.();
+      const undoBefore = this.captureTexturePaintLayerHistorySnapshot?.(material);
+      this.prepareTexturePaintLayerMutation?.();
       const layer = this.texturePaintNewLayer(stack, {
         name: `${source.name || "Layer"} copy`,
         visible: source.visible !== false,
@@ -1524,11 +1712,15 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       this.prewarmTexturePaintActiveLayerForAction?.(material);
       this.renderTexturePaintLayerPanel?.();
       this.setStatus?.(`Duplicated ${source.name || "layer"}`);
+      this.pushTexturePaintLayerUndoState?.(
+        `Duplicate ${source.name || "layer"}`,
+        undoBefore,
+        this.captureTexturePaintLayerHistorySnapshot?.(material)
+      );
       return true;
     },
 
     moveActiveTexturePaintLayer(direction = 0) {
-      this.prepareTexturePaintLayerMutation?.();
       const material = this.texturePaintActiveMaterial || this.texturePaintFirstLayerMaterial?.();
       const stack = material?.userData?.texturePaintLayerStack;
       const delta = Math.sign(Number(direction) || 0);
@@ -1546,6 +1738,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       if (nextIndex < 0 || nextIndex >= stack.layers.length) {
         return false;
       }
+      this.flushTexturePaintPendingBrushWorkBeforeLayerMutation?.();
+      const undoBefore = this.captureTexturePaintLayerHistorySnapshot?.(material);
+      this.prepareTexturePaintLayerMutation?.();
       const [layer] = stack.layers.splice(index, 1);
       stack.layers.splice(nextIndex, 0, layer);
       stack.activeLayerId = layer.id;
@@ -1554,11 +1749,15 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       this.texturePaintCompositeMaterialLayers(material);
       this.prewarmTexturePaintActiveLayerForAction?.(material);
       this.renderTexturePaintLayerPanel?.();
+      this.pushTexturePaintLayerUndoState?.(
+        "Move paint layer",
+        undoBefore,
+        this.captureTexturePaintLayerHistorySnapshot?.(material)
+      );
       return true;
     },
 
     mergeSelectedTexturePaintLayers() {
-      this.prepareTexturePaintLayerMutation?.();
       const material = this.texturePaintActiveMaterial || this.texturePaintFirstLayerMaterial?.();
       const stack = material?.userData?.texturePaintLayerStack;
       if (!material || !stack?.layers?.length) {
@@ -1572,6 +1771,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         this.setStatus?.("Select two or more paint layers to merge");
         return false;
       }
+      this.flushTexturePaintPendingBrushWorkBeforeLayerMutation?.();
+      const undoBefore = this.captureTexturePaintLayerHistorySnapshot?.(material);
+      this.prepareTexturePaintLayerMutation?.();
       const mergedLayer = this.texturePaintNewLayer(stack, {
         name: "Merged Paint",
         visible: selectedEntries.some((entry) => entry.layer.visible !== false),
@@ -1601,6 +1803,11 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       this.prewarmTexturePaintActiveLayerForAction?.(material);
       this.renderTexturePaintLayerPanel?.();
       this.setStatus?.(`Merged ${selectedEntries.length} layers`);
+      this.pushTexturePaintLayerUndoState?.(
+        `Merge ${selectedEntries.length} layers`,
+        undoBefore,
+        this.captureTexturePaintLayerHistorySnapshot?.(material)
+      );
       return true;
     },
 
@@ -1763,6 +1970,29 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       }
       this.scheduleTexturePaintLayerDisplayPrewarm?.(activeEntry.material);
       this.scheduleTexturePaintLayerPanelRender?.(80) || this.renderTexturePaintLayerPanel?.();
+      return true;
+    },
+
+    renameTexturePaintLayer(layerId, name) {
+      const entries = this.texturePaintLayerEntriesForId?.(layerId) || [];
+      const activeEntry = entries.find((entry) => entry.material === this.texturePaintActiveMaterial) || entries[0] || null;
+      if (!activeEntry?.layer) {
+        return false;
+      }
+      const previousName = activeEntry.layer.name || this.texturePaintLayerName(activeEntry.stack);
+      const nextName = this.normalizeTexturePaintLayerName?.(name, previousName) || previousName;
+      const changedEntries = entries.filter(({ layer }) => layer.name !== nextName);
+      if (!changedEntries.length) {
+        this.renderTexturePaintLayerPanel?.();
+        return false;
+      }
+      for (const { layer } of changedEntries) {
+        layer.name = nextName;
+      }
+      if (activeEntry.stack?.activeLayerId === activeEntry.layer.id) {
+        this.rememberTexturePaintLayerSelection?.(activeEntry.stack, activeEntry.layer);
+      }
+      this.renderTexturePaintLayerPanel?.();
       return true;
     },
 
@@ -2010,11 +2240,16 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         thumbnailButton.setAttribute("aria-label", thumbnailButton.title);
         appendThumbnail(thumbnailButton, layer.canvas);
 
-        const name = document.createElement("button");
-        name.type = "button";
+        const name = document.createElement("input");
+        name.type = "text";
         name.className = "texture-layer-name";
-        name.dataset.layerSelect = layer.id;
-        name.textContent = layer.name || "Layer";
+        name.dataset.layerRename = layer.id;
+        name.value = layer.name || "Layer";
+        name.maxLength = 64;
+        name.spellcheck = false;
+        name.autocomplete = "off";
+        name.title = "Rename layer";
+        name.setAttribute("aria-label", `Rename ${layer.name || "layer"}`);
 
         const opacity = document.createElement("span");
         opacity.className = "texture-layer-opacity-label";

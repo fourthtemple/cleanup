@@ -1,6 +1,7 @@
-export { installTextureAirbrushMethods } from "./install.js?v=layer-live-baked-display-20260621a";
+export { installTextureAirbrushMethods } from "./install.js?v=layer-undo-fix-20260621a";
 export { installTextureAirbrushBrushSettingsMethods } from "./brush-settings.js";
 export { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
+export { installTextureAirbrushNeighborPaintMethods } from "./neighbor.js?v=layer-undo-fix-20260621a";
 export { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js";
 export { installTextureAirbrushTexturePickingMethods } from "./texture-picking.js";
 export {
@@ -14,15 +15,15 @@ export {
   airbrushHaloRadius
 } from "./math.js";
 export { installTextureAirbrushPointerMethods } from "./pointer.js?v=layer-hover-preserve-display-20260621a";
-export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=stroke-opacity-cap-20260620c";
+export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=layer-undo-fix-20260621a";
 export { installTextureAirbrushProjectedRegionMethods } from "./projected-region.js";
 export { installTextureAirbrushNearBrushMethods } from "./uv-near.js";
 export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=stroke-opacity-cap-20260620c";
 export { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 export { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=stroke-opacity-photoshop-cap-20260620a";
-export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=layer-live-baked-display-20260621a";
-export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=layer-live-baked-display-20260621a";
+export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=layer-undo-fix-20260621a";
+export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=layer-undo-fix-20260621a";
+export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=layer-undo-fix-20260621a";
 export {
   textureAirbrushCreateWebGpuPaintResources,
   textureAirbrushDispatchWebGpuPaint,
@@ -76,12 +77,12 @@ export {
 export {
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
-} from "./webgpu.js?v=stroke-opacity-photoshop-cap-20260620a";
-export { installTextureAirbrushWebGpuCandidateMethods } from "./webgpu-candidates.js";
+} from "./webgpu.js?v=layer-undo-fix-20260621a";
+export { installTextureAirbrushWebGpuCandidateMethods } from "./webgpu-candidates.js?v=layer-undo-fix-20260621a";
 export { installTextureAirbrushWebGpuDiagnosticMethods } from "./webgpu-diagnostics.js";
 export { installTextureAirbrushWebGpuPrewarmMethods } from "./webgpu-prewarm.js";
 export {
   textureAirbrushWebGpuStrokeCandidateFromHit,
   textureAirbrushWebGpuStrokeEstimate,
   textureAirbrushWebGpuTextureRadiusPixels
-} from "./webgpu-stroke.js";
+} from "./webgpu-stroke.js?v=layer-undo-fix-20260621a";

@@ -9,6 +9,21 @@ import {
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {
   const { THREE } = deps;
+  const makeVector3 = (x = 0, y = 0, z = 0) => (
+    typeof THREE.Vector3 === "function"
+      ? new THREE.Vector3(x, y, z)
+      : {
+          x,
+          y,
+          z,
+          set(nextX = 0, nextY = 0, nextZ = 0) {
+            this.x = nextX;
+            this.y = nextY;
+            this.z = nextZ;
+            return this;
+          }
+        }
+  );
   const MIPMAP_FILTERS = new Set([
     THREE.NearestMipmapNearestFilter,
     THREE.NearestMipmapLinearFilter,
@@ -51,7 +66,13 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           currentTargetTexture: { value: null },
           useCurrentTargetTexture: { value: false },
           strokeSourceClear: { value: false },
-          eraseMode: { value: false }
+          eraseMode: { value: false },
+          useNeighborMask: { value: false },
+          useNeighborNormalMask: { value: false },
+          neighborSeedNormal: { value: makeVector3(0, 0, 1) },
+          neighborNormalThreshold: { value: 0 },
+          neighborViewNormalThreshold: { value: 0.18 },
+          paintOccludedNeighborFragments: { value: false }
         },
         vertexShader: `
           #include <common>
@@ -60,13 +81,22 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           uniform mat4 paintViewMatrix;
           uniform mat4 paintProjectionMatrix;
           uniform vec2 uvOffset;
+          attribute float textureAirbrushNeighborMask;
           varying vec2 vPaintUv;
           varying vec4 vPaintClip;
+          varying float vNeighborMask;
+          varying vec3 vPaintObjectNormal;
+          varying vec3 vPaintViewNormal;
 
           void main() {
             vPaintUv = uv;
-            vec3 transformed = position;
+            vNeighborMask = textureAirbrushNeighborMask;
+            #include <beginnormal_vertex>
             #include <skinbase_vertex>
+            #include <skinnormal_vertex>
+            vPaintObjectNormal = normalize(objectNormal);
+            vPaintViewNormal = normalize(mat3(paintViewMatrix * modelMatrix) * objectNormal);
+            vec3 transformed = position;
             #include <skinning_vertex>
             vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
             vPaintClip = paintProjectionMatrix * paintViewMatrix * worldPosition;
@@ -98,8 +128,17 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           uniform bool useCurrentTargetTexture;
           uniform bool strokeSourceClear;
           uniform bool eraseMode;
+          uniform bool useNeighborMask;
+          uniform bool useNeighborNormalMask;
+          uniform vec3 neighborSeedNormal;
+          uniform float neighborNormalThreshold;
+          uniform float neighborViewNormalThreshold;
+          uniform bool paintOccludedNeighborFragments;
           varying vec2 vPaintUv;
           varying vec4 vPaintClip;
+          varying float vNeighborMask;
+          varying vec3 vPaintObjectNormal;
+          varying vec3 vPaintViewNormal;
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
             if (erasing) {
@@ -121,6 +160,23 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           }
 
           void main() {
+            if (useNeighborMask && vNeighborMask < 0.5) {
+              discard;
+            }
+            if (
+              useNeighborMask
+              && useNeighborNormalMask
+              && dot(normalize(vPaintObjectNormal), normalize(neighborSeedNormal)) < neighborNormalThreshold
+            ) {
+              discard;
+            }
+            if (
+              useNeighborMask
+              && paintOccludedNeighborFragments
+              && normalize(vPaintViewNormal).z < neighborViewNormalThreshold
+            ) {
+              discard;
+            }
             if (vPaintClip.w <= 0.0) {
               discard;
             }
@@ -131,7 +187,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             vec2 depthUv = ndc.xy * 0.5 + 0.5;
             float sceneDepth = texture2D(depthTexture, depthUv).r;
             float fragmentDepth = ndc.z * 0.5 + 0.5;
-            if (sceneDepth < 0.9999 && fragmentDepth > sceneDepth + depthEpsilon) {
+            if (
+              sceneDepth < 0.9999
+              && fragmentDepth > sceneDepth + depthEpsilon
+              && !(useNeighborMask && paintOccludedNeighborFragments)
+            ) {
               discard;
             }
             vec2 screenPoint = vec2(

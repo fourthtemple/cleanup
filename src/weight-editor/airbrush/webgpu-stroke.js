@@ -84,6 +84,15 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     ?? target?.originMaterialIndex
     ?? target?.materialIndex
     ?? 0;
+  if (editor?.textureAirbrushNeighborHitAllowed?.(
+    options.neighborPaintSeed || null,
+    record,
+    hit,
+    material,
+    materialIndex
+  ) === false) {
+    return null;
+  }
   const center = target?.vertices?.size
     ? editor?.textureAirbrushRegionPixelFromUv?.(
       hitUv,

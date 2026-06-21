@@ -1648,7 +1648,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         return false;
       }
       try {
-        const patch = this.syncPatchJson();
+        const patch = await this.preparePatchForSave();
         const text = this.serializePatchText?.(patch) || `${JSON.stringify(patch, null, 2)}\n`;
         const saved = await writeAnimationLibraryCleanupFile(target.folder, target.fileName, text);
         if (!saved) {
@@ -1744,8 +1744,8 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
     },
 
     async savePatchFile({ saveAs = false, saveAsName = "" } = {}) {
-      const patch = this.syncPatchJson();
       try {
+        const patch = await this.preparePatchForSave();
         const text = this.serializePatchText?.(patch) || `${JSON.stringify(patch, null, 2)}\n`;
         const target = this.animationLibraryCleanupSaveTarget({ saveAsName });
         if (saveAs) {
@@ -1788,6 +1788,29 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.setStatus(error?.name === "AbortError" ? "Save cancelled" : "Could not save patch JSON");
         return false;
       }
+    },
+
+    async waitForSerializedTexturePaintsApply() {
+      const pending = this.pendingSerializedTexturePaintsApply;
+      if (!pending || typeof pending.then !== "function") {
+        return false;
+      }
+      try {
+        await pending;
+        return true;
+      } catch (error) {
+        console.warn("Could not finish restoring layered texture paint", error);
+        return false;
+      }
+    },
+
+    async preparePatchForSave() {
+      await this.waitForSerializedTexturePaintsApply?.();
+      this.flushTexturePaintPendingBrushWorkBeforeLayerMutation?.({
+        mutatedOnlyBackgroundTargets: false
+      });
+      this.flushTexturePaintLayerGpuTargetsToCanvases?.();
+      return this.syncPatchJson();
     },
 
     animationLibraryCleanupSaveTarget({ saveAsName = "" } = {}) {
@@ -1850,6 +1873,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         const patch = JSON.parse(await file.text());
         this.weightJson.value = JSON.stringify(patch, null, 2);
         this.applyPatchJson();
+        await this.waitForSerializedTexturePaintsApply?.();
         this.setStatus(`Loaded ${file.name}`);
       } catch (error) {
         console.error(error);
@@ -1870,6 +1894,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         }
         this.weightJson.value = JSON.stringify(await response.json(), null, 2);
         this.applyPatchJson({ status: false });
+        await this.waitForSerializedTexturePaintsApply?.();
         if (!silent) {
           this.setStatus(`Loaded ${this.patchFileName()}`);
         }
@@ -1892,6 +1917,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       try {
         this.weightJson.value = JSON.stringify(await jsonFromCleanupTarget(target), null, 2);
         this.applyPatchJson({ status: false });
+        await this.waitForSerializedTexturePaintsApply?.();
         if (!silent) {
           this.setStatus(`Loaded ${target.fileName}`);
         }

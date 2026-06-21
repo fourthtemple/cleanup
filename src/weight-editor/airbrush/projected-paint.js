@@ -170,9 +170,21 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
 
       const acceptedFaces = new Set();
       const hits = [];
+      const neighborPaintSeed = options.neighborPaintSeed || null;
       const acceptHit = (hit, probe) => {
         const record = recordByObject.get(hit?.object);
         if (!record || !hit?.face || !hit?.uv) {
+          return;
+        }
+        const materialIndex = hit.face?.materialIndex ?? 0;
+        const material = this.clonePaintMaterialForHit?.(record, hit) || null;
+        if (this.textureAirbrushNeighborHitAllowed?.(
+          neighborPaintSeed,
+          record,
+          hit,
+          material,
+          materialIndex
+        ) === false) {
           return;
         }
         const recordIndex = paintRecords.indexOf(record);

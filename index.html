@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fourth Temple Cleanup</title>
     <link rel="icon" href="./assets/fourth-temple-logo.svg?v=logo-leaf-ft-20260606c" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=layer-blend-underlay-20260621a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=layer-panel-compact-20260621a" />
     <script type="importmap">
       {
         "imports": {
@@ -195,6 +195,12 @@
             <button id="texture-pick-color-tool" type="button" data-tool="eyedropper" title="Pick texture color">Pick</button>
             <button id="texture-airbrush-tool" type="button" data-tool="airbrush">Airbrush</button>
             <button id="texture-eraser-tool" type="button" data-tool="texture-eraser" title="Erase the active texture layer">Erase</button>
+          </div>
+          <div class="viewer-checks">
+            <label title="Keep airbrush and eraser strokes on the starting connected surface">
+              <input id="texture-neighbor-toggle" type="checkbox" aria-label="Neighbor painting for airbrush and eraser" />
+              Neighbor
+            </label>
           </div>
           <label class="viewer-field">
             <div class="brush-pressure-row">
@@ -853,6 +859,6 @@
         </section>
       </div>
     </aside>
-  <script type="module" src="./src/model-cleanup-editor.js?v=layer-live-baked-display-20260621a"></script>
-  </body>
+  <script type="module" src="./src/model-cleanup-editor.js?v=selection-pen-perf-20260621a"></script>
+</body>
 </html>
