@@ -72,6 +72,11 @@ export function textureAirbrushWebGpuTextureDescriptors(width, height, scope = g
       format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
       usage: usage.textureBinding | usage.copyDst
     },
+    strokeSource: {
+      size,
+      format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
+      usage: usage.textureBinding | usage.copyDst
+    },
     output: {
       size,
       format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
@@ -143,6 +148,11 @@ export function textureAirbrushWebGpuBindGroupLayoutEntries(scope = globalThis) 
       binding: 3,
       visibility: compute,
       buffer: { type: "read-only-storage" }
+    },
+    {
+      binding: 4,
+      visibility: compute,
+      texture: { sampleType: "float" }
     }
   ];
 }

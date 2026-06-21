@@ -229,10 +229,17 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
         );
         candidate.undoCaptured = true;
       }
+      const strokeSourceImageData = this.texturePaintCanvasStrokeSourceImage?.(
+        candidate.record,
+        candidate.material,
+        candidate.editable,
+        candidate.materialIndex
+      ) || null;
       const run = this.textureAirbrushRunEditableWebGpuPaint(candidate.editable, {
         ...candidate.options,
         ...options,
-        material: candidate.material
+        material: candidate.material,
+        ...(strokeSourceImageData ? { strokeSourceImageData } : {})
       });
       const tracked = Promise.resolve(run).then((result) => {
         if (result?.applied) {

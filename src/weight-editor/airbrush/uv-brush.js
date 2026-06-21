@@ -5,6 +5,153 @@ import {
 } from "./math.js";
 import { installTextureAirbrushNearBrushMethods } from "./uv-near.js";
 
+function finiteScreenPoint(point = null, rect = null) {
+  if (!Number.isFinite(point?.clientX) || !Number.isFinite(point?.clientY)) {
+    return null;
+  }
+  return {
+    x: point.clientX - (rect?.left || 0),
+    y: point.clientY - (rect?.top || 0)
+  };
+}
+
+function screenStrokeSegmentsFromOptions(options = {}, rect = null, pointer = null) {
+  const segments = Array.isArray(options.strokeSegments) ? options.strokeSegments : [];
+  const result = [];
+  for (const segment of segments) {
+    const start = finiteScreenPoint(segment?.start, rect);
+    const end = finiteScreenPoint(segment?.end, rect);
+    if (!start || !end) {
+      continue;
+    }
+    result.push({ start, end });
+  }
+  if (!result.length && pointer) {
+    result.push({ start: pointer, end: pointer });
+  }
+  return result;
+}
+
+function distanceSqToSegment(point = null, segment = null, radiusSq = Infinity) {
+  const start = segment?.start;
+  const end = segment?.end;
+  if (
+    !Number.isFinite(point?.x)
+    || !Number.isFinite(point?.y)
+    || !Number.isFinite(start?.x)
+    || !Number.isFinite(start?.y)
+    || !Number.isFinite(end?.x)
+    || !Number.isFinite(end?.y)
+  ) {
+    return Infinity;
+  }
+  const radius = Math.sqrt(Math.max(0, radiusSq));
+  if (
+    point.x < Math.min(start.x, end.x) - radius
+    || point.x > Math.max(start.x, end.x) + radius
+    || point.y < Math.min(start.y, end.y) - radius
+    || point.y > Math.max(start.y, end.y) + radius
+  ) {
+    return Infinity;
+  }
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSq = dx * dx + dy * dy;
+  const t = lengthSq > 0.0001
+    ? Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSq))
+    : 0;
+  const closestX = start.x + dx * t;
+  const closestY = start.y + dy * t;
+  const pointDx = point.x - closestX;
+  const pointDy = point.y - closestY;
+  return pointDx * pointDx + pointDy * pointDy;
+}
+
+function distanceSqToStrokePath(point = null, segments = [], fallback = null, radiusSq = Infinity) {
+  let best = Infinity;
+  for (const segment of segments) {
+    const distanceSq = distanceSqToSegment(point, segment, radiusSq);
+    if (distanceSq < best) {
+      best = distanceSq;
+      if (best <= 0.0001) {
+        break;
+      }
+    }
+  }
+  if (best !== Infinity || !fallback) {
+    return best;
+  }
+  const dx = point.x - fallback.x;
+  const dy = point.y - fallback.y;
+  return dx * dx + dy * dy;
+}
+
+function imageDataMatchesCanvas(image = null, canvas = null) {
+  return Boolean(
+    image?.data
+    && canvas
+    && image.width === canvas.width
+    && image.height === canvas.height
+  );
+}
+
+function writeTexturePixelFromSource(image, offset, sourceData, color, alpha) {
+  const nextR = clampByte(sourceData[offset] * (1 - alpha) + color.r * alpha);
+  const nextG = clampByte(sourceData[offset + 1] * (1 - alpha) + color.g * alpha);
+  const nextB = clampByte(sourceData[offset + 2] * (1 - alpha) + color.b * alpha);
+  const nextA = Math.max(sourceData[offset + 3], 255);
+  if (
+    image.data[offset] === nextR
+    && image.data[offset + 1] === nextG
+    && image.data[offset + 2] === nextB
+    && image.data[offset + 3] === nextA
+  ) {
+    return false;
+  }
+  image.data[offset] = nextR;
+  image.data[offset + 1] = nextG;
+  image.data[offset + 2] = nextB;
+  image.data[offset + 3] = nextA;
+  return true;
+}
+
+function writeLayerPixelFromSource(image, offset, sourceData, color, amount, options = {}) {
+  const previousA = (sourceData[offset + 3] || 0) / 255;
+  if (options.erase === true) {
+    const nextA = clampByte(previousA * (1 - amount) * 255);
+    if (image.data[offset + 3] === nextA) {
+      return false;
+    }
+    image.data[offset] = nextA === 0 ? 0 : sourceData[offset];
+    image.data[offset + 1] = nextA === 0 ? 0 : sourceData[offset + 1];
+    image.data[offset + 2] = nextA === 0 ? 0 : sourceData[offset + 2];
+    image.data[offset + 3] = nextA;
+    return true;
+  }
+  const nextAFloat = amount + previousA * (1 - amount);
+  if (nextAFloat <= 0) {
+    return false;
+  }
+  const previousWeight = previousA * (1 - amount);
+  const nextR = clampByte((color.r * amount + sourceData[offset] * previousWeight) / nextAFloat);
+  const nextG = clampByte((color.g * amount + sourceData[offset + 1] * previousWeight) / nextAFloat);
+  const nextB = clampByte((color.b * amount + sourceData[offset + 2] * previousWeight) / nextAFloat);
+  const nextA = clampByte(nextAFloat * 255);
+  if (
+    image.data[offset] === nextR
+    && image.data[offset + 1] === nextG
+    && image.data[offset + 2] === nextB
+    && image.data[offset + 3] === nextA
+  ) {
+    return false;
+  }
+  image.data[offset] = nextR;
+  image.data[offset + 1] = nextG;
+  image.data[offset + 2] = nextB;
+  image.data[offset + 3] = nextA;
+  return true;
+}
+
 export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
   const { THREE } = deps;
   installTextureAirbrushNearBrushMethods(BirdWeightEditor);
@@ -47,6 +194,7 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
       };
       const brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
       const radiusSq = brushRadius * brushRadius;
+      const strokeSegments = screenStrokeSegmentsFromOptions(options, rect, pointer);
       const target = options.target || null;
       const referenceUv = options.referenceUv || target?.originUv || target?.uvCenter || hit.uv || face.centerUv || null;
       const { canvas, context, texture } = editable;
@@ -159,9 +307,41 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
       const strength = options.strength ?? 1;
       const opacity = options.opacity ?? this.textureAirbrushOpacity?.() ?? 0.42;
       const hardness = options.hardness ?? this.textureAirbrushHardness?.() ?? 0.35;
+      const scatter = options.scatter ?? this.textureAirbrushScatter?.() ?? 0.35;
       const image = options.paintState?.image || context.getImageData(0, 0, canvas.width, canvas.height);
+      const sourceImage = imageDataMatchesCanvas(options.paintState?.sourceImage, canvas)
+        ? options.paintState.sourceImage
+        : null;
+      const sourceData = sourceImage?.data || null;
+      if (sourceData && options.paintState && !options.paintState.strokeAlphaByPixel) {
+        options.paintState.strokeAlphaByPixel = new Map();
+      }
+      const strokeAlphaByPixel = sourceData
+        ? options.paintState?.strokeAlphaByPixel || null
+        : null;
       const written = options.paintState?.written || new Set();
+      let dirtyBounds = options.paintState?.dirtyBounds || null;
+      const markDirtyPixel = (x, y) => {
+        dirtyBounds = dirtyBounds
+          ? {
+              minX: Math.min(dirtyBounds.minX, x),
+              minY: Math.min(dirtyBounds.minY, y),
+              maxX: Math.max(dirtyBounds.maxX, x),
+              maxY: Math.max(dirtyBounds.maxY, y)
+            }
+          : {
+              minX: x,
+              minY: y,
+              maxX: x,
+              maxY: y
+            };
+        if (options.paintState) {
+          options.paintState.dirtyBounds = dirtyBounds;
+        }
+      };
       let changed = 0;
+      const useLayerPixels = editable.layerMode === true;
+      const eraseLayer = useLayerPixels && options.erase === true;
 
       for (let y = minY; y <= maxY; y += 1) {
         for (let x = minX; x <= maxX; x += 1) {
@@ -170,9 +350,7 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
           if (!screenPoint) {
             continue;
           }
-          const dx = screenPoint.x - pointer.x;
-          const dy = screenPoint.y - pointer.y;
-          const distanceSq = dx * dx + dy * dy;
+          const distanceSq = distanceSqToStrokePath(screenPoint, strokeSegments, pointer, radiusSq);
           if (distanceSq > radiusSq) {
             continue;
           }
@@ -191,37 +369,43 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
             continue;
           }
           const key = `${actualPixel.x}:${actualPixel.y}`;
-          if (written.has(key)) {
-            continue;
-          }
-          written.add(key);
           const distance = Math.sqrt(distanceSq);
           const coverage = airbrushCoverageForDistance(distance, brushRadius, scatter, hardness);
           const offset = (actualPixel.y * canvas.width + actualPixel.x) * 4;
-          const brightArtifact = isBrightArtifactPixel(image.data, offset);
+          const brightArtifact = isBrightArtifactPixel(sourceData || image.data, offset);
           const alpha = brightArtifact
             ? Math.min(1, Math.max(0.32, opacity * strength * Math.min(1, coverage + 0.28)))
             : Math.min(1, opacity * strength * coverage);
           if (alpha <= 0.008) {
             continue;
           }
-          const nextR = clampByte(image.data[offset] * (1 - alpha) + color.r * alpha);
-          const nextG = clampByte(image.data[offset + 1] * (1 - alpha) + color.g * alpha);
-          const nextB = clampByte(image.data[offset + 2] * (1 - alpha) + color.b * alpha);
-          const nextA = Math.max(image.data[offset + 3], 255);
-          if (
-            image.data[offset] === nextR
-            && image.data[offset + 1] === nextG
-            && image.data[offset + 2] === nextB
-            && image.data[offset + 3] === nextA
-          ) {
+          if (strokeAlphaByPixel) {
+            const previousAlpha = strokeAlphaByPixel.get(key) || 0;
+            if (alpha <= previousAlpha + 0.0005) {
+              continue;
+            }
+            strokeAlphaByPixel.set(key, alpha);
+          } else {
+            if (written.has(key)) {
+              continue;
+            }
+            written.add(key);
+          }
+          let pixelChanged = false;
+          if (useLayerPixels) {
+            pixelChanged = sourceData
+              ? writeLayerPixelFromSource(image, offset, sourceData, color, alpha, { erase: eraseLayer })
+              : this.texturePaintApplyLayerPixel?.(image, offset, color, alpha, { erase: eraseLayer }) === true;
+          } else {
+            pixelChanged = sourceData
+              ? writeTexturePixelFromSource(image, offset, sourceData, color, alpha)
+              : writeTexturePixelFromSource(image, offset, image.data, color, alpha);
+          }
+          if (!pixelChanged) {
             continue;
           }
-          image.data[offset] = nextR;
-          image.data[offset + 1] = nextG;
-          image.data[offset + 2] = nextB;
-          image.data[offset + 3] = nextA;
           changed += 1;
+          markDirtyPixel(actualPixel.x, actualPixel.y);
         }
       }
 
@@ -235,10 +419,22 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
         context.putImageData(image, 0, 0);
         texture.needsUpdate = true;
         material.needsUpdate = true;
-        this.refreshCloneSpotlightTextures?.(record);
-        this.updateClonePaintPreviews?.();
+        if (editable.layerMode && dirtyBounds) {
+          editable.dirtyBounds = dirtyBounds;
+        }
+        this.texturePaintCommitEditable?.(editable, material, record, {
+          refreshSpotlight: editable.layerMode !== true
+        });
+        if (editable.layerMode) {
+          delete editable.dirtyBounds;
+        }
+        this.markTexturePaintStrokeChanged?.();
+        if (editable.layerMode !== true) {
+          this.refreshCloneSpotlightTextures?.(record);
+          this.updateClonePaintPreviews?.();
+        }
         if (options.status !== false) {
-          this.setStatus(`Airbrushed ${changed} ${changed === 1 ? "pixel" : "pixels"}`);
+          this.setStatus(`${eraseLayer ? "Erased" : "Airbrushed"} ${changed} ${changed === 1 ? "pixel" : "pixels"}`);
         }
       }
       return changed;

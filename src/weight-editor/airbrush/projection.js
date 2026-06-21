@@ -30,6 +30,10 @@ function screenPointDistance(left = null, right = null) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+function strokeSegmentLength(segment = null) {
+  return screenPointDistance(segment?.start, segment?.end);
+}
+
 export function textureAirbrushScreenStrokeFromEvent(event = null, rect = null, options = {}) {
   if (!event || !rect) {
     return null;
@@ -43,16 +47,24 @@ export function textureAirbrushScreenStrokeFromEvent(event = null, rect = null, 
     .map((segment) => {
       const segmentStart = finiteClientPoint(segment?.start, rect.left || 0, rect.top || 0);
       const segmentEnd = finiteClientPoint(segment?.end, rect.left || 0, rect.top || 0);
-      return segmentStart && segmentEnd
-        ? { start: segmentStart, end: segmentEnd }
-        : null;
+      if (!segmentStart || !segmentEnd) {
+        return null;
+      }
+      const radiusPixels = Number(segment?.radiusPixels);
+      return {
+        start: segmentStart,
+        end: segmentEnd,
+        ...(Number.isFinite(radiusPixels) && radiusPixels > 0 ? { radiusPixels } : {})
+      };
     })
     .filter(Boolean)
     .slice(0, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
   if (!strokeSegments.length) {
+    const radiusPixels = Number(options.radiusPixels);
     strokeSegments.push({
       start,
-      end: center
+      end: center,
+      ...(Number.isFinite(radiusPixels) && radiusPixels > 0 ? { radiusPixels } : {})
     });
   }
   return {
@@ -126,6 +138,63 @@ export function textureAirbrushProbePointsFromStroke(stroke = null, radiusPixels
     }
   }
   return probes;
+}
+
+export function textureAirbrushPaintSamplePointsFromStroke(stroke = null, radiusPixels = 1, options = {}) {
+  if (!stroke?.center) {
+    return [];
+  }
+  const radius = Math.max(1, Number(radiusPixels) || 1);
+  const spacingPercent = Math.max(0.1, Math.min(200, Number(options.spacing ?? 1)));
+  const continuousStep = Math.max(1.25, Math.min(8, radius * 0.35));
+  const stampedStep = Math.max(1, radius * 2 * (spacingPercent / 100));
+  const step = spacingPercent <= 100 ? continuousStep : stampedStep;
+  const segments = Array.isArray(stroke.strokeSegments) && stroke.strokeSegments.length
+    ? stroke.strokeSegments
+    : [{ start: stroke.start || stroke.center, end: stroke.center }];
+  const pathLength = segments.reduce((total, segment) => total + strokeSegmentLength(segment), 0);
+  const samples = [];
+  const seen = new Set();
+  const naturalSampleCount = Math.ceil(pathLength / Math.max(1, step)) + segments.length + 1;
+  const defaultMaxSamples = spacingPercent <= 10
+    ? Math.min(1024, Math.max(radius <= 12 ? 240 : 180, naturalSampleCount))
+    : (radius <= 12 ? 240 : 180);
+  const maxSamples = Math.max(16, Math.floor(Number(options.maxSamples) || defaultMaxSamples));
+  const addSample = (point) => {
+    if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y) || samples.length >= maxSamples) {
+      return;
+    }
+    const key = pointKey(point);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    samples.push({ x: point.x, y: point.y });
+  };
+
+  for (const segment of segments) {
+    const start = segment?.start;
+    const end = segment?.end;
+    if (!Number.isFinite(start?.x) || !Number.isFinite(start?.y) || !Number.isFinite(end?.x) || !Number.isFinite(end?.y)) {
+      continue;
+    }
+    const distance = screenPointDistance(start, end);
+    const sampleCount = Math.max(1, Math.ceil(distance / step));
+    for (let index = 0; index <= sampleCount; index += 1) {
+      if (samples.length >= maxSamples) {
+        break;
+      }
+      const ratio = sampleCount <= 0 ? 1 : index / sampleCount;
+      addSample({
+        x: start.x + (end.x - start.x) * ratio,
+        y: start.y + (end.y - start.y) * ratio
+      });
+    }
+  }
+  if (!samples.length) {
+    addSample(stroke.center);
+  }
+  return samples;
 }
 
 export function textureAirbrushPointInRect(point = null, rect = null) {

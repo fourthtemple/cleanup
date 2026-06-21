@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fourth Temple Cleanup</title>
     <link rel="icon" href="./assets/fourth-temple-logo.svg?v=logo-leaf-ft-20260606c" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=airbrush-tablet-input-20260619a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=layer-blend-underlay-20260621a" />
     <script type="importmap">
       {
         "imports": {
@@ -194,6 +194,7 @@
             </label>
             <button id="texture-pick-color-tool" type="button" data-tool="eyedropper" title="Pick texture color">Pick</button>
             <button id="texture-airbrush-tool" type="button" data-tool="airbrush">Airbrush</button>
+            <button id="texture-eraser-tool" type="button" data-tool="texture-eraser" title="Erase the active texture layer">Erase</button>
           </div>
           <label class="viewer-field">
             <div class="brush-pressure-row">
@@ -254,6 +255,55 @@
             </figure>
           </div>
           <textarea id="clone-paint-json-output" class="clone-paint-json-output" readonly hidden spellcheck="false"></textarea>
+        </section>
+
+        <section class="viewer-section texture-layer-panel">
+          <span class="viewer-label">Layers</span>
+          <div class="texture-layer-toolbar" role="toolbar" aria-label="Texture layer actions">
+            <button id="texture-layer-add" class="texture-layer-icon-button" type="button" title="Add a texture paint layer" aria-label="Add texture paint layer">
+              <span class="texture-layer-icon texture-layer-icon-add" aria-hidden="true"></span>
+            </button>
+            <button id="texture-layer-duplicate" class="texture-layer-icon-button" type="button" title="Duplicate the active texture paint layer" aria-label="Duplicate active texture paint layer">
+              <span class="texture-layer-icon texture-layer-icon-duplicate" aria-hidden="true"></span>
+            </button>
+            <button id="texture-layer-merge" class="texture-layer-icon-button" type="button" title="Merge selected texture paint layers" aria-label="Merge selected texture paint layers">
+              <span class="texture-layer-icon texture-layer-icon-merge" aria-hidden="true"></span>
+            </button>
+            <button id="texture-layer-move-up" class="texture-layer-icon-button" type="button" title="Move the active texture paint layer up" aria-label="Move active texture paint layer up">
+              <span class="texture-layer-icon texture-layer-icon-up" aria-hidden="true"></span>
+            </button>
+            <button id="texture-layer-move-down" class="texture-layer-icon-button" type="button" title="Move the active texture paint layer down" aria-label="Move active texture paint layer down">
+              <span class="texture-layer-icon texture-layer-icon-down" aria-hidden="true"></span>
+            </button>
+            <button id="texture-layer-delete" class="texture-layer-icon-button" type="button" title="Delete the active texture paint layer" aria-label="Delete active texture paint layer">
+              <span class="texture-layer-icon texture-layer-icon-trash" aria-hidden="true"></span>
+            </button>
+          </div>
+          <div class="texture-layer-control-row">
+            <select id="texture-layer-blend" aria-label="Texture layer blend mode">
+              <option value="normal">Normal</option>
+              <option value="multiply">Multiply</option>
+              <option value="screen">Screen</option>
+              <option value="overlay">Overlay</option>
+              <option value="darken">Darken</option>
+              <option value="lighten">Lighten</option>
+              <option value="color-dodge">Color Dodge</option>
+              <option value="color-burn">Color Burn</option>
+              <option value="hard-light">Hard Light</option>
+              <option value="soft-light">Soft Light</option>
+              <option value="difference">Difference</option>
+              <option value="exclusion">Exclusion</option>
+              <option value="hue">Hue</option>
+              <option value="saturation">Saturation</option>
+              <option value="color">Color</option>
+              <option value="luminosity">Luminosity</option>
+            </select>
+            <div class="texture-layer-opacity-control">
+              <input id="texture-layer-opacity" type="range" min="0" max="1" step="0.01" value="1" aria-label="Active texture layer opacity" />
+              <output id="texture-layer-opacity-output">100%</output>
+            </div>
+          </div>
+          <div id="texture-layer-list" class="texture-layer-list" aria-label="Texture paint layers"></div>
         </section>
 
         <section class="viewer-section edit-tool-panel">
@@ -803,6 +853,6 @@
         </section>
       </div>
     </aside>
-  <script type="module" src="./src/model-cleanup-editor.js?v=airbrush-tablet-input-20260619a"></script>
+  <script type="module" src="./src/model-cleanup-editor.js?v=layer-live-baked-display-20260621a"></script>
   </body>
 </html>

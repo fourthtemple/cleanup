@@ -628,6 +628,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.bindPose = [];
       this.bones.clear();
       this.paintRecords = [];
+      this.renderTexturePaintLayerPanel?.();
       this.manualPose.clear();
       this.manualPoseAdditiveNames?.clear?.();
       this.poseKeyframes.clear();
@@ -701,6 +702,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.bindPose = this.captureBindPose();
         this.collectBones();
         this.collectPaintableMeshes();
+        this.renderTexturePaintLayerPanel?.();
         this.scheduleTextureAirbrushPrewarm?.(null, null, { force: true });
         this.populateBoneSelect();
         await this.loadPatchAsset({ silent: true });

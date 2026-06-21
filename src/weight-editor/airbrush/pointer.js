@@ -129,7 +129,7 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
         return null;
       }
 
-      const textureRecords = tool === "airbrush" || tool === "eyedropper"
+      const textureRecords = tool === "airbrush" || tool === "texture-eraser" || tool === "eyedropper"
         ? this.textureAirbrushRecords?.() || this.paintRecords || []
         : this.paintRecords || [];
       const raycastObjects = hasCapturedRegion
@@ -326,7 +326,7 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
       if (!this.lastBrushCursorEvent) {
         return false;
       }
-      if (this.activeTool === "airbrush" || this.activeTool === "clone") {
+      if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser" || this.activeTool === "clone") {
         return this.updateTextureBrushCursor(this.lastBrushCursorEvent);
       }
       if (this.usesSelectionBrushCursor?.(this.activeTool)) {
@@ -340,7 +340,7 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
         return false;
       }
       const remembered = this.rememberBrushCursorEvent(event);
-      const isTextureBrush = this.activeTool === "airbrush" || this.activeTool === "clone";
+      const isTextureBrush = this.activeTool === "airbrush" || this.activeTool === "texture-eraser" || this.activeTool === "clone";
       if (!isTextureBrush || this.cleanPreview || !remembered) {
         this.hideTextureBrushCursor();
         return false;
@@ -351,7 +351,9 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
         return false;
       }
       if (this.activeTool === "airbrush") {
-        this.scheduleTextureAirbrushPrewarm?.(event, hit);
+        this.scheduleTextureAirbrushPrewarm?.(event, hit, {
+          preserveLayerDisplay: true
+        });
       }
       const radius = this.textureBrushRadiusScreenPixels();
       this.showTextureBrushCursorElement?.();

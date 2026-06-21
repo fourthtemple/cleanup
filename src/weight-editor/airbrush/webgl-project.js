@@ -24,6 +24,19 @@ function projectionPointDistance(left = null, right = null) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
+function projectionLayerEffectivelyEmpty(layer = null) {
+  if (!layer) {
+    return true;
+  }
+  if (Math.max(0, Math.floor(Number(layer.gpuTarget?.paintRevision) || 0)) > 0) {
+    return false;
+  }
+  if (layer.isEmpty === true && layer.gpuTarget?.emptyTransparent !== false) {
+    return true;
+  }
+  return layer.gpuTarget?.emptyTransparent === true && layer.isEmpty !== false;
+}
+
 function projectionStaticUniformsCurrent(projectionFrame = null, shaderMaterial = null, depthTarget = null, rect = null) {
   const state = projectionFrame?.shaderStaticUniforms;
   return Boolean(
@@ -135,15 +148,79 @@ function projectionPaintPassKey(recordIndices = null, paintRecords = [], record 
   ].join(":");
 }
 
+function projectionFramePointFromEvent(projectionFrame = null, event = null) {
+  const rect = projectionFrame?.rect || null;
+  if (!rect || !Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) {
+    return null;
+  }
+  return {
+    x: event.clientX - (rect.left || 0),
+    y: event.clientY - (rect.top || 0)
+  };
+}
+
+function activeLayerGpuTargetForProjection(editor = null, material = null) {
+  if (
+    !editor
+    || !material
+    || editor.activeTool !== "airbrush"
+    || editor.texturePaintLayerModeActive?.() !== true
+  ) {
+    return null;
+  }
+  const stack = material.userData?.texturePaintLayerStack || null;
+  const active = editor.texturePaintEnsureActiveLayerForStack?.(stack)
+    || (
+      editor.texturePaintBackgroundSelectionActive === true
+        ? null
+        : editor.texturePaintActivePaintLayerForStack?.(stack, { fallback: false })
+    )
+    || null;
+  const activeLayer = active?.layer
+    || stack?.layers?.find((layer) => layer?.id && layer.id === stack.activeLayerId)
+    || null;
+  const targetEntry = activeLayer?.gpuTarget || null;
+  if (!targetEntry?.target?.texture) {
+    return null;
+  }
+  targetEntry.material = material;
+  targetEntry.layer ||= activeLayer;
+  targetEntry.layerStack ||= stack;
+  targetEntry.layerMode = true;
+  targetEntry.emptyTransparent = projectionLayerEffectivelyEmpty(activeLayer);
+  return targetEntry;
+}
+
+function projectionSeedTargetEntryForMaterial(editor = null, material = null) {
+  if (editor?.activeTool === "airbrush" && editor.texturePaintLayerModeActive?.() === true) {
+    return activeLayerGpuTargetForProjection(editor, material);
+  }
+  return material?.userData?.textureAirbrushGpuTarget || null;
+}
+
+function shouldSeedProjectionProxyForPaintPass(editor = null, targetEntry = null, material = null) {
+  return Boolean(
+    editor
+    && targetEntry?.layerMode === true
+    && targetEntry?.target?.texture
+    && material
+    && editor.activeTool === "airbrush"
+    && editor.texturePaintLayerModeActive?.() === true
+  );
+}
+
 export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps) {
   const { THREE } = deps;
 
   Object.assign(BirdWeightEditor.prototype, {
-    textureAirbrushGpuProjectionFrame() {
+    textureAirbrushGpuProjectionFrame(options = {}) {
       if (!this.canvas || !this.camera || !this.model) {
         return null;
       }
       const rect = this.canvas.getBoundingClientRect();
+      const frameKey = typeof this.textureAirbrushDepthCacheKey === "function"
+        ? this.textureAirbrushDepthCacheKey(rect)
+        : "";
       const paintRecords = (this.textureAirbrushRecords?.() || this.paintRecords || []).filter((record) => record?.object);
       if (!paintRecords.length) {
         return null;
@@ -156,15 +233,23 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         camera: this.camera,
         model: this.model,
         rect,
+        frameKey,
+        layerMutationSerial: this.texturePaintLayerModeActive?.() === true
+          ? this.texturePaintLayerMutationSerialValue?.() ?? 0
+          : null,
         paintRecords,
         paintObjects,
         recordByObject: new Map(paintRecords.map((record) => [record.object, record])),
         recordIndices: new Map(paintRecords.map((record, index) => [record, index])),
+        seedPaintPasses: options.seedPaintPasses !== false,
+        seedLayerProxies: options.seedLayerProxies !== false,
         paintPassCache: new Map(),
         probePaintPassCache: new Map(),
         proxySceneCache: new Map()
       };
-      this.textureAirbrushSeedProjectionFramePaintPasses?.(frame);
+      if (frame.seedPaintPasses !== false) {
+        this.textureAirbrushSeedProjectionFramePaintPasses?.(frame);
+      }
       return frame;
     },
 
@@ -172,7 +257,13 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       if (!projectionFrame?.paintPassCache || !Array.isArray(projectionFrame.paintRecords)) {
         return 0;
       }
+      if (projectionFrame.seedPaintPasses === false) {
+        return 0;
+      }
       if (projectionFrame.paintPassCacheSeeded === true) {
+        if (projectionFrame.seedLayerProxies !== false) {
+          this.textureAirbrushSeedProjectionFrameLayerProxies?.(projectionFrame);
+        }
         return 0;
       }
       projectionFrame.paintPassCacheSeeded = true;
@@ -184,7 +275,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         const materials = materialsForProjectionRecord(record);
         for (let materialIndex = 0; materialIndex < materials.length; materialIndex += 1) {
           const material = materials[materialIndex];
-          const targetEntry = material?.userData?.textureAirbrushGpuTarget;
+          const targetEntry = projectionSeedTargetEntryForMaterial(this, material);
           if (!material || !targetEntry?.target?.texture) {
             continue;
           }
@@ -209,32 +300,156 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           seeded += 1;
         }
       }
+      if (projectionFrame.seedLayerProxies !== false) {
+        this.textureAirbrushSeedProjectionFrameLayerProxies?.(projectionFrame);
+      }
       return seeded;
     },
 
-    textureAirbrushResetLiveProjectionFrame() {
-      this.textureAirbrushLiveProjectionFrameState = null;
+    textureAirbrushSeedProjectionFramePaintPass(projectionFrame = null, record = null, materialIndex = 0, material = null, options = {}) {
+      if (!projectionFrame?.paintPassCache || !record?.geometry?.attributes?.uv || !material) {
+        return null;
+      }
+      if (Array.isArray(projectionFrame.paintRecords) && !projectionFrame.paintRecords.includes(record)) {
+        return null;
+      }
+      const targetEntry = projectionSeedTargetEntryForMaterial(this, material);
+      if (!targetEntry?.target?.texture) {
+        return null;
+      }
+      const key = projectionPaintPassKey(
+        projectionFrame.recordIndices,
+        projectionFrame.paintRecords,
+        record,
+        materialIndex,
+        material
+      );
+      let pass = projectionFrame.paintPassCache.get(key);
+      if (!pass) {
+        pass = {
+          key,
+          record,
+          materialIndex,
+          material,
+          targetEntry,
+          undoCaptured: false
+        };
+        projectionFrame.paintPassCache.set(key, pass);
+      }
+      if (options.seedProbe !== false && projectionFrame.probePaintPassCache) {
+        const point = projectionFramePointFromEvent(projectionFrame, options.event || null);
+        if (point && textureAirbrushPointInRect(point, projectionFrame.rect)) {
+          const probeKey = projectionProbeKey(point);
+          const probePasses = projectionFrame.probePaintPassCache.get(probeKey) || [];
+          if (!probePasses.some((probePass) => probePass?.key === pass.key)) {
+            projectionFrame.probePaintPassCache.set(probeKey, [...probePasses, pass]);
+          }
+        }
+      }
+      if (
+        options.seedLayerProxy !== false
+        && projectionFrame.proxySceneCache
+        && !projectionFrame.proxySceneCache.has(key)
+        && shouldSeedProjectionProxyForPaintPass(this, targetEntry, material)
+      ) {
+        const proxyEntry = this.textureAirbrushGpuProxyForRecord?.(record, materialIndex, material);
+        proxyEntry?.proxy?.skeleton?.update?.();
+        if (proxyEntry) {
+          projectionFrame.proxySceneCache.set(key, proxyEntry);
+        }
+      }
+      return pass;
     },
 
-    textureAirbrushLiveProjectionFrame() {
+    textureAirbrushSeedProjectionFrameLayerProxies(projectionFrame = null) {
+      if (!projectionFrame?.proxySceneCache || !projectionFrame?.paintPassCache) {
+        return 0;
+      }
+      if (projectionFrame.layerProjectionProxiesSeeded === true) {
+        return 0;
+      }
+      projectionFrame.layerProjectionProxiesSeeded = true;
+      let seeded = 0;
+      for (const pass of projectionFrame.paintPassCache.values()) {
+        if (
+          !pass
+          || projectionFrame.proxySceneCache.has(pass.key)
+          || !shouldSeedProjectionProxyForPaintPass(this, pass.targetEntry, pass.material)
+        ) {
+          continue;
+        }
+        const proxyEntry = this.textureAirbrushGpuProxyForRecord?.(pass.record, pass.materialIndex, pass.material);
+        proxyEntry?.proxy?.skeleton?.update?.();
+        if (proxyEntry) {
+          projectionFrame.proxySceneCache.set(pass.key, proxyEntry);
+          seeded += 1;
+        }
+      }
+      return seeded;
+    },
+
+    textureAirbrushLiveProjectionFrameCurrent(projectionFrame = null) {
+      if (!projectionFrame || !this.canvas || !this.camera || !this.model) {
+        return false;
+      }
+      const rect = this.canvas.getBoundingClientRect();
+      if (
+        projectionFrame.canvas !== this.canvas
+        || projectionFrame.camera !== this.camera
+        || projectionFrame.model !== this.model
+        || projectionFrame.rect?.width !== rect.width
+        || projectionFrame.rect?.height !== rect.height
+        || projectionFrame.rect?.left !== rect.left
+        || projectionFrame.rect?.top !== rect.top
+      ) {
+        return false;
+      }
+      if (
+        this.texturePaintLayerModeActive?.() === true
+        && projectionFrame.layerMutationSerial !== (this.texturePaintLayerMutationSerialValue?.() ?? 0)
+      ) {
+        return false;
+      }
+      if (typeof this.textureAirbrushDepthCacheKey !== "function") {
+        return true;
+      }
+      const frameKey = this.textureAirbrushDepthCacheKey(rect);
+      if (!frameKey) {
+        return !this.renderer && projectionFrame.frameKey === "";
+      }
+      return projectionFrame.frameKey === frameKey;
+    },
+
+    textureAirbrushResetLiveProjectionFrame(options = {}) {
+      if (
+        options.keepCurrent === true
+        && this.textureAirbrushLiveProjectionFrameCurrent?.(this.textureAirbrushLiveProjectionFrameState)
+      ) {
+        return false;
+      }
+      this.textureAirbrushLiveProjectionFrameState = null;
+      this.textureAirbrushClearLayerHitSeed?.();
+      return true;
+    },
+
+    textureAirbrushLiveProjectionFrame(options = {}) {
       if (!this.canvas || !this.camera || !this.model) {
         this.textureAirbrushLiveProjectionFrameState = null;
         return null;
       }
-      const rect = this.canvas.getBoundingClientRect();
       const existing = this.textureAirbrushLiveProjectionFrameState;
-      if (
-        existing?.canvas === this.canvas
-        && existing.camera === this.camera
-        && existing.model === this.model
-        && existing.rect?.width === rect.width
-        && existing.rect?.height === rect.height
-        && existing.rect?.left === rect.left
-        && existing.rect?.top === rect.top
-      ) {
+      if (this.textureAirbrushLiveProjectionFrameCurrent?.(existing)) {
+        if (options.seedPaintPasses !== false && existing.seedPaintPasses === false) {
+          existing.seedPaintPasses = true;
+          this.textureAirbrushSeedProjectionFramePaintPasses?.(existing);
+        }
+        if (options.seedLayerProxies !== false) {
+          existing.seedLayerProxies = true;
+          this.textureAirbrushSeedProjectionFrameLayerProxies?.(existing);
+        }
         return existing;
       }
-      const frame = this.textureAirbrushGpuProjectionFrame();
+      const frame = this.textureAirbrushGpuProjectionFrame(options);
       this.textureAirbrushLiveProjectionFrameState = frame;
       return frame;
     },
@@ -269,7 +484,13 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       const screenCenter = stroke.center;
       const screenStart = stroke.start;
       const screenSegments = stroke.strokeSegments;
-      const brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
+      let brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
+      for (const segment of screenSegments) {
+        const segmentRadius = Number(segment?.radiusPixels);
+        if (Number.isFinite(segmentRadius) && segmentRadius > 0) {
+          brushRadius = Math.max(brushRadius, segmentRadius);
+        }
+      }
       let depthTarget = projectionFrame?.depthTarget || null;
       if (!depthTarget) {
         depthTarget = this.textureAirbrushRenderDepthTarget({ reuse: true });
@@ -283,15 +504,40 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
 
       const paintPasses = new Map();
       const ensurePaintPassUndoCaptured = (pass) => {
-        if (!pass || pass.undoCaptured === true) {
+        if (!pass) {
           return;
         }
+        const strokeUndo = this.texturePaintActiveStrokeUndo?.() || this.texturePaintStrokeUndo || null;
+        if (pass.undoCaptured === true && (pass.strokeUndo || null) === strokeUndo) {
+          if (!pass.strokeSourceSnapshot) {
+            pass.strokeSourceSnapshot = this.texturePaintGpuStrokeSourceSnapshot?.(
+              pass.record,
+              pass.material,
+              pass.targetEntry,
+              pass.materialIndex
+            ) || null;
+            pass.strokeSourceRevision = this.texturePaintGpuTargetRevision?.(pass.targetEntry)
+              ?? Math.max(0, Math.floor(Number(pass.targetEntry?.paintRevision) || 0));
+          }
+          return;
+        }
+        pass.strokeUndo = strokeUndo;
+        pass.strokeSourceSnapshot = null;
+        pass.strokeSourceRevision = null;
         pass.undoCaptured = this.captureTexturePaintGpuUndoTarget?.(
           pass.record,
           pass.material,
           pass.targetEntry,
           pass.materialIndex
         ) !== false;
+        pass.strokeSourceSnapshot = this.texturePaintGpuStrokeSourceSnapshot?.(
+          pass.record,
+          pass.material,
+          pass.targetEntry,
+          pass.materialIndex
+        ) || null;
+        pass.strokeSourceRevision = this.texturePaintGpuTargetRevision?.(pass.targetEntry)
+          ?? Math.max(0, Math.floor(Number(pass.targetEntry?.paintRevision) || 0));
       };
       const addPaintPass = (record, materialIndex, material) => {
         if (!record?.geometry?.attributes?.uv || !material) {
@@ -309,25 +555,57 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         if (paintPasses.has(key)) {
           return paintPasses.get(key);
         }
-        const targetEntry = this.textureAirbrushGpuTargetForMaterial(material);
+        const layerMode = this.activeTool === "airbrush" && this.texturePaintLayerModeActive?.() === true;
+        const targetEntry = layerMode
+          ? projectionSeedTargetEntryForMaterial(this, material)
+            || this.textureAirbrushGpuTargetForMaterial(material)
+          : this.textureAirbrushGpuTargetForMaterial(material);
         if (!targetEntry) {
           return null;
         }
+        const strokeUndo = this.texturePaintActiveStrokeUndo?.() || this.texturePaintStrokeUndo || null;
         const undoCaptured = this.captureTexturePaintGpuUndoTarget?.(record, material, targetEntry, materialIndex) !== false;
+        const strokeSourceSnapshot = this.texturePaintGpuStrokeSourceSnapshot?.(
+          record,
+          material,
+          targetEntry,
+          materialIndex
+        ) || null;
         const pass = { key, record, materialIndex, material, targetEntry };
         pass.undoCaptured = undoCaptured;
+        pass.strokeUndo = strokeUndo;
+        pass.strokeSourceSnapshot = strokeSourceSnapshot;
+        pass.strokeSourceRevision = this.texturePaintGpuTargetRevision?.(targetEntry)
+          ?? Math.max(0, Math.floor(Number(targetEntry?.paintRevision) || 0));
         paintPasses.set(key, pass);
         projectionFrame?.paintPassCache?.set(key, pass);
         return pass;
       };
-      const cachedPassCount = projectionFrame?.paintPassCache?.size || 0;
+      const cachedPasses = projectionFrame?.paintPassCache
+        ? [...projectionFrame.paintPassCache.values()]
+        : [];
+      const paintPassCacheComplete = projectionFrame?.paintPassCacheSeeded === true
+        && projectionFrame?.seedPaintPasses !== false;
+      const hasLayerCachedPasses = cachedPasses.some((pass) => pass?.targetEntry?.layerMode === true);
+      const canReusePartialLayerPasses = options.reusePartialLayerPasses === true
+        && hasLayerCachedPasses
+        && projectionFrame?.paintPassCache
+        && options.reusePaintPasses !== false;
+      const cachedPassCount = (paintPassCacheComplete || canReusePartialLayerPasses)
+        ? cachedPasses.length
+        : 0;
       const spacingPercent = Number(options.spacing);
       const shouldRenderCachedContinuousPasses = Number.isFinite(spacingPercent)
         && spacingPercent <= 10
         && cachedPassCount
-        && options.reusePaintPasses !== false;
+        && options.reusePaintPasses !== false
+        && (
+          cachedPassCount <= 1
+          || hasLayerCachedPasses !== true
+          || options.renderAllCachedPasses === true
+        );
       if (shouldRenderCachedContinuousPasses) {
-        for (const pass of projectionFrame.paintPassCache.values()) {
+        for (const pass of cachedPasses) {
           paintPasses.set(pass.key, pass);
         }
       }
@@ -352,6 +630,17 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           visitedProbeKeys.add(probeKey);
           if (probePaintPassCache?.has(probeKey)) {
             for (const pass of probePaintPassCache.get(probeKey) || []) {
+              paintPasses.set(pass.key, pass);
+            }
+            continue;
+          }
+          const cachedLayerHitPasses = this.textureAirbrushCachedLayerHitPassesForProbe?.(
+            projectionFrame,
+            probe,
+            { radiusPixels: brushRadius }
+          ) || [];
+          if (cachedLayerHitPasses.length) {
+            for (const pass of cachedLayerHitPasses) {
               paintPasses.set(pass.key, pass);
             }
             continue;
@@ -407,6 +696,10 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         const segment = screenSegments[index];
         shaderMaterial.uniforms.strokeStarts.value[index].set(segment.start.x, segment.start.y);
         shaderMaterial.uniforms.strokeEnds.value[index].set(segment.end.x, segment.end.y);
+        const segmentRadius = Math.max(1, Number(segment.radiusPixels) || brushRadius);
+        if (Array.isArray(shaderMaterial.uniforms.strokeRadii?.value)) {
+          shaderMaterial.uniforms.strokeRadii.value[index] = segmentRadius;
+        }
       }
       const color = this.textureAirbrushShaderColor(options.color || null);
       shaderMaterial.uniforms.paintColor.value.setRGB(color.r, color.g, color.b);
@@ -421,9 +714,54 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
 
       const previousTarget = this.renderer.getRenderTarget();
       const previousAutoClear = this.renderer.autoClear;
+      const previousShaderBlending = shaderMaterial.blending;
+      const previousShaderTransparent = shaderMaterial.transparent;
       this.renderer.autoClear = false;
+      const layerCompositeMaterials = new Set();
+      const firstPaintDisplayMaterials = new Set();
       for (const pass of paintPasses.values()) {
         ensurePaintPassUndoCaptured(pass);
+        const strokeSourceSnapshot = options.strokeOpacityCap === false
+          ? null
+          : pass.strokeSourceSnapshot || this.texturePaintGpuStrokeSourceSnapshot?.(
+            pass.record,
+            pass.material,
+            pass.targetEntry,
+            pass.materialIndex
+          ) || null;
+        const strokeSourceTexture = strokeSourceSnapshot?.texture || null;
+        const useStrokeSource = Boolean(strokeSourceSnapshot && (strokeSourceTexture || strokeSourceSnapshot.clear === true));
+        const currentTargetRevision = this.texturePaintGpuTargetRevision?.(pass.targetEntry)
+          ?? Math.max(0, Math.floor(Number(pass.targetEntry?.paintRevision) || 0));
+        const strokeSourceRevision = Math.max(0, Math.floor(Number(pass.strokeSourceRevision) || 0));
+        const needsCurrentTargetCompare = useStrokeSource && currentTargetRevision > strokeSourceRevision;
+        const currentTargetSnapshot = needsCurrentTargetCompare
+          ? this.textureAirbrushCurrentTargetSnapshot?.(pass.targetEntry) || null
+          : null;
+        const currentTargetTexture = currentTargetSnapshot?.texture || null;
+        const uniforms = shaderMaterial.uniforms || {};
+        if (uniforms.strokeSourceTexture) {
+          uniforms.strokeSourceTexture.value = strokeSourceTexture;
+        }
+        if (uniforms.useStrokeSourceTexture) {
+          uniforms.useStrokeSourceTexture.value = useStrokeSource;
+        }
+        if (uniforms.currentTargetTexture) {
+          uniforms.currentTargetTexture.value = currentTargetTexture;
+        }
+        if (uniforms.useCurrentTargetTexture) {
+          uniforms.useCurrentTargetTexture.value = Boolean(currentTargetTexture);
+        }
+        if (uniforms.strokeSourceClear) {
+          uniforms.strokeSourceClear.value = strokeSourceSnapshot?.clear === true;
+        }
+        if (uniforms.eraseMode) {
+          uniforms.eraseMode.value = options.erase === true;
+        }
+        shaderMaterial.blending = useStrokeSource
+          ? THREE.NoBlending
+          : THREE.NormalBlending;
+        shaderMaterial.transparent = !useStrokeSource;
         let proxyEntry = projectionFrame?.proxySceneCache?.get(pass.key);
         if (!proxyEntry) {
           proxyEntry = this.textureAirbrushGpuProxyForRecord(pass.record, pass.materialIndex, pass.material);
@@ -434,20 +772,198 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         if (!scene) {
           continue;
         }
-        this.renderer.setRenderTarget(pass.targetEntry.target);
+        const liveCompositeTarget = pass.targetEntry?.layerMode === true && options.deferLayerComposite === true
+          ? this.texturePaintLiveCompositeTargetForLayerGpuPaint?.(pass.material, pass.targetEntry)
+            || this.texturePaintLiveUnderlayTargetForLayerGpuPaint?.(pass.material, pass.targetEntry)
+          : null;
         const bleedOffsets = this.textureAirbrushGpuUvBleedOffsets?.(pass.targetEntry, brushRadius) || [new THREE.Vector2()];
         for (const offset of bleedOffsets) {
           shaderMaterial.uniforms.uvOffset.value.copy(offset);
+          this.renderer.setRenderTarget(pass.targetEntry.target);
           this.renderer.render(scene, this.textureAirbrushGpuCopyCamera);
+          if (
+            liveCompositeTarget?.target
+            && liveCompositeTarget.target !== pass.targetEntry.target
+            && liveCompositeTarget.skipLiveBrushRender !== true
+          ) {
+            const layerOpacity = Number(liveCompositeTarget.activeLayerOpacity);
+            const shouldVisualBlendLivePatch = Number.isFinite(layerOpacity) && layerOpacity >= 0 && layerOpacity < 0.9999;
+            const previousBrushOpacity = shaderMaterial.uniforms.brushOpacity.value;
+            const previousUseStrokeSourceTexture = shaderMaterial.uniforms.useStrokeSourceTexture?.value;
+            const previousUseCurrentTargetTexture = shaderMaterial.uniforms.useCurrentTargetTexture?.value;
+            const previousStrokeSourceClear = shaderMaterial.uniforms.strokeSourceClear?.value;
+            const previousEraseMode = shaderMaterial.uniforms.eraseMode?.value;
+            const previousLivePatchBlending = shaderMaterial.blending;
+            const previousLivePatchTransparent = shaderMaterial.transparent;
+            if (shouldVisualBlendLivePatch) {
+              const opacityScale = Number.isFinite(layerOpacity) && layerOpacity >= 0
+                ? layerOpacity
+                : 1;
+              shaderMaterial.uniforms.brushOpacity.value = previousBrushOpacity * opacityScale;
+              if (shaderMaterial.uniforms.useStrokeSourceTexture) {
+                shaderMaterial.uniforms.useStrokeSourceTexture.value = false;
+              }
+              if (shaderMaterial.uniforms.useCurrentTargetTexture) {
+                shaderMaterial.uniforms.useCurrentTargetTexture.value = false;
+              }
+              if (shaderMaterial.uniforms.strokeSourceClear) {
+                shaderMaterial.uniforms.strokeSourceClear.value = false;
+              }
+              if (shaderMaterial.uniforms.eraseMode) {
+                shaderMaterial.uniforms.eraseMode.value = false;
+              }
+              shaderMaterial.blending = THREE.NormalBlending;
+              shaderMaterial.transparent = true;
+            }
+            try {
+              this.renderer.setRenderTarget(liveCompositeTarget.target);
+              this.renderer.render(scene, this.textureAirbrushGpuCopyCamera);
+            } finally {
+              if (shouldVisualBlendLivePatch) {
+                shaderMaterial.uniforms.brushOpacity.value = previousBrushOpacity;
+                if (shaderMaterial.uniforms.useStrokeSourceTexture) {
+                  shaderMaterial.uniforms.useStrokeSourceTexture.value = previousUseStrokeSourceTexture;
+                }
+                if (shaderMaterial.uniforms.useCurrentTargetTexture) {
+                  shaderMaterial.uniforms.useCurrentTargetTexture.value = previousUseCurrentTargetTexture;
+                }
+                if (shaderMaterial.uniforms.strokeSourceClear) {
+                  shaderMaterial.uniforms.strokeSourceClear.value = previousStrokeSourceClear;
+                }
+                if (shaderMaterial.uniforms.eraseMode) {
+                  shaderMaterial.uniforms.eraseMode.value = previousEraseMode;
+                }
+                shaderMaterial.blending = previousLivePatchBlending;
+                shaderMaterial.transparent = previousLivePatchTransparent;
+              }
+            }
+          }
         }
-        if (pass.targetEntry?.target?.texture && pass.material.map !== pass.targetEntry.target.texture) {
+        const wasEmptyLayerTarget = pass.targetEntry?.layerMode === true
+          ? pass.targetEntry.emptyTransparent === true
+            || pass.targetEntry.layer?.isEmpty === true
+            || Math.max(0, Math.floor(Number(pass.targetEntry.paintRevision) || 0)) <= 0
+          : false;
+        this.markTexturePaintGpuTargetMutated?.(pass.targetEntry);
+        if (pass.targetEntry?.layerMode === true) {
+          const forceDisplayCompositeRequested = pass.targetEntry.forceDisplayCompositeOnce === true;
+          const forceDisplayComposite = forceDisplayCompositeRequested
+            && liveCompositeTarget?.shaderComposite !== true;
+          if (forceDisplayCompositeRequested) {
+            pass.targetEntry.forceDisplayCompositeOnce = false;
+          }
+          this.texturePaintActiveMaterial = pass.material;
+          pass.targetEntry.emptyTransparent = false;
+          if (pass.targetEntry.layer) {
+            pass.targetEntry.layer.isEmpty = false;
+          }
+          const firstPaintNeedsExactDisplayRefresh = !forceDisplayComposite
+            && wasEmptyLayerTarget;
+          const firstPaintDisplayComposite = firstPaintNeedsExactDisplayRefresh
+            && liveCompositeTarget?.shaderComposite !== true;
+          if (firstPaintNeedsExactDisplayRefresh) {
+            this.texturePaintNeedsExactFirstPaintDisplayRefresh = true;
+            this.scheduleTexturePaintExactFirstPaintDisplayRefresh?.();
+          }
+          if (firstPaintDisplayComposite) {
+            firstPaintDisplayMaterials.add(pass.material);
+          }
+          const liveBakedLayerDisplayRefreshed = !firstPaintDisplayComposite
+            && liveCompositeTarget?.shaderComposite === true
+            && this.texturePaintRefreshLiveBakedCompositeForLayerGpuPaint?.(
+              pass.material,
+              pass.targetEntry,
+              liveCompositeTarget
+            ) === true;
+          const fastLayerDisplayRefreshed = !liveBakedLayerDisplayRefreshed
+            && !firstPaintDisplayComposite
+            && this.texturePaintFastMaterialLayerDisplay?.(pass.material, {
+            changedLayer: pass.targetEntry.layer || null
+          }) === true;
+          if (!liveBakedLayerDisplayRefreshed && !fastLayerDisplayRefreshed && liveCompositeTarget?.shaderComposite === true) {
+            this.texturePaintRestoreLiveLayerShaderDisplayState?.(
+              pass.material,
+              pass.targetEntry,
+              liveCompositeTarget
+            );
+          }
+          if (liveCompositeTarget?.underlayComposite === true) {
+            this.texturePaintRefreshLiveUnderlayPatchForLayerGpuPaint?.(
+              pass.material,
+              pass.targetEntry,
+              liveCompositeTarget
+            );
+            const liveLayerOpacity = Number(liveCompositeTarget.activeLayerOpacity);
+            if (Number.isFinite(liveLayerOpacity) && liveLayerOpacity >= 0 && liveLayerOpacity < 0.9999) {
+              this.queueTexturePaintLiveUnderlayRefresh?.(
+                pass.material,
+                liveCompositeTarget.displayTargetEntry
+              );
+            }
+          }
+          if (
+            (
+              liveCompositeTarget?.target
+              || liveBakedLayerDisplayRefreshed
+              || firstPaintDisplayComposite
+              || fastLayerDisplayRefreshed
+            )
+            && !forceDisplayComposite
+          ) {
+            continue;
+          }
+          if (
+            !forceDisplayComposite
+            && options.deferLayerComposite === true
+            && this.queueTexturePaintLayerGpuComposite?.(pass.material)
+          ) {
+            continue;
+          }
+          layerCompositeMaterials.add(pass.material);
+        } else if (pass.targetEntry?.target?.texture && pass.material.map !== pass.targetEntry.target.texture) {
           pass.material.map = pass.targetEntry.target.texture;
           pass.material.needsUpdate = true;
         }
       }
       shaderMaterial.uniforms.uvOffset.value.set(0, 0);
+      if (shaderMaterial.uniforms.strokeSourceTexture) {
+        shaderMaterial.uniforms.strokeSourceTexture.value = null;
+      }
+      if (shaderMaterial.uniforms.useStrokeSourceTexture) {
+        shaderMaterial.uniforms.useStrokeSourceTexture.value = false;
+      }
+      if (shaderMaterial.uniforms.currentTargetTexture) {
+        shaderMaterial.uniforms.currentTargetTexture.value = null;
+      }
+      if (shaderMaterial.uniforms.useCurrentTargetTexture) {
+        shaderMaterial.uniforms.useCurrentTargetTexture.value = false;
+      }
+      if (shaderMaterial.uniforms.strokeSourceClear) {
+        shaderMaterial.uniforms.strokeSourceClear.value = false;
+      }
+      if (shaderMaterial.uniforms.eraseMode) {
+        shaderMaterial.uniforms.eraseMode.value = false;
+      }
+      shaderMaterial.blending = previousShaderBlending;
+      shaderMaterial.transparent = previousShaderTransparent;
       this.renderer.setRenderTarget(previousTarget);
       this.renderer.autoClear = previousAutoClear;
+      for (const material of firstPaintDisplayMaterials) {
+        this.flushTexturePaintLayerGpuTargetsToCanvases?.({
+          material,
+          composite: false
+        });
+        this.texturePaintCompositeMaterialLayers?.(material, {
+          skipGpuFlush: true,
+          preferCpuDisplay: true
+        });
+      }
+      for (const material of layerCompositeMaterials) {
+        if (firstPaintDisplayMaterials.has(material)) {
+          continue;
+        }
+        this.texturePaintCompositeMaterialLayerGpuTargets?.(material);
+      }
 
       const segmentLength = screenSegments.reduce((total, segment) => {
         const dx = segment.end.x - segment.start.x;

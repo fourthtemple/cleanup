@@ -36,6 +36,22 @@ function textureAirbrushDirtyBoundsFromLayout(layout = null) {
   };
 }
 
+function textureAirbrushPixelsFromImageData(imageData = null, width = 0, height = 0) {
+  if (
+    imageData?.width !== width
+    || imageData?.height !== height
+    || !imageData?.data?.byteLength
+    || imageData.data.byteLength !== width * height * 4
+  ) {
+    return null;
+  }
+  return new Uint8Array(
+    imageData.data.buffer,
+    imageData.data.byteOffset || 0,
+    imageData.data.byteLength
+  );
+}
+
 function textureAirbrushRecordEditableWebGpuPaintStats(editor = null, stats = null) {
   if (!editor || !stats) {
     return stats;
@@ -166,6 +182,13 @@ export async function textureAirbrushRunEditableWebGpuPaint(editor = null, edita
   const cache = textureAirbrushWebGpuCacheForEditable(editor, editable, device, options);
   const needsSource = options.refreshSource === true || !cache?.initialized;
   const reuseResources = cache?.resources || null;
+  const strokeSourceImageData = options.strokeSourceImageData || null;
+  const needsStrokeSource = Boolean(strokeSourceImageData)
+    && (
+      options.refreshStrokeSource === true
+      || cache?.strokeSourceImageData !== strokeSourceImageData
+      || !reuseResources
+    );
   const prepared = textureAirbrushEditableWebGpuPayload(editor, editable, {
     ...options,
     readSource: needsSource
@@ -180,12 +203,22 @@ export async function textureAirbrushRunEditableWebGpuPaint(editor = null, edita
   if (!needsSource && !cache?.initialized) {
     return null;
   }
+  const strokeSourcePixels = needsStrokeSource
+    ? textureAirbrushPixelsFromImageData(strokeSourceImageData, prepared.width, prepared.height)
+    : null;
+  if (needsStrokeSource && !strokeSourcePixels) {
+    return null;
+  }
+  const uploadsSourceAsStrokeSource = !reuseResources && needsSource && !strokeSourcePixels;
+  const strokeSourceUploaded = needsStrokeSource || uploadsSourceAsStrokeSource;
   const dispatchStartMs = textureAirbrushNow(options);
   const run = textureAirbrushRunWebGpuPaint(device, prepared.payload, {
     sourcePixels: needsSource ? prepared.sourcePixels : null,
+    strokeSourcePixels,
     readback: true,
     reuseResources,
     uploadSource: needsSource,
+    uploadStrokeSource: strokeSourceUploaded,
     persistOutputToSource: true,
     label: options.label || "texture-airbrush-editable"
   });
@@ -196,6 +229,11 @@ export async function textureAirbrushRunEditableWebGpuPaint(editor = null, edita
   if (cache) {
     cache.resources = run.resources;
     cache.initialized = true;
+    if (strokeSourceImageData) {
+      cache.strokeSourceImageData = strokeSourceImageData;
+    } else if (needsSource) {
+      cache.strokeSourceImageData = null;
+    }
   }
   const readbackStartMs = textureAirbrushNow(options);
   const pixels = await textureAirbrushReadWebGpuPaintResult(run.result, options);
@@ -216,7 +254,9 @@ export async function textureAirbrushRunEditableWebGpuPaint(editor = null, edita
     dirtyBounds: textureAirbrushDirtyBoundsFromLayout(run.result.readbackLayout),
     dispatch: run.result.dispatch || null,
     sourceUploaded: needsSource,
+    strokeSourceUploaded,
     sourceBytes: needsSource ? prepared.sourcePixels?.byteLength || 0 : 0,
+    strokeSourceBytes: strokeSourcePixels?.byteLength || (uploadsSourceAsStrokeSource ? prepared.sourcePixels?.byteLength || 0 : 0),
     readbackBytes: pixels?.byteLength || 0,
     appliedBytes: applied?.byteLength || 0,
     reusedResources: Boolean(reuseResources),

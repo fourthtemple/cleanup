@@ -1,9 +1,10 @@
 import {
   textureAirbrushFrontIntersections,
+  textureAirbrushPaintSamplePointsFromStroke,
   textureAirbrushPointInRect,
   textureAirbrushProbePointsFromStroke,
   textureAirbrushScreenStrokeFromEvent
-} from "./projection.js";
+} from "./projection.js?v=layer-stroke-fix-20260619a";
 import { installTextureAirbrushProjectedRegionMethods } from "./projected-region.js";
 
 export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
@@ -109,7 +110,24 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
       const recordByObject = new Map(paintRecords.map((record) => [record.object, record]));
       const paintObjects = paintRecords.map((record) => record.object);
       const brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
-      const probes = textureAirbrushProbePointsFromStroke(stroke, brushRadius);
+      const useCpuStrokeSamples = options.cpuStrokeSamples === true;
+      const probes = useCpuStrokeSamples
+        ? textureAirbrushPaintSamplePointsFromStroke(stroke, brushRadius, {
+            spacing: options.spacing,
+            maxSamples: options.maxCpuStrokeSamples
+          })
+        : textureAirbrushProbePointsFromStroke(stroke, brushRadius);
+      const eventAtProbe = (probe) => this.textureAirbrushInputEventAtPoint?.(event, {
+        clientX: (rect.left || 0) + probe.x,
+        clientY: (rect.top || 0) + probe.y
+      }) || this.texturePaintEventAtPoint?.(event, {
+        clientX: (rect.left || 0) + probe.x,
+        clientY: (rect.top || 0) + probe.y
+      }) || {
+        ...event,
+        clientX: (rect.left || 0) + probe.x,
+        clientY: (rect.top || 0) + probe.y
+      };
 
       const states = new Map();
       const stateForHit = (record, hit) => {
@@ -128,14 +146,20 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
         if (existing) {
           return existing;
         }
+        this.captureTexturePaintCanvasUndoTarget?.(record, material, editable, materialIndex);
         const { canvas, context, texture } = editable;
+        const sourceImage = this.texturePaintCanvasStrokeSourceImage?.(record, material, editable, materialIndex) || null;
+        const opacityState = this.texturePaintCanvasStrokeOpacityState?.(record, material, editable, materialIndex) || null;
         const state = {
           record,
           material,
+          editable,
           canvas,
           context,
           texture,
           image: context.getImageData(0, 0, canvas.width, canvas.height),
+          sourceImage,
+          strokeAlphaByPixel: opacityState?.alphaByPixel || null,
           written: new Set(),
           faceFrames: new Map(),
           changed: 0
@@ -146,18 +170,19 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
 
       const acceptedFaces = new Set();
       const hits = [];
-      const acceptHit = (hit) => {
+      const acceptHit = (hit, probe) => {
         const record = recordByObject.get(hit?.object);
         if (!record || !hit?.face || !hit?.uv) {
           return;
         }
         const recordIndex = paintRecords.indexOf(record);
-        const faceKey = `${recordIndex}:${hit.face.a}:${hit.face.b}:${hit.face.c}:${hit.face.materialIndex ?? 0}`;
+        const probeKey = useCpuStrokeSamples ? `${Math.round(probe?.x || 0)}:${Math.round(probe?.y || 0)}:` : "";
+        const faceKey = `${probeKey}${recordIndex}:${hit.face.a}:${hit.face.b}:${hit.face.c}:${hit.face.materialIndex ?? 0}`;
         if (acceptedFaces.has(faceKey)) {
           return;
         }
         acceptedFaces.add(faceKey);
-        hits.push({ record, hit });
+        hits.push({ record, hit, probe });
       };
 
       for (const probe of probes) {
@@ -169,17 +194,18 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
         this.raycaster.setFromCamera(this.pointer, this.camera);
         const intersections = this.raycaster.intersectObjects(paintObjects, false);
         for (const hit of textureAirbrushFrontIntersections(intersections)) {
-          acceptHit(hit);
+          acceptHit(hit, probe);
         }
       }
 
       let changed = 0;
-      for (const { record, hit } of hits) {
+      for (const { record, hit, probe } of hits) {
         const state = stateForHit(record, hit);
         if (!state) {
           continue;
         }
-        changed += this.textureAirbrushUvBrushOnFace?.(record, hit, event, {
+        const paintEvent = useCpuStrokeSamples && probe ? eventAtProbe(probe) : event;
+        changed += this.textureAirbrushUvBrushOnFace?.(record, hit, paintEvent, {
           ...options,
           paintState: state,
           deferCommit: true,
@@ -194,11 +220,26 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
         state.context.putImageData(state.image, 0, 0);
         state.texture.needsUpdate = true;
         state.material.needsUpdate = true;
-        this.refreshCloneSpotlightTextures?.(state.record);
+        if (state.editable?.layerMode && state.dirtyBounds) {
+          state.editable.dirtyBounds = state.dirtyBounds;
+        }
+        this.texturePaintCommitEditable?.(state.editable, state.material, state.record, {
+          refreshSpotlight: state.editable?.layerMode !== true,
+          renderPanel: false
+        });
+        if (state.editable?.layerMode) {
+          delete state.editable.dirtyBounds;
+        }
+        if (state.editable?.layerMode !== true) {
+          this.refreshCloneSpotlightTextures?.(state.record);
+        }
       }
       if (changed) {
-        this.updateClonePaintPreviews?.();
-        this.setStatus(`Airbrushed ${changed} ${changed === 1 ? "pixel" : "pixels"}`);
+        this.markTexturePaintStrokeChanged?.();
+        if (![...states.values()].some((state) => state.editable?.layerMode === true)) {
+          this.updateClonePaintPreviews?.();
+        }
+        this.setStatus(`${options.erase ? "Erased" : "Airbrushed"} ${changed} ${changed === 1 ? "pixel" : "pixels"}`);
       }
       return changed;
     }

@@ -749,7 +749,12 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       if (this.showBonesLayer) {
         this.updateBoneLabels();
       }
-      this.controls.update();
+      const cameraChanged = this.controls.update();
+      if (cameraChanged) {
+        this.textureAirbrushCameraChanged?.();
+      } else {
+        this.textureAirbrushPrewarmStableCameraFrame?.();
+      }
       this.updateCameraRelativeLights?.();
       if (this.textureAirbrushRendererMode === "webgpu" && this.textureAirbrushWebGpuRendererReady === false) {
         return;

@@ -1,14 +1,14 @@
 import { installTextureAirbrushBrushSettingsMethods } from "./brush-settings.js";
 import { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
 import { installTextureAirbrushPressureMethods } from "./pressure.js";
-import { installTextureAirbrushPointerMethods } from "./pointer.js";
-import { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js";
-import { installTextureAirbrushScreenStrokeMethods } from "./screen-strokes.js?v=airbrush-smooth-coverage-20260618a";
+import { installTextureAirbrushPointerMethods } from "./pointer.js?v=layer-hover-preserve-display-20260621a";
+import { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=stroke-opacity-cap-20260620c";
+import { installTextureAirbrushScreenStrokeMethods } from "./screen-strokes.js?v=layer-live-baked-display-20260621a";
 import { installTextureAirbrushTexturePickingMethods } from "./texture-picking.js";
-import { installTextureAirbrushUvBrushMethods } from "./uv-brush.js";
+import { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=stroke-opacity-cap-20260620c";
 import { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 import { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-import { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=airbrush-smooth-coverage-20260618a";
+import { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=layer-live-baked-display-20260621a";
 
 export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
   // Painting module note:

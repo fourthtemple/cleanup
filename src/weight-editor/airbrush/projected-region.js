@@ -100,6 +100,7 @@ export function installTextureAirbrushProjectedRegionMethods(BirdWeightEditor) {
           record,
           target,
           material,
+          editable,
           materialIndex,
           canvas,
           context,
@@ -239,6 +240,7 @@ export function installTextureAirbrushProjectedRegionMethods(BirdWeightEditor) {
         state.context.putImageData(state.image, 0, 0);
         state.texture.needsUpdate = true;
         state.material.needsUpdate = true;
+        this.texturePaintCommitEditable?.(state.editable, state.material, state.record);
         this.refreshCloneSpotlightTextures?.(state.record);
       }
       if (changed) {

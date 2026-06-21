@@ -15,6 +15,10 @@ function modelCleanupEditorSource() {
   return fs.readFileSync(path.join(repoRoot, "src/model-cleanup-editor.js"), "utf8");
 }
 
+function animationViewerCss() {
+  return fs.readFileSync(path.join(repoRoot, "src/animation-viewer.css"), "utf8");
+}
+
 function packageJson() {
   return JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 }
@@ -71,6 +75,15 @@ test("app shell exposes the camera gizmo stage control once", () => {
   assert.equal((html.match(/data-camera-axis=/g) || []).length, 3);
 });
 
+test("selected native select options stay readable", () => {
+  const css = animationViewerCss();
+
+  assert.match(css, /select option:checked \{[\s\S]*color: #fff;/);
+  assert.match(css, /select option:checked \{[\s\S]*-webkit-text-fill-color: #fff;/);
+  assert.match(css, /select option:checked \{[\s\S]*font-weight: 700;/);
+  assert.match(css, /select option:checked \{[\s\S]*box-shadow: 0 0 0 100vmax #6f5118 inset;/);
+});
+
 test("animation library exposes an explicit motion conversion action", () => {
   const html = indexHtml();
   const animationLibrary = sectionText(html, "Animation Library");
@@ -86,10 +99,28 @@ test("airbrush controls expose per-parameter pressure toggles", () => {
 
   assert.match(airbrush, /id="texture-pressure-radius" type="checkbox" checked/);
   assert.doesNotMatch(airbrush, /id="texture-pressure-opacity" type="checkbox" checked/);
+  assert.match(airbrush, /id="texture-eraser-tool" type="button" data-tool="texture-eraser"/);
   assert.match(airbrush, /id="texture-brush-opacity"[\s\S]*id="texture-brush-spacing"/);
   assert.match(airbrush, /id="texture-brush-spacing" type="range" min="0\.1" max="200" step="0\.1" value="1"/);
   assert.doesNotMatch(airbrush, /id="texture-pressure-hardness"/);
   assert.doesNotMatch(airbrush, /id="texture-pressure-scatter"/);
+});
+
+test("app shell exposes Photoshop-style texture layer controls", () => {
+  const html = indexHtml();
+  const layers = sectionText(html, "Layers");
+
+  assert.match(layers, /id="texture-layer-add"/);
+  assert.match(layers, /id="texture-layer-duplicate"/);
+  assert.match(layers, /id="texture-layer-merge"/);
+  assert.match(layers, /id="texture-layer-move-up"/);
+  assert.match(layers, /id="texture-layer-move-down"/);
+  assert.match(layers, /id="texture-layer-delete"/);
+  assert.match(layers, /id="texture-layer-blend"[\s\S]*Normal/);
+  assert.match(layers, /id="texture-layer-blend"[\s\S]*Multiply[\s\S]*Screen[\s\S]*Overlay/);
+  assert.match(layers, /id="texture-layer-blend"[\s\S]*Color Dodge[\s\S]*Color Burn[\s\S]*Luminosity/);
+  assert.match(layers, /id="texture-layer-opacity" type="range"/);
+  assert.match(layers, /id="texture-layer-list" class="texture-layer-list"/);
 });
 
 test("app exposes a WebGPU airbrush runtime diagnostic helper", () => {

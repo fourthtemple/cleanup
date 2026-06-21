@@ -10,8 +10,8 @@ import {
   textureAirbrushSourcePixelsFromEditable
 } from "./webgpu-canvas.js";
 import { installTextureAirbrushWebGpuDiagnosticMethods } from "./webgpu-diagnostics.js";
-import { textureAirbrushWebGpuKernelSource } from "./webgpu-kernel.js";
-import { textureAirbrushWebGpuPaintPlan } from "./webgpu-plan.js";
+import { textureAirbrushWebGpuKernelSource } from "./webgpu-kernel.js?v=stroke-opacity-photoshop-cap-20260620a";
+import { textureAirbrushWebGpuPaintPlan } from "./webgpu-plan.js?v=stroke-opacity-photoshop-cap-20260620a";
 import { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js";
 import { installTextureAirbrushWebGpuPrewarmMethods } from "./webgpu-prewarm.js";
 import {

@@ -12,7 +12,7 @@ import {
   TEXTURE_AIRBRUSH_WEBGPU_WORKGROUP_SIZE,
   textureAirbrushWebGpuDispatchSize,
   textureAirbrushWebGpuKernelParams
-} from "./webgpu-kernel.js";
+} from "./webgpu-kernel.js?v=stroke-opacity-photoshop-cap-20260620a";
 export {
   TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
   TEXTURE_AIRBRUSH_WEBGPU_BRUSH_UNIFORM_BYTES,

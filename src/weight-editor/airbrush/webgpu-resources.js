@@ -26,6 +26,7 @@ function reusablePaintResources(resources = null, payload = null) {
     || !resources.pipeline
     || !resources.bindGroup
     || !resources.sourceTexture
+    || !resources.strokeSourceTexture
     || !resources.outputTexture
     || !resources.uniformBuffer
     || !resources.strokeBuffer
@@ -67,10 +68,12 @@ function textureAirbrushUploadWebGpuSourceTexture(device, texture, sourcePixels,
 
 export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
   sourcePixels = null,
+  strokeSourcePixels = null,
   readback = false,
   label = "texture-airbrush",
   reuseResources = null,
   uploadSource = true,
+  uploadStrokeSource = strokeSourcePixels ? true : uploadSource,
   entryPoint = "textureAirbrushPaint"
 } = {}) {
   const plan = payload?.plan;
@@ -97,6 +100,14 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
     writeBufferData(device.queue, resources.strokeBuffer, plan.buffers.strokes.data);
     if (uploadSource !== false) {
       textureAirbrushUploadWebGpuSourceTexture(device, resources.sourceTexture, sourcePixels, plan);
+    }
+    if (uploadStrokeSource !== false) {
+      textureAirbrushUploadWebGpuSourceTexture(
+        device,
+        resources.strokeSourceTexture,
+        strokeSourcePixels || sourcePixels,
+        plan
+      );
     }
     return resources;
   }
@@ -125,6 +136,10 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
     label: `${label}-source-texture`,
     ...plan.textures.source
   });
+  const strokeSourceTexture = device.createTexture({
+    label: `${label}-stroke-source-texture`,
+    ...plan.textures.strokeSource
+  });
   const outputTexture = device.createTexture({
     label: `${label}-output-texture`,
     ...plan.textures.output
@@ -150,6 +165,7 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
   writeBufferData(device.queue, uniformBuffer, plan.buffers.uniform.data);
   writeBufferData(device.queue, strokeBuffer, plan.buffers.strokes.data);
   textureAirbrushUploadWebGpuSourceTexture(device, sourceTexture, sourcePixels, plan);
+  textureAirbrushUploadWebGpuSourceTexture(device, strokeSourceTexture, strokeSourcePixels || sourcePixels, plan);
 
   const bindGroup = device.createBindGroup({
     label: `${label}-bind-group`,
@@ -170,6 +186,10 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
       {
         binding: 3,
         resource: { buffer: strokeBuffer }
+      },
+      {
+        binding: 4,
+        resource: strokeSourceTexture.createView()
       }
     ]
   });
@@ -184,6 +204,7 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
     pipelineLayout,
     pipeline,
     sourceTexture,
+    strokeSourceTexture,
     outputTexture,
     uniformBuffer,
     strokeBuffer,

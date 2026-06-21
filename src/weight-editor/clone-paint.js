@@ -1464,11 +1464,12 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
       }
       material.userData ||= {};
       if (material.userData?.clonePaintCanvas && material.userData?.clonePaintContext && material.userData?.clonePaintTexture === material.map) {
-        return {
+        const editable = {
           canvas: material.userData.clonePaintCanvas,
           context: material.userData.clonePaintContext,
           texture: material.map
         };
+        return this.texturePaintEditableLayerTarget?.(material, editable) || editable;
       }
 
       const gpuEntry = material.userData?.textureAirbrushGpuTarget;
@@ -1500,11 +1501,12 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
         delete material.userData.textureAirbrushGpuTarget;
         gpuEntry.target.dispose?.();
         this.textureAirbrushGpuProxies?.clear?.();
-        return {
+        const editableTexture = {
           canvas: editable.canvas,
           context: editable.context,
           texture
         };
+        return this.texturePaintEditableLayerTarget?.(material, editableTexture) || editableTexture;
       }
       const sourceMap = gpuEntry?.target?.texture && material.map === gpuEntry.target.texture && gpuEntry.sourceTexture
         ? gpuEntry.sourceTexture
@@ -1574,7 +1576,8 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
       material.userData.clonePaintContext = context;
       material.userData.clonePaintTexture = texture;
       material.userData.clonePaintTextureScale = canvasSize.scale;
-      return { canvas, context, texture };
+      const editable = { canvas, context, texture };
+      return this.texturePaintEditableLayerTarget?.(material, editable) || editable;
     },
 
     resetEditableTexturePaintMaterial(material) {
@@ -1609,6 +1612,7 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
         delete userData.clonePaintTexture;
         delete userData.clonePaintTextureScale;
         delete userData.clonePaintOriginalMap;
+        delete userData.texturePaintLayerStack;
         changed = true;
       }
 

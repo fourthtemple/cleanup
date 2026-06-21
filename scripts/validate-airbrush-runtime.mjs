@@ -13,6 +13,8 @@ const args = parseArgs(process.argv.slice(2));
 const timeoutMs = positiveInteger(args.timeout || process.env.AIRBRUSH_RUNTIME_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
 const headless = args.headed !== true && process.env.AIRBRUSH_RUNTIME_HEADLESS !== "0";
 const keepOpen = args.keepOpen === true || process.env.AIRBRUSH_RUNTIME_KEEP_OPEN === "1";
+const layerAfterUndo = args.layerAfterUndo === true || process.env.AIRBRUSH_RUNTIME_LAYER_AFTER_UNDO === "1";
+const thirdLayer = args.thirdLayer === true || process.env.AIRBRUSH_RUNTIME_THIRD_LAYER === "1";
 
 const cleanupTasks = [];
 
@@ -104,14 +106,54 @@ try {
 
   await dispatchAirbrushStroke(cdp, prepared.stroke);
   const painted = await evaluateRuntime(cdp, runtimeResultExpression(), { awaitPromise: true, timeoutMs });
-  const checks = runtimeAirbrushChecks(prepared, painted);
+  const layerSetup = layerAfterUndo
+    ? await evaluateRuntime(cdp, runtimeLayerAfterUndoSetupExpression(), { awaitPromise: true, timeoutMs })
+    : null;
+  if (layerAfterUndo && !layerSetup?.ready) {
+    throw new Error(`Airbrush layer-after-undo setup failed: ${layerSetup?.error || "unknown"}`);
+  }
+  if (layerAfterUndo) {
+    await dispatchAirbrushStroke(cdp, prepared.stroke);
+  }
+  const layerPainted = layerAfterUndo
+    ? await evaluateRuntime(cdp, runtimeLayerAfterUndoResultExpression(), { awaitPromise: true, timeoutMs })
+    : null;
+  const thirdLayerSteps = [];
+  if (thirdLayer) {
+    for (let layerNumber = 1; layerNumber <= 3; layerNumber += 1) {
+      const layerSetup = await evaluateRuntime(
+        cdp,
+        runtimeThirdLayerAddExpression(layerNumber),
+        { awaitPromise: true, timeoutMs }
+      );
+      if (!layerSetup?.ready) {
+        throw new Error(`Airbrush third-layer setup failed at Paint ${layerNumber}: ${layerSetup?.error || "unknown"}`);
+      }
+      await dispatchAirbrushStroke(cdp, thirdLayerStrokeForPrepared(prepared, layerNumber));
+      const layerResult = await evaluateRuntime(
+        cdp,
+        runtimeThirdLayerPaintResultExpression(layerNumber),
+        { awaitPromise: true, timeoutMs }
+      );
+      thirdLayerSteps.push({ layerSetup, layerResult });
+    }
+  }
+  const checks = {
+    ...runtimeAirbrushChecks(prepared, painted),
+    ...(layerAfterUndo ? runtimeLayerAfterUndoChecks(layerSetup, layerPainted) : {}),
+    ...(thirdLayer ? runtimeThirdLayerChecks(thirdLayerSteps) : {})
+  };
   const summary = {
     ok: Object.values(checks).every(Boolean),
     url: validationUrl,
     headless,
+    layerAfterUndo,
+    thirdLayer,
     checks,
     prepared,
-    painted
+    painted,
+    ...(layerAfterUndo ? { layerSetup, layerPainted } : {}),
+    ...(thirdLayer ? { thirdLayerSteps } : {})
   };
 
   console.log(JSON.stringify(summary, null, 2));
@@ -139,8 +181,12 @@ function parseArgs(argv) {
     const value = argv[index];
     if (value === "--headed") {
       parsed.headed = true;
-    } else if (value === "--keep-open") {
+  } else if (value === "--keep-open") {
       parsed.keepOpen = true;
+    } else if (value === "--layer-after-undo") {
+      parsed.layerAfterUndo = true;
+    } else if (value === "--third-layer") {
+      parsed.thirdLayer = true;
     } else if (value === "--url") {
       parsed.url = argv[++index] || "";
     } else if (value === "--browser") {
@@ -164,6 +210,8 @@ Options:
   --timeout <ms>    Timeout for server/browser readiness.
   --headed          Launch Chrome visibly instead of headless.
   --keep-open       Leave Chrome open after validation.
+  --layer-after-undo  Validate paint, undo, add Paint 1, then paint Paint 1.
+  --third-layer     Validate adding and painting Paint 1, Paint 2, and Paint 3.
 `);
 }
 
@@ -375,6 +423,69 @@ function runtimeAirbrushChecks(prepared, painted) {
   };
 }
 
+function runtimeLayerAfterUndoChecks(layerSetup, layerPainted) {
+  const afterUndoPaintRows = layerSetup?.afterUndo?.rows || [];
+  const afterAddLayers = layerSetup?.afterAdd?.layers || [];
+  const afterPaintLayers = layerPainted?.layers || [];
+  return {
+    undoAfterBackgroundPaintSucceeded: layerSetup?.undoResult === true,
+    undoAfterBackgroundPaintReturnedPromptly: Number(layerSetup?.undoDurationMs) < 750,
+    undoLeftOnlyBackgroundVisible: afterUndoPaintRows.length === 1
+      && afterUndoPaintRows[0]?.locked === true
+      && /Background/.test(afterUndoPaintRows[0]?.text || ""),
+    addLayerAfterUndoSucceeded: layerSetup?.addResult === true,
+    addLayerReusedPaint1: afterAddLayers.length === 1
+      && afterAddLayers[0]?.name === "Paint 1"
+      && afterAddLayers[0]?.autoCreated === false,
+    noPaint2AfterUndoLayerAdd: !afterAddLayers.some((layer) => layer?.name === "Paint 2"),
+    layerPaintPathCalled: Number(layerPainted?.validation?.paintEvents) > 0,
+    layerStrokeQueued: Number(layerPainted?.validation?.queuedPayloads) > 0,
+    layerProjectionCalled: Number(layerPainted?.validation?.projectionCalls) > 0,
+    layerProjectedPixelsChanged: Number(layerPainted?.validation?.projectionChanged) > 0,
+    layerPaintQueueDrained: Number(layerPainted?.queueLength) === 0 && Number(layerPainted?.pendingBatches) === 0,
+    layerDisplayIncludesPaintBeforeReadback: layerPainted?.displayBeforeReadback?.includesActiveLayer === true,
+    layerForceCompositeFlagConsumed: layerPainted?.displayBeforeReadback?.forceDisplayCompositeOnce === false,
+    layerCanvasReceivedPaint: Number(layerPainted?.activeLayerAlpha?.count) > 0,
+    noPaint2AfterLayerPaint: !afterPaintLayers.some((layer) => layer?.name === "Paint 2")
+  };
+}
+
+function runtimeThirdLayerChecks(steps) {
+  const third = steps?.[2]?.layerResult || null;
+  const thirdLayer = third?.layers?.find((layer) => layer.name === "Paint 3") || null;
+  const activeLayer = third?.layers?.find((layer) => layer.id === third?.activeLayerId) || null;
+  return {
+    thirdLayerStepsCompleted: Array.isArray(steps) && steps.length === 3,
+    thirdLayerCreatedOnce: (third?.layers || []).filter((layer) => layer.name === "Paint 3").length === 1,
+    thirdLayerIsActive: Boolean(thirdLayer?.id && thirdLayer.id === third?.activeLayerId),
+    thirdLayerPaintPathCalled: Number(third?.validation?.paintEvents) > 0,
+    thirdLayerStrokeQueued: Number(third?.validation?.queuedPayloads) > 0,
+    thirdLayerProjectionChanged: Number(third?.validation?.projectionChanged) > 0,
+    thirdLayerQueueDrained: Number(third?.queueLength) === 0 && Number(third?.pendingBatches) === 0,
+    thirdLayerGpuTargetChanged: Number(thirdLayer?.gpuTarget?.paintRevision) > 0,
+    thirdLayerCanvasReceivedPaint: Number(thirdLayer?.alpha?.count) > 0,
+    thirdLayerDisplayIncludesPaintBeforeReadback: third?.displayBeforeReadback?.includesActiveLayer === true,
+    thirdLayerTargetMatchesActiveLayer: Boolean(activeLayer && thirdLayer && activeLayer.id === thirdLayer.id)
+  };
+}
+
+function thirdLayerStrokeForPrepared(prepared, layerNumber) {
+  const canvas = prepared?.canvas || null;
+  if (!canvas?.width || !canvas?.height) {
+    return prepared?.stroke;
+  }
+  const yFraction = layerNumber === 1 ? 0.52 : 0.57;
+  const point = (xFraction) => ({
+    x: canvas.left + canvas.width * xFraction,
+    y: canvas.top + canvas.height * yFraction
+  });
+  return {
+    start: point(0.43),
+    mid: point(0.49),
+    end: point(0.55)
+  };
+}
+
 function runtimePreparationExpression() {
   return `(async () => {
     const editor = window.modelCleanupEditor;
@@ -545,6 +656,459 @@ function runtimeResultExpression() {
       flushing: Boolean(editor.textureAirbrushFlushingScreenStroke),
       status: document.getElementById("viewer-status")?.textContent || "",
       undoStackLength: editor.undoStack?.length || 0,
+      validation: window.__airbrushRuntimeValidation || null
+    };
+  })()`;
+}
+
+function runtimeLayerAfterUndoSetupExpression() {
+  return `(async () => {
+    const editor = window.modelCleanupEditor;
+    if (!editor) {
+      return { ready: false, error: "missing-editor" };
+    }
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const flushPaint = async () => {
+      for (let index = 0; index < 12; index += 1) {
+        const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
+        if (pending && typeof pending.then === "function") {
+          await pending;
+        }
+        if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
+          break;
+        }
+        await delay(25);
+      }
+      await delay(50);
+    };
+    const summarizeLayer = (layer) => ({
+      id: layer?.id || "",
+      name: layer?.name || "",
+      autoCreated: layer?.autoCreated === true,
+      isEmpty: layer?.isEmpty === true,
+      visible: layer?.visible !== false,
+      opacity: Number(layer?.opacity ?? 1),
+      gpuTarget: layer?.gpuTarget ? {
+        emptyTransparent: layer.gpuTarget.emptyTransparent === true,
+        paintRevision: Math.max(0, Math.floor(Number(layer.gpuTarget.paintRevision) || 0)),
+        hasTarget: Boolean(layer.gpuTarget.target?.texture)
+      } : null
+    });
+    const summarize = () => {
+      const material = editor.texturePaintActiveMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+      const stack = material?.userData?.texturePaintLayerStack || null;
+      return {
+        rows: Array.from(document.querySelectorAll(".texture-layer-row")).map((row) => ({
+          text: row.textContent.trim(),
+          layerId: row.dataset.layerId || "",
+          locked: row.classList.contains("is-locked"),
+          active: row.classList.contains("is-active"),
+          selected: row.classList.contains("is-selected")
+        })),
+        activeLayerId: stack?.activeLayerId || "",
+        selectedLayerIds: stack?.selectedLayerIds || [],
+        layers: (stack?.layers || []).map(summarizeLayer),
+        undoStackLength: editor.undoStack?.length || 0,
+        redoStackLength: editor.redoStack?.length || 0
+      };
+    };
+    const undoTiming = {};
+    const profileMethod = (name) => {
+      const original = editor[name];
+      if (typeof original !== "function") {
+        return;
+      }
+      editor[name] = function(...methodArgs) {
+        const started = performance.now();
+        try {
+          return original.apply(this, methodArgs);
+        } finally {
+          const entry = undoTiming[name] || { count: 0, ms: 0 };
+          entry.count += 1;
+          entry.ms += performance.now() - started;
+          undoTiming[name] = entry;
+        }
+      };
+    };
+    [
+      "restoreTexturePaintSnapshot",
+      "clearTexturePaintGpuTarget",
+      "texturePaintCompositeMaterialLayerDisplay",
+      "texturePaintCompositeMaterialLayerGpuTargets",
+      "flushTexturePaintLayerGpuTargetsToCanvases",
+      "prepareTexturePaintLayerTargetChange",
+      "renderTexturePaintLayerPanel",
+      "updateClonePaintPreviews",
+      "syncPatchJson",
+      "updateUndoButton"
+    ].forEach(profileMethod);
+    const waitUntil = async (predicate, timeout = 3000) => {
+      const started = performance.now();
+      while (performance.now() - started < timeout) {
+        if (predicate()) {
+          return true;
+        }
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      return false;
+    };
+    const clickUiButton = async (selector) => {
+      const button = document.querySelector(selector);
+      if (!button) {
+        return { selector, found: false, disabled: true, clicked: false };
+      }
+      const disabled = button.disabled === true;
+      if (!disabled) {
+        button.click();
+      }
+      return { selector, found: true, disabled, clicked: !disabled };
+    };
+    await flushPaint();
+    const beforeUndo = summarize();
+    const undoStarted = performance.now();
+    const undoClick = await clickUiButton("#undo-edit");
+    await waitUntil(() => (editor.undoStack?.length || 0) === 0 && (editor.redoStack?.length || 0) > 0);
+    const undoDurationMs = performance.now() - undoStarted;
+    await flushPaint();
+    const afterUndo = summarize();
+    const addClick = await clickUiButton("#texture-layer-add");
+    await waitUntil(() => {
+      const material = editor.texturePaintActiveMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+      const stack = material?.userData?.texturePaintLayerStack || null;
+      const active = (stack?.layers || []).find((layer) => layer.id === stack?.activeLayerId) || null;
+      return active?.autoCreated === false && document.querySelector(".texture-layer-row[data-layer-id]");
+    });
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const afterAdd = summarize();
+    const validation = window.__airbrushRuntimeValidation || {};
+    validation.pointerDowns = 0;
+    validation.paintEvents = 0;
+    validation.resetPaintEvents = 0;
+    validation.queuedPayloads = 0;
+    validation.projectionCalls = 0;
+    validation.projectionChanged = 0;
+    window.__airbrushRuntimeValidation = validation;
+    return {
+      ready: true,
+      undoResult: undoClick.clicked && afterUndo.undoStackLength === 0 && afterUndo.redoStackLength > 0,
+      undoClick,
+      undoDurationMs,
+      undoTiming,
+      addResult: addClick.clicked && afterAdd.layers.some((layer) => layer.name === "Paint 1" && layer.autoCreated === false),
+      addClick,
+      beforeUndo,
+      afterUndo,
+      afterAdd
+    };
+  })()`;
+}
+
+function runtimeLayerAfterUndoResultExpression() {
+  return `(async () => {
+    const editor = window.modelCleanupEditor;
+    if (!editor) {
+      return { error: "missing-editor" };
+    }
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    for (let index = 0; index < 12; index += 1) {
+      const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
+      if (pending && typeof pending.then === "function") {
+        await pending;
+      }
+      if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
+        break;
+      }
+      await delay(25);
+    }
+    await delay(50);
+    const material = editor.texturePaintActiveMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+    const stack = material?.userData?.texturePaintLayerStack || null;
+    const activeLayer = (stack?.layers || []).find((layer) => layer.id === stack?.activeLayerId)
+      || stack?.layers?.[0]
+      || null;
+    const targetTexture = activeLayer?.gpuTarget?.target?.texture || null;
+    const composite = material?.userData?.texturePaintCompositeGpuTarget || null;
+    const liveState = material?.userData?.texturePaintLiveLayerShaderComposite || null;
+    const displayBeforeReadback = {
+      hasActiveLayerTarget: Boolean(targetTexture),
+      materialMapIsLayer: Boolean(targetTexture && material?.map === targetTexture),
+      materialMapIsComposite: Boolean(composite?.target?.texture && material?.map === composite.target.texture),
+      liveShaderInstalled: Boolean(liveState),
+      liveShaderUsesActiveLayer: Boolean(targetTexture && liveState?.layerTexture === targetTexture),
+      liveShaderLayerOpacity: Number(liveState?.layerOpacity ?? 0),
+      forceDisplayCompositeOnce: activeLayer?.gpuTarget?.forceDisplayCompositeOnce === true,
+      includesActiveLayer: Boolean(
+        targetTexture
+        && (
+          material?.map === targetTexture
+          || (composite?.target?.texture && material?.map === composite.target.texture)
+          || (liveState?.layerTexture === targetTexture && Number(liveState.layerOpacity ?? 0) > 0)
+        )
+      )
+    };
+    editor.flushTexturePaintLayerGpuTargetsToCanvases?.({
+      material,
+      composite: true
+    });
+    const alphaStats = (layer) => {
+      const canvas = layer?.canvas || null;
+      const context = canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+      if (!canvas || !context) {
+        return { count: 0, sum: 0 };
+      }
+      const image = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let count = 0;
+      let sum = 0;
+      for (let index = 3; index < image.length; index += 4) {
+        const alpha = image[index];
+        if (alpha > 0) {
+          count += 1;
+          sum += alpha;
+        }
+      }
+      return { count, sum };
+    };
+    const summarizeLayer = (layer) => ({
+      id: layer?.id || "",
+      name: layer?.name || "",
+      autoCreated: layer?.autoCreated === true,
+      isEmpty: layer?.isEmpty === true,
+      visible: layer?.visible !== false,
+      opacity: Number(layer?.opacity ?? 1),
+      alpha: alphaStats(layer),
+      gpuTarget: layer?.gpuTarget ? {
+        emptyTransparent: layer.gpuTarget.emptyTransparent === true,
+        paintRevision: Math.max(0, Math.floor(Number(layer.gpuTarget.paintRevision) || 0)),
+        hasTarget: Boolean(layer.gpuTarget.target?.texture)
+      } : null
+    });
+    const summarizeMaterial = (entry, index) => {
+      const material = entry?.material || null;
+      const materialStack = material?.userData?.texturePaintLayerStack || null;
+      return {
+        index,
+        name: material?.name || "",
+        activeLayerId: materialStack?.activeLayerId || "",
+        layers: (materialStack?.layers || []).map(summarizeLayer)
+      };
+    };
+    return {
+      activeTool: editor.activeTool,
+      painting: Boolean(editor.painting),
+      screenStrokeChanged: editor.textureAirbrushScreenStrokeChanged === true,
+      queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
+      pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
+      flushing: Boolean(editor.textureAirbrushFlushingScreenStroke),
+      status: document.getElementById("viewer-status")?.textContent || "",
+      undoStackLength: editor.undoStack?.length || 0,
+      redoStackLength: editor.redoStack?.length || 0,
+      rows: Array.from(document.querySelectorAll(".texture-layer-row")).map((row) => ({
+        text: row.textContent.trim(),
+        layerId: row.dataset.layerId || "",
+        locked: row.classList.contains("is-locked"),
+        active: row.classList.contains("is-active"),
+        selected: row.classList.contains("is-selected")
+      })),
+      layers: (stack?.layers || []).map(summarizeLayer),
+      materials: (editor.textureAirbrushPaintableMaterials?.() || []).map(summarizeMaterial),
+      activeLayerAlpha: alphaStats(activeLayer),
+      displayBeforeReadback,
+      validation: window.__airbrushRuntimeValidation || null
+    };
+  })()`;
+}
+
+function runtimeThirdLayerAddExpression(layerNumber) {
+  return `(async () => {
+    const editor = window.modelCleanupEditor;
+    if (!editor) {
+      return { ready: false, error: "missing-editor" };
+    }
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const flushPaint = async () => {
+      for (let index = 0; index < 12; index += 1) {
+        const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
+        if (pending && typeof pending.then === "function") {
+          await pending;
+        }
+        if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
+          break;
+        }
+        await delay(25);
+      }
+      await delay(50);
+    };
+    const summarizeLayer = (layer) => ({
+      id: layer?.id || "",
+      name: layer?.name || "",
+      autoCreated: layer?.autoCreated === true,
+      isEmpty: layer?.isEmpty === true,
+      visible: layer?.visible !== false,
+      opacity: Number(layer?.opacity ?? 1),
+      gpuTarget: layer?.gpuTarget ? {
+        emptyTransparent: layer.gpuTarget.emptyTransparent === true,
+        paintRevision: Math.max(0, Math.floor(Number(layer.gpuTarget.paintRevision) || 0)),
+        hasTarget: Boolean(layer.gpuTarget.target?.texture)
+      } : null
+    });
+    const summarize = () => {
+      const material = editor.texturePaintActiveMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+      const stack = material?.userData?.texturePaintLayerStack || null;
+      return {
+        activeLayerId: stack?.activeLayerId || "",
+        selectedLayerIds: stack?.selectedLayerIds || [],
+        layers: (stack?.layers || []).map(summarizeLayer),
+        rows: Array.from(document.querySelectorAll(".texture-layer-row")).map((row) => ({
+          text: row.textContent.trim(),
+          layerId: row.dataset.layerId || "",
+          locked: row.classList.contains("is-locked"),
+          active: row.classList.contains("is-active"),
+          selected: row.classList.contains("is-selected")
+        }))
+      };
+    };
+    await flushPaint();
+    const button = document.querySelector("#texture-layer-add");
+    if (!button || button.disabled) {
+      return { ready: false, error: "missing-add-button", beforeAdd: summarize() };
+    }
+    button.click();
+    const expectedName = "Paint ${Number(layerNumber) || 1}";
+    const waitUntil = async (predicate, timeout = 3000) => {
+      const started = performance.now();
+      while (performance.now() - started < timeout) {
+        if (predicate()) {
+          return true;
+        }
+        await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      }
+      return false;
+    };
+    await waitUntil(() => {
+      const material = editor.texturePaintActiveMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+      const stack = material?.userData?.texturePaintLayerStack || null;
+      const active = (stack?.layers || []).find((layer) => layer.id === stack?.activeLayerId) || null;
+      return active?.name === expectedName && active?.autoCreated === false;
+    });
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const validation = window.__airbrushRuntimeValidation || {};
+    validation.pointerDowns = 0;
+    validation.paintEvents = 0;
+    validation.resetPaintEvents = 0;
+    validation.queuedPayloads = 0;
+    validation.projectionCalls = 0;
+    validation.projectionChanged = 0;
+    window.__airbrushRuntimeValidation = validation;
+    const afterAdd = summarize();
+    const activeLayer = afterAdd.layers.find((layer) => layer.id === afterAdd.activeLayerId) || null;
+    return {
+      ready: activeLayer?.name === expectedName,
+      expectedName,
+      afterAdd,
+      activeLayer
+    };
+  })()`;
+}
+
+function runtimeThirdLayerPaintResultExpression(layerNumber) {
+  return `(async () => {
+    const editor = window.modelCleanupEditor;
+    if (!editor) {
+      return { error: "missing-editor" };
+    }
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    for (let index = 0; index < 12; index += 1) {
+      const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
+      if (pending && typeof pending.then === "function") {
+        await pending;
+      }
+      if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
+        break;
+      }
+      await delay(25);
+    }
+    await delay(50);
+    const material = editor.texturePaintActiveMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+    const stack = material?.userData?.texturePaintLayerStack || null;
+    const activeLayer = (stack?.layers || []).find((layer) => layer.id === stack?.activeLayerId)
+      || null;
+    const targetTexture = activeLayer?.gpuTarget?.target?.texture || null;
+    const composite = material?.userData?.texturePaintCompositeGpuTarget || null;
+    const liveState = material?.userData?.texturePaintLiveLayerShaderComposite || null;
+    const displayBeforeReadback = {
+      hasActiveLayerTarget: Boolean(targetTexture),
+      materialMapIsLayer: Boolean(targetTexture && material?.map === targetTexture),
+      materialMapIsComposite: Boolean(composite?.target?.texture && material?.map === composite.target.texture),
+      liveShaderInstalled: Boolean(liveState),
+      liveShaderUsesActiveLayer: Boolean(targetTexture && liveState?.layerTexture === targetTexture),
+      liveShaderLayerOpacity: Number(liveState?.layerOpacity ?? 0),
+      forceDisplayCompositeOnce: activeLayer?.gpuTarget?.forceDisplayCompositeOnce === true,
+      includesActiveLayer: Boolean(
+        targetTexture
+        && (
+          material?.map === targetTexture
+          || (composite?.target?.texture && material?.map === composite.target.texture)
+          || (liveState?.layerTexture === targetTexture && Number(liveState.layerOpacity ?? 0) > 0)
+        )
+      )
+    };
+    editor.flushTexturePaintLayerGpuTargetsToCanvases?.({
+      material,
+      composite: true
+    });
+    const alphaStats = (layer) => {
+      const canvas = layer?.canvas || null;
+      const context = canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+      if (!canvas || !context) {
+        return { count: 0, sum: 0 };
+      }
+      const image = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let count = 0;
+      let sum = 0;
+      for (let index = 3; index < image.length; index += 4) {
+        const alpha = image[index];
+        if (alpha > 0) {
+          count += 1;
+          sum += alpha;
+        }
+      }
+      return { count, sum };
+    };
+    const summarizeLayer = (layer) => ({
+      id: layer?.id || "",
+      name: layer?.name || "",
+      autoCreated: layer?.autoCreated === true,
+      isEmpty: layer?.isEmpty === true,
+      visible: layer?.visible !== false,
+      opacity: Number(layer?.opacity ?? 1),
+      alpha: alphaStats(layer),
+      gpuTarget: layer?.gpuTarget ? {
+        emptyTransparent: layer.gpuTarget.emptyTransparent === true,
+        paintRevision: Math.max(0, Math.floor(Number(layer.gpuTarget.paintRevision) || 0)),
+        hasTarget: Boolean(layer.gpuTarget.target?.texture)
+      } : null
+    });
+    return {
+      layerNumber: ${Number(layerNumber) || 1},
+      activeTool: editor.activeTool,
+      activeLayerId: stack?.activeLayerId || "",
+      selectedLayerIds: stack?.selectedLayerIds || [],
+      painting: Boolean(editor.painting),
+      screenStrokeChanged: editor.textureAirbrushScreenStrokeChanged === true,
+      queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
+      pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
+      flushing: Boolean(editor.textureAirbrushFlushingScreenStroke),
+      status: document.getElementById("viewer-status")?.textContent || "",
+      rows: Array.from(document.querySelectorAll(".texture-layer-row")).map((row) => ({
+        text: row.textContent.trim(),
+        layerId: row.dataset.layerId || "",
+        locked: row.classList.contains("is-locked"),
+        active: row.classList.contains("is-active"),
+        selected: row.classList.contains("is-selected")
+      })),
+      layers: (stack?.layers || []).map(summarizeLayer),
+      activeLayerAlpha: alphaStats(activeLayer),
+      displayBeforeReadback,
       validation: window.__airbrushRuntimeValidation || null
     };
   })()`;

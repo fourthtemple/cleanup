@@ -413,6 +413,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
       this.keyCount.textContent = `${keyCount} ${keyCount === 1 ? "key" : "keys"}`;
       this.syncTimelineSourceControl?.();
       this.syncClonePaintControls?.();
+      this.renderTexturePaintLayerPanel?.();
       this.updateSelectionInfluences();
     },
 
@@ -428,6 +429,9 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
         const materials = this.texturePaintMaterialsForRecord(record);
         for (let materialIndex = 0; materialIndex < materials.length; materialIndex += 1) {
           const material = materials[materialIndex];
+          if (material?.userData?.texturePaintLayerStack?.layers?.length) {
+            continue;
+          }
           const gpuCanvas = !material?.userData?.clonePaintCanvas && material?.userData?.textureAirbrushGpuTarget
             ? this.textureAirbrushCanvasFromRenderTarget?.(material.userData.textureAirbrushGpuTarget)?.canvas
             : null;
@@ -546,6 +550,10 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
       const texturePaints = this.serializeTexturePaints();
       if (texturePaints.length) {
         patch.texturePaints = texturePaints;
+      }
+      const texturePaintLayers = this.serializeTexturePaintLayers?.() || [];
+      if (texturePaintLayers.length) {
+        patch.texturePaintLayers = texturePaintLayers;
       }
       return patch;
     },
@@ -816,7 +824,14 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
           return applied;
         }
         const material = this.texturePaintMaterialForPatch(entry);
-        const editable = this.editableClonePaintTexture?.(material);
+        const previousLayerEnabled = this.texturePaintLayersEnabled;
+        let editable = null;
+        try {
+          this.texturePaintLayersEnabled = false;
+          editable = this.editableClonePaintTexture?.(material);
+        } finally {
+          this.texturePaintLayersEnabled = previousLayerEnabled;
+        }
         if (!editable?.canvas || !editable?.context || !entry?.image) {
           continue;
         }
@@ -834,6 +849,64 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
           applied += 1;
         } catch (error) {
           console.warn("Could not apply edited texture", error);
+        }
+      }
+      if (applied > 0) {
+        this.setPatchJsonFromPatch?.(this.buildPatch());
+      }
+      return applied;
+    },
+
+    async applySerializedTexturePaintLayers(entries = [], options = {}) {
+      if (!Array.isArray(entries) || !entries.length || typeof document === "undefined") {
+        return 0;
+      }
+      const generation = Number.isFinite(Number(options.generation)) ? Number(options.generation) : null;
+      const isCurrentGeneration = () => (
+        generation == null
+        || generation === this.serializedTexturePaintApplyGeneration
+      );
+      let applied = 0;
+      for (const entry of entries) {
+        if (!isCurrentGeneration()) {
+          return applied;
+        }
+        const material = this.texturePaintMaterialForPatch(entry);
+        const previousLayerEnabled = this.texturePaintLayersEnabled;
+        let editable = null;
+        try {
+          this.texturePaintLayersEnabled = false;
+          editable = this.editableClonePaintTexture?.(material);
+        } finally {
+          this.texturePaintLayersEnabled = previousLayerEnabled;
+        }
+        if (!material || !editable?.canvas || !editable.context || !Array.isArray(entry.layers)) {
+          continue;
+        }
+        try {
+          const base = entry.baseImage ? await this.loadTexturePatchImage(entry.baseImage) : null;
+          if (!isCurrentGeneration()) {
+            return applied;
+          }
+          const layerImages = new Map();
+          for (const layer of entry.layers) {
+            if (!layer?.id || !layer.image) {
+              continue;
+            }
+            const image = await this.loadTexturePatchImage(layer.image);
+            if (!isCurrentGeneration()) {
+              return applied;
+            }
+            layerImages.set(layer.id, image);
+          }
+          if (this.texturePaintApplyLayerStackImages?.(material, editable, entry, {
+            base,
+            layers: layerImages
+          })) {
+            applied += 1;
+          }
+        } catch (error) {
+          console.warn("Could not apply texture paint layers", error);
         }
       }
       if (applied > 0) {
@@ -946,6 +1019,7 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
           this.applySerializedPoseKeyframeKinds?.(patch.poseKeyframeKinds || []);
           this.poseKeyframeMode = poseLayer.mode;
         }
+        const texturePaintLayers = Array.isArray(patch.texturePaintLayers) ? patch.texturePaintLayers : [];
         const texturePaints = Array.isArray(patch.texturePaints) ? patch.texturePaints : [];
         const textureApplyGeneration = (this.serializedTexturePaintApplyGeneration || 0) + 1;
         this.serializedTexturePaintApplyGeneration = textureApplyGeneration;
@@ -977,12 +1051,17 @@ export function installVertexPatchMethods(BirdWeightEditor, deps) {
             ? `Applied ${applied} weight patch vertices; ignored ${poseLayer.removedSourceEntries} generated source pose keys`
             : `Applied ${applied} weight patch vertices`);
         }
-        if (texturePaints.length && typeof this.applySerializedTexturePaints === "function") {
-          const textureApply = this.applySerializedTexturePaints(texturePaints, {
+        const textureEntries = texturePaintLayers.length ? texturePaintLayers : texturePaints;
+        const textureApplyMethod = texturePaintLayers.length
+          ? this.applySerializedTexturePaintLayers
+          : this.applySerializedTexturePaints;
+        if (textureEntries.length && typeof textureApplyMethod === "function") {
+          const textureApply = textureApplyMethod.call(this, textureEntries, {
             generation: textureApplyGeneration
           }).then((textureCount) => {
             if (status && textureCount > 0) {
-              this.setStatus(`Applied ${applied} weight patch vertices and ${textureCount} edited ${textureCount === 1 ? "texture" : "textures"}`);
+              const label = texturePaintLayers.length ? "layered texture" : "edited texture";
+              this.setStatus(`Applied ${applied} weight patch vertices and ${textureCount} ${label}${textureCount === 1 ? "" : "s"}`);
             }
             return textureCount;
           }).finally(() => {

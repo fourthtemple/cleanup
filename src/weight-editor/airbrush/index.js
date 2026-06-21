@@ -1,4 +1,4 @@
-export { installTextureAirbrushMethods } from "./install.js?v=airbrush-smooth-coverage-20260618a";
+export { installTextureAirbrushMethods } from "./install.js?v=layer-live-baked-display-20260621a";
 export { installTextureAirbrushBrushSettingsMethods } from "./brush-settings.js";
 export { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
 export { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js";
@@ -13,16 +13,16 @@ export {
   airbrushCoverageForDistance,
   airbrushHaloRadius
 } from "./math.js";
-export { installTextureAirbrushPointerMethods } from "./pointer.js";
-export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js";
+export { installTextureAirbrushPointerMethods } from "./pointer.js?v=layer-hover-preserve-display-20260621a";
+export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=stroke-opacity-cap-20260620c";
 export { installTextureAirbrushProjectedRegionMethods } from "./projected-region.js";
 export { installTextureAirbrushNearBrushMethods } from "./uv-near.js";
-export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js";
+export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=stroke-opacity-cap-20260620c";
 export { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 export { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js";
-export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js";
-export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=airbrush-smooth-coverage-20260618a";
+export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=stroke-opacity-photoshop-cap-20260620a";
+export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=layer-live-baked-display-20260621a";
+export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=layer-live-baked-display-20260621a";
 export {
   textureAirbrushCreateWebGpuPaintResources,
   textureAirbrushDispatchWebGpuPaint,
@@ -45,17 +45,18 @@ export {
   textureAirbrushWebGpuDispatchSize,
   textureAirbrushWebGpuKernelParams,
   textureAirbrushWebGpuKernelSource
-} from "./webgpu-kernel.js";
+} from "./webgpu-kernel.js?v=stroke-opacity-photoshop-cap-20260620a";
 export {
   textureAirbrushUnpackWebGpuReadbackRows
 } from "./webgpu-readback.js";
 export {
   TEXTURE_AIRBRUSH_PROJECTION_DEPTH_WINDOW,
   textureAirbrushFrontIntersections,
+  textureAirbrushPaintSamplePointsFromStroke,
   textureAirbrushPointInRect,
   textureAirbrushProbePointsFromStroke,
   textureAirbrushScreenStrokeFromEvent
-} from "./projection.js";
+} from "./projection.js?v=layer-stroke-fix-20260619a";
 export {
   TEXTURE_AIRBRUSH_WEBGPU_PROJECTION_DEPTH_WINDOW,
   textureAirbrushWebGpuProbePointsFromStroke,
@@ -71,11 +72,11 @@ export {
   textureAirbrushWebGpuStrokeBufferData,
   textureAirbrushWebGpuTextureDescriptors,
   textureAirbrushWebGpuUsageConstants
-} from "./webgpu-plan.js";
+} from "./webgpu-plan.js?v=stroke-opacity-photoshop-cap-20260620a";
 export {
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
-} from "./webgpu.js";
+} from "./webgpu.js?v=stroke-opacity-photoshop-cap-20260620a";
 export { installTextureAirbrushWebGpuCandidateMethods } from "./webgpu-candidates.js";
 export { installTextureAirbrushWebGpuDiagnosticMethods } from "./webgpu-diagnostics.js";
 export { installTextureAirbrushWebGpuPrewarmMethods } from "./webgpu-prewarm.js";

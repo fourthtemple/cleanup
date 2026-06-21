@@ -80,6 +80,7 @@ struct StrokeSegment {
 @group(0) @binding(1) var outputTexture: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(2) var<uniform> brush: BrushParams;
 @group(0) @binding(3) var<storage, read> strokeSegments: array<StrokeSegment, ${maxSegments}>;
+@group(0) @binding(4) var strokeSourceTexture: texture_2d<f32>;
 
 fn distanceToSegment(point: vec2<f32>, start: vec2<f32>, end: vec2<f32>) -> f32 {
   let segment = end - start;
@@ -109,6 +110,27 @@ fn airbrushCoverage(distancePixels: f32) -> f32 {
   return min(1.0, pow(edge, exponent));
 }
 
+fn paintProgress(color: vec4<f32>, strokeSource: vec4<f32>) -> f32 {
+  let paintDelta = brush.color - strokeSource.rgb;
+  let colorDelta = color.rgb - strokeSource.rgb;
+  let colorDenom = dot(paintDelta, paintDelta);
+  let colorProgress = select(
+    0.0,
+    dot(colorDelta, paintDelta) / colorDenom,
+    colorDenom > 0.0001
+  );
+  let alphaProgress = select(
+    0.0,
+    (color.a - strokeSource.a) / max(0.0001, 1.0 - strokeSource.a),
+    strokeSource.a < 0.9999
+  );
+  return select(
+    clamp(colorProgress, 0.0, 1.0),
+    clamp(alphaProgress, 0.0, 1.0),
+    strokeSource.a < 0.9999
+  );
+}
+
 @compute @workgroup_size(${groupSize}, ${groupSize}, 1)
 fn textureAirbrushPaint(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= brush.paintSize.x || id.y >= brush.paintSize.y) {
@@ -128,8 +150,20 @@ fn textureAirbrushPaint(@builtin(global_invocation_id) id: vec3<u32>) {
   let coverage = airbrushCoverage(distancePixels);
   let alpha = clamp(brush.opacity * brush.strength * coverage, 0.0, 1.0);
   let current = textureLoad(sourceTexture, vec2<i32>(pixel), 0);
-  let nextRgb = current.rgb * (1.0 - alpha) + brush.color * alpha;
-  textureStore(outputTexture, vec2<i32>(pixel), vec4<f32>(nextRgb, max(current.a, alpha)));
+  let strokeSource = textureLoad(strokeSourceTexture, vec2<i32>(pixel), 0);
+  let nextAlpha = alpha + strokeSource.a * (1.0 - alpha);
+  let nextRgb = select(
+    vec3<f32>(0.0),
+    (brush.color * alpha + strokeSource.rgb * strokeSource.a * (1.0 - alpha)) / nextAlpha,
+    nextAlpha > 0.0001
+  );
+  let proposed = vec4<f32>(nextRgb, nextAlpha);
+  let currentProgress = paintProgress(current, strokeSource);
+  var outputColor = proposed;
+  if (currentProgress + 0.0001 >= alpha) {
+    outputColor = current;
+  }
+  textureStore(outputTexture, vec2<i32>(pixel), outputColor);
 }
 `.trim();
 }

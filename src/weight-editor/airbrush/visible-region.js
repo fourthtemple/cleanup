@@ -59,6 +59,8 @@ export function installTextureAirbrushVisibleRegionMethods(BirdWeightEditor, dep
       const alpha = options.strength ?? this.textureAirbrushStrength?.() ?? 0.26;
       const { canvas, context, texture } = editable;
       const image = context.getImageData(0, 0, canvas.width, canvas.height);
+      const useLayerPixels = editable.layerMode === true;
+      const eraseLayer = useLayerPixels && options.erase === true;
       const writtenPixels = new Set();
       const referenceUv = Object.prototype.hasOwnProperty.call(options, "referenceUv")
         ? options.referenceUv
@@ -130,22 +132,28 @@ export function installTextureAirbrushVisibleRegionMethods(BirdWeightEditor, dep
             if (pixelAlpha <= 0.012) {
               continue;
             }
-            const nextR = clampByte(image.data[offset] * (1 - pixelAlpha) + color.r * pixelAlpha);
-            const nextG = clampByte(image.data[offset + 1] * (1 - pixelAlpha) + color.g * pixelAlpha);
-            const nextB = clampByte(image.data[offset + 2] * (1 - pixelAlpha) + color.b * pixelAlpha);
-            const nextA = Math.max(image.data[offset + 3], 255);
-            if (
-              image.data[offset] === nextR
-              && image.data[offset + 1] === nextG
-              && image.data[offset + 2] === nextB
-              && image.data[offset + 3] === nextA
-            ) {
-              continue;
+            if (useLayerPixels) {
+              if (!this.texturePaintApplyLayerPixel?.(image, offset, color, pixelAlpha, { erase: eraseLayer })) {
+                continue;
+              }
+            } else {
+              const nextR = clampByte(image.data[offset] * (1 - pixelAlpha) + color.r * pixelAlpha);
+              const nextG = clampByte(image.data[offset + 1] * (1 - pixelAlpha) + color.g * pixelAlpha);
+              const nextB = clampByte(image.data[offset + 2] * (1 - pixelAlpha) + color.b * pixelAlpha);
+              const nextA = Math.max(image.data[offset + 3], 255);
+              if (
+                image.data[offset] === nextR
+                && image.data[offset + 1] === nextG
+                && image.data[offset + 2] === nextB
+                && image.data[offset + 3] === nextA
+              ) {
+                continue;
+              }
+              image.data[offset] = nextR;
+              image.data[offset + 1] = nextG;
+              image.data[offset + 2] = nextB;
+              image.data[offset + 3] = nextA;
             }
-            image.data[offset] = nextR;
-            image.data[offset + 1] = nextG;
-            image.data[offset + 2] = nextB;
-            image.data[offset + 3] = nextA;
             changed += 1;
           }
         }
@@ -309,10 +317,11 @@ export function installTextureAirbrushVisibleRegionMethods(BirdWeightEditor, dep
       context.putImageData(image, 0, 0);
       texture.needsUpdate = true;
       material.needsUpdate = true;
+      this.texturePaintCommitEditable?.(editable, material, record);
       this.markTexturePaintStrokeChanged?.();
       this.refreshCloneSpotlightTextures?.(record);
       this.updateClonePaintPreviews?.();
-      this.setStatus(`Airbrushed ${changed} ${changed === 1 ? "pixel" : "pixels"}`);
+      this.setStatus(`${eraseLayer ? "Erased" : "Airbrushed"} ${changed} ${changed === 1 ? "pixel" : "pixels"}`);
       return changed;
     }
   });
