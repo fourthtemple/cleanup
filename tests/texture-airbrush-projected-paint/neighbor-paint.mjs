@@ -1316,7 +1316,10 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintViewNormal\)/);
   assert.match(material.fragmentShader, /float wideBoundaryCoverage = visibleSurfaceWideGaussianCoverage/);
   assert.match(material.fragmentShader, /float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage\(paintViewNormal\)/);
-  assert.match(material.fragmentShader, /float softBoundaryCoverage = max\(wideBoundaryCoverage, grazingAngleCoverage\)/);
+  assert.match(material.fragmentShader, /the continuous angle falloff owns/);
+  assert.match(material.fragmentShader, /float sampledBoundaryCoverage = max\(wideBoundaryCoverage, grazingAngleCoverage\)/);
+  assert.match(material.fragmentShader, /float softBoundaryCoverage = mix\(/);
+  assert.match(material.fragmentShader, /sampledBoundaryCoverage,/);
   assert.match(material.fragmentShader, /visibleSurfaceCoverage = mix\(1\.0, softBoundaryCoverage, grazingEdgeAmount\)/);
   assert.match(material.fragmentShader, /if \(!visibleSurfaceMatched && useVisibleNormalTexture\)/);
   assert.match(material.fragmentShader, /vec2 screenPixel = 1\.0 \/ max\(viewportSize, vec2\(1\.0\)\)/);

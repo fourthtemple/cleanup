@@ -464,7 +464,18 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
                   visibleNormalMatchThreshold
                 );
                 float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage(paintViewNormal);
-                float softBoundaryCoverage = max(wideBoundaryCoverage, grazingAngleCoverage);
+                // DO NOT PAINT ON NON CAMERA FACING SIDES.
+                // Near the 90-degree cutoff, the continuous angle falloff owns
+                // the opacity so a high neighboring sample cannot draw a comb
+                // of solid teeth. As the fragment turns more camera-facing, the
+                // visible-only sampled Gaussian is allowed to fill small raster
+                // gaps without authorizing any hidden/back fragments.
+                float sampledBoundaryCoverage = max(wideBoundaryCoverage, grazingAngleCoverage);
+                float softBoundaryCoverage = mix(
+                  grazingAngleCoverage,
+                  sampledBoundaryCoverage,
+                  grazingAngleCoverage
+                );
                 visibleSurfaceCoverage = mix(1.0, softBoundaryCoverage, grazingEdgeAmount);
               }
             }
