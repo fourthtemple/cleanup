@@ -1,5 +1,5 @@
-import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-silhouette-20260624a";
-import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=visible-silhouette-20260624a";
+import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-normal-frontbuffer-20260624a";
+import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=visible-normal-frontbuffer-20260624a";
 
 const TEXTURE_AIRBRUSH_LAYER_HIT_SEED_MAX_AGE_MS = 10000;
 
