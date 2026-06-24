@@ -9,7 +9,7 @@ import { installTextureAirbrushTexturePickingMethods } from "./texture-picking.j
 import { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=visible-side-facing-20260623a";
 import { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 import { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-import { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=visible-strict-depth-20260624a";
+import { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=visible-strict-depth-20260624c";
 
 export function installTextureAirbrushMethods(BirdWeightEditor, deps) {
   // Painting module note:

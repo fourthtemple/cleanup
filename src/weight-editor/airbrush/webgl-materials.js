@@ -30,8 +30,14 @@ import {
 // 2. exact frontmost depth-buffer match, so hidden/behind/ahead fragments are never eligible.
 // Removing either gate can make the brush look more filled, but that is the
 // forbidden failure mode: painting through the model or onto the back side.
-const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.0008;
-const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = 0.0;
+const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.00018;
+// DO NOT PAINT ON NON CAMERA FACING SIDES.
+// This small negative value is only a visible-silhouette tolerance for meshes
+// whose smoothed/vertex normals tip just past 90 degrees while the triangle is
+// still the frontmost rendered surface. It is not a hidden-side allowance:
+// the strict depth gate and visible-normal agreement gate below still decide
+// whether the fragment belongs to the current camera-visible surface.
+const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = -0.12;
 const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.12;
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {

@@ -1,5 +1,5 @@
-import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-strict-depth-20260624a";
-import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=visible-strict-depth-20260624a";
+import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-strict-depth-20260624c";
+import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=visible-strict-depth-20260624c";
 
 const TEXTURE_AIRBRUSH_LAYER_HIT_SEED_MAX_AGE_MS = 10000;
 
@@ -2535,7 +2535,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       target.depthTexture = new THREE.DepthTexture(width, height);
       target.depthTexture.name = "texture airbrush screen depth";
       target.depthTexture.format = THREE.DepthFormat;
-      target.depthTexture.type = THREE.UnsignedShortType;
+      target.depthTexture.type = THREE.UnsignedIntType || THREE.UnsignedShortType;
       this.textureAirbrushGpuDepthTarget = target;
       return target;
     },

@@ -28,7 +28,7 @@ const TEXTURE_AIRBRUSH_NEIGHBOR_MASK_ATTRIBUTE = "textureAirbrushNeighborMask";
 // The post-orbit coverage fix must refresh/warm projection state while keeping
 // visible-only culling intact. Do not solve coverage by painting occluded UVs,
 // by re-enabling UV bleed passes, or by adding a Neighbor-only back-side bypass.
-const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.0008;
+const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.00018;
 const TEXTURE_AIRBRUSH_NEIGHBOR_MASK_VERSION = "neighbor-mask-v2";
 
 function projectionProbeKey(point = null) {

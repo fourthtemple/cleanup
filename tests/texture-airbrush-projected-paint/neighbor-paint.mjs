@@ -646,7 +646,7 @@ test("WebGL neighbor paint renders the seeded masked pass when overlaps hide the
   assert.equal(renderUniforms[0].neighborNormalThreshold, 0);
   // DO NOT PAINT ON NON CAMERA FACING SIDES.
   // Neighbor fixes must not bypass visible-field culling for connected seeds.
-  assert.equal(renderUniforms[0].visibleOnlyDepthEpsilon, 0.0008);
+  assert.equal(renderUniforms[0].visibleOnlyDepthEpsilon, 0.00018);
   assert.equal(renderUniforms[0].strokeSegmentCount, 1);
   assert.deepEqual(renderUniforms.map((entry) => entry.uvOffset), [{ x: 0, y: 0 }]);
   assert.deepEqual([...record.geometry.attributes.textureAirbrushNeighborMask.array], [1, 1, 1, 0, 0, 0]);
@@ -821,13 +821,13 @@ test("WebGL neighbor paint seeds all connected component material passes without
         target: "target-a",
         useNeighborMask: true,
         useNeighborNormalMask: false,
-        visibleOnlyDepthEpsilon: 0.0008
+        visibleOnlyDepthEpsilon: 0.00018
       },
       {
         target: "target-b",
         useNeighborMask: true,
         useNeighborNormalMask: false,
-        visibleOnlyDepthEpsilon: 0.0008
+        visibleOnlyDepthEpsilon: 0.00018
       }
     ]
   );
@@ -1217,8 +1217,8 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.equal(material.uniforms.useNeighborMask.value, false);
   assert.equal(material.uniforms.useNeighborNormalMask.value, false);
   assert.equal(material.uniforms.neighborNormalThreshold.value, 0);
-  assert.equal(material.uniforms.visibleOnlyDepthEpsilon.value, 0.0008);
-  assert.equal(material.uniforms.visibleFacingNormalThreshold.value, 0);
+  assert.equal(material.uniforms.visibleOnlyDepthEpsilon.value, 0.00018);
+  assert.equal(material.uniforms.visibleFacingNormalThreshold.value, -0.12);
   assert.equal(material.uniforms.useVisibleNormalTexture.value, false);
   assert.equal(material.uniforms.visibleNormalTexture.value, null);
   assert.equal(material.uniforms.visibleNormalMatchThreshold.value, 0.12);

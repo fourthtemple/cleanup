@@ -59,6 +59,52 @@ test("depth cache keys normalize negative zero matrix values", () => {
   assert.doesNotMatch(negativeZeroKey, /-0\.00000/);
 });
 
+test("airbrush depth target prefers 24-bit depth precision", () => {
+  class WebGlFrameEditor {}
+  class DepthTexture {
+    constructor(width, height) {
+      this.width = width;
+      this.height = height;
+    }
+  }
+  class WebGLRenderTarget {
+    constructor(width, height, options) {
+      this.width = width;
+      this.height = height;
+      this.options = options;
+      this.texture = {};
+    }
+  }
+  const THREE = {
+    DepthFormat: "depth-format",
+    DepthTexture,
+    NearestFilter: "nearest",
+    UnsignedIntType: "uint-depth",
+    UnsignedShortType: "ushort-depth",
+    WebGLRenderTarget
+  };
+  installTextureAirbrushWebGlBackendMethods(WebGlFrameEditor, { THREE });
+  const editor = new WebGlFrameEditor();
+  editor.canvas = {
+    getBoundingClientRect() {
+      return { width: 400, height: 300 };
+    }
+  };
+  editor.renderer = {
+    getPixelRatio() {
+      return 2;
+    }
+  };
+
+  const target = editor.textureAirbrushEnsureDepthTarget();
+
+  assert.equal(target.width, 800);
+  assert.equal(target.height, 600);
+  assert.equal(target.options.depthBuffer, true);
+  assert.equal(target.depthTexture.type, "uint-depth");
+  assert.equal(target.depthTexture.format, "depth-format");
+});
+
 test("live projection frames stay current across negative zero camera key flips", () => {
   class WebGlFrameEditor {}
   installTextureAirbrushWebGlBackendMethods(WebGlFrameEditor, { THREE: {} });
