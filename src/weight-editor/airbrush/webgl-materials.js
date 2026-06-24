@@ -499,6 +499,13 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               ) {
                 discard;
               }
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // The strict exact-center match is a visible-surface proof for
+              // Soft edge at the cutoff. Without promoting it here, the old
+              // normal-match path can still discard individual visible edge
+              // triangles and leave the jagged teeth we are trying to soften.
+              visibleSurfaceMatched = true;
+              centerVisibleSurfaceMatched = true;
               geometricFacingCoverage = smoothstep(
                 geometricFeatherStart,
                 visibleFacingNormalThreshold,
