@@ -1209,6 +1209,10 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       shaderMaterial.uniforms.brushOpacity.value = options.opacity ?? this.textureAirbrushOpacity?.() ?? 0.42;
       shaderMaterial.uniforms.brushHardness.value = options.hardness ?? this.textureAirbrushHardness?.() ?? 0.35;
       shaderMaterial.uniforms.scatterAmount.value = options.scatter ?? this.textureAirbrushScatter?.() ?? 0.35;
+      if (shaderMaterial.uniforms.visibleEdgeSoftness) {
+        const visibleEdgeMode = options.visibleEdgeMode || this.textureAirbrushVisibleEdgeMode?.() || "soft";
+        shaderMaterial.uniforms.visibleEdgeSoftness.value = visibleEdgeMode === "hard" ? 0 : 1;
+      }
       if (shaderMaterial.uniforms.visibleOnlyDepthEpsilon) {
         const visibleOnlyDepthEpsilon = Number(options.visibleOnlyDepthEpsilon);
         // DO NOT PAINT ON NON CAMERA FACING SIDES.

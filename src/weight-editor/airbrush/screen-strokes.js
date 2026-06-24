@@ -867,6 +867,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const opacity = this.textureAirbrushOpacity?.() ?? 0.42;
       const hardness = this.textureAirbrushHardness?.() ?? 0.35;
       const scatter = this.textureAirbrushScatter?.() ?? 0.35;
+      const visibleEdgeMode = this.textureAirbrushVisibleEdgeMode?.() || "soft";
       const spacing = this.textureAirbrushSpacingPercent?.() ?? 1;
       const color = this.textureAirbrushColor();
       const pressureSettings = this.textureAirbrushPressureSettings?.({}) || {};
@@ -875,6 +876,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         opacity,
         hardness,
         scatter,
+        visibleEdgeMode,
         spacing,
         color: { r: color.r, g: color.g, b: color.b },
         pressureRadius: pressureSettings.radius === true,

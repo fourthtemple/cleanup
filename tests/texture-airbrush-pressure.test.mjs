@@ -15,6 +15,7 @@ function editorWithBrushControls() {
   editor.textureBrushOpacity = { value: "0.8" };
   editor.textureBrushHardness = { value: "0.5" };
   editor.textureBrushScatter = { value: "0.6" };
+  editor.textureVisibleEdgeMode = { value: "soft" };
   editor.texturePressureRadius = { checked: true };
   editor.texturePressureOpacity = { checked: true };
   return editor;
@@ -239,6 +240,7 @@ test("airbrush macro brush settings carry pressure controls", () => {
     opacity: 0.5,
     hardness: 0.4,
     scatter: 0.3,
+    visibleEdgeMode: "hard",
     pressure: 0.35,
     pressureRadius: true,
     pressureOpacity: false
@@ -249,6 +251,7 @@ test("airbrush macro brush settings carry pressure controls", () => {
   assert.equal(options.opacity, 0.5);
   assert.equal(options.hardness, 0.4);
   assert.equal(options.scatter, 0.3);
+  assert.equal(options.visibleEdgeMode, "hard");
   assert.equal(options.pressure, 0.35);
   assert.equal(options.pressureRadius, true);
   assert.equal(options.pressureOpacity, false);

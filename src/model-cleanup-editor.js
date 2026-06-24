@@ -245,6 +245,7 @@ class ModelCleanupEditor {
     this.textureBrushOpacityOutput = document.getElementById("texture-brush-opacity-output");
     this.textureBrushHardness = document.getElementById("texture-brush-hardness");
     this.textureBrushHardnessOutput = document.getElementById("texture-brush-hardness-output");
+    this.textureVisibleEdgeMode = document.getElementById("texture-visible-edge-mode");
     this.textureBrushScatter = document.getElementById("texture-brush-scatter");
     this.textureBrushScatterOutput = document.getElementById("texture-brush-scatter-output");
     this.texturePressureRadius = document.getElementById("texture-pressure-radius");

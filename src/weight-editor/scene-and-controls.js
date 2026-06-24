@@ -2656,6 +2656,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.textureBrushOpacity?.addEventListener("change", () => syncTextureBrushSetting({ resetLiveProjection: false }));
       this.textureBrushHardness?.addEventListener("input", () => syncTextureBrushSetting({ resetLiveProjection: false }));
       this.textureBrushHardness?.addEventListener("change", () => syncTextureBrushSetting({ resetLiveProjection: false }));
+      this.textureVisibleEdgeMode?.addEventListener("change", () => syncTextureBrushSetting({ resetLiveProjection: false }));
       this.textureBrushScatter?.addEventListener("input", () => syncTextureBrushSetting({ resetLiveProjection: false }));
       this.textureBrushScatter?.addEventListener("change", () => syncTextureBrushSetting({ resetLiveProjection: false }));
       this.texturePressureRadius?.addEventListener("change", () => syncTextureBrushSetting());

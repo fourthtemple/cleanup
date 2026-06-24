@@ -346,6 +346,7 @@ test("tutorial macro brush settings preserve Neighbor paint mode", () => {
   editor.textureBrushSpacing = { value: "1", dispatchEvent(event) { dispatched.push(["spacing", event.type]); } };
   editor.textureBrushOpacity = { value: "0.42", dispatchEvent(event) { dispatched.push(["opacity", event.type]); } };
   editor.textureBrushHardness = { value: "0.35", dispatchEvent(event) { dispatched.push(["hardness", event.type]); } };
+  editor.textureVisibleEdgeMode = { value: "soft", dispatchEvent(event) { dispatched.push(["edge", event.type]); } };
   editor.textureBrushScatter = { value: "0.35", dispatchEvent(event) { dispatched.push(["scatter", event.type]); } };
   editor.texturePaintNeighborEnabled = true;
   editor.texturePaintNeighborModeEnabled = () => editor.texturePaintNeighborEnabled === true;
@@ -353,6 +354,7 @@ test("tutorial macro brush settings preserve Neighbor paint mode", () => {
   editor.textureAirbrushPressureValue = () => 1;
   editor.textureAirbrushPressureSettings = () => ({ radius: true, opacity: false });
   editor.textureAirbrushSpacingPercent = () => 1;
+  editor.textureAirbrushVisibleEdgeMode = () => editor.textureVisibleEdgeMode.value === "hard" ? "hard" : "soft";
   editor.textureBrushRadiusScreenPixels = () => 8;
   editor.updateRangeOutputs = () => {};
   const neighborModeCalls = [];
@@ -363,6 +365,7 @@ test("tutorial macro brush settings preserve Neighbor paint mode", () => {
 
   const snapshot = editor.tutorialMacroBrushSettingsSnapshot();
   assert.equal(snapshot.neighbor, true);
+  assert.equal(snapshot.visibleEdgeMode, "soft");
   assert.equal(editor.applyTutorialMacroBrushSettings({ neighbor: true }), true);
   assert.deepEqual(neighborModeCalls, []);
 
@@ -373,7 +376,9 @@ test("tutorial macro brush settings preserve Neighbor paint mode", () => {
   assert.equal(editor.applyTutorialMacroBrushSettings({ neighbor: true }), true);
   assert.equal(editor.texturePaintNeighborEnabled, true);
   assert.deepEqual(neighborModeCalls, [false, true]);
-  assert.deepEqual(dispatched, []);
+  assert.equal(editor.applyTutorialMacroBrushSettings({ visibleEdgeMode: "hard" }), true);
+  assert.equal(editor.textureVisibleEdgeMode.value, "hard");
+  assert.deepEqual(dispatched, [["edge", "input"], ["edge", "change"]]);
 });
 
 test("recorded texture brush events carry the live Neighbor paint mode", () => {

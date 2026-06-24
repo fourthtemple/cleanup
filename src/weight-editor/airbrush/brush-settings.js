@@ -49,10 +49,19 @@ export function installTextureAirbrushBrushSettingsMethods(BirdWeightEditor, dep
       return Math.max(0, Math.min(1, Number(this.textureBrushScatter?.value || 0.35)));
     },
 
+    textureAirbrushVisibleEdgeMode() {
+      return String(this.textureVisibleEdgeMode?.value || "soft") === "hard" ? "hard" : "soft";
+    },
+
     textureAirbrushOptionsFromMacroBrush(settings = null) {
       if (!settings || typeof settings !== "object") {
         return null;
       }
+      const visibleEdgeMode = String(settings.visibleEdgeMode || settings.edgeMode || "") === "hard"
+        ? "hard"
+        : String(settings.visibleEdgeMode || settings.edgeMode || "") === "soft"
+          ? "soft"
+          : null;
       const colorBytes = settings.colorBytes && typeof settings.colorBytes === "object"
         ? settings.colorBytes
         : null;
@@ -78,6 +87,7 @@ export function installTextureAirbrushBrushSettingsMethods(BirdWeightEditor, dep
         ...(Number.isFinite(Number(settings.opacity)) ? { opacity: Math.max(0.04, Math.min(1, Number(settings.opacity))) } : {}),
         ...(Number.isFinite(Number(settings.hardness)) ? { hardness: Math.max(0, Math.min(1, Number(settings.hardness))) } : {}),
         ...(Number.isFinite(Number(settings.scatter)) ? { scatter: Math.max(0, Math.min(1, Number(settings.scatter))) } : {}),
+        ...(visibleEdgeMode ? { visibleEdgeMode } : {}),
         ...(Number.isFinite(Number(settings.pressure)) ? { pressure: Math.max(0.02, Math.min(1, Number(settings.pressure))) } : {}),
         ...(typeof settings.pressureRadius === "boolean" ? { pressureRadius: settings.pressureRadius } : {}),
         ...(typeof settings.pressureOpacity === "boolean" ? { pressureOpacity: settings.pressureOpacity } : {}),

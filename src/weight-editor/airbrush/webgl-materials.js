@@ -107,6 +107,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           brushOpacity: { value: 0.42 },
           brushHardness: { value: 0.35 },
           scatterAmount: { value: 0.35 },
+          visibleEdgeSoftness: { value: 1 },
           // DO NOT PAINT ON NON CAMERA FACING SIDES. All airbrush modes use a
           // visible-depth match. Never raise this to paint through, behind, or
           // around the visible side of the model.
@@ -188,6 +189,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           uniform float brushOpacity;
           uniform float brushHardness;
           uniform float scatterAmount;
+          uniform float visibleEdgeSoftness;
           uniform float visibleOnlyDepthEpsilon;
           uniform float visibleOnlyFrontDepthEpsilon;
           uniform float visibleFacingNormalThreshold;
@@ -288,38 +290,6 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return clamp(coverage / 16.0, 0.0, 1.0);
           }
 
-          float visibleSurfaceWideGaussianCoverage(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
-            vec2 screenPixel = 1.0 / max(viewportSize, vec2(1.0));
-            float coverage = 0.0;
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This wider kernel is only for already center-visible fragments at
-            // grazing local boundaries. It smooths the visual falloff by
-            // lowering alpha near the visible wrap edge; it must never
-            // authorize a hidden/back fragment by itself.
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 8.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(screenPixel.x, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + screenPixel, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, -screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(-screenPixel.x, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - screenPixel, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x * 2.0, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(screenPixel.x * 2.0, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, screenPixel.y * 2.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, screenPixel.y * 2.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + screenPixel * 2.0, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x * 2.0, -screenPixel.y * 2.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(-screenPixel.x * 2.0, screenPixel.y * 2.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - screenPixel * 2.0, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x * 3.0, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 0.5 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(screenPixel.x * 3.0, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 0.5 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, screenPixel.y * 3.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 0.5 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, screenPixel.y * 3.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 0.5 : 0.0;
-            return clamp(coverage / 42.0, 0.0, 1.0);
-          }
-
           float visibleSurfaceGrazingEdgeAmount(vec3 paintViewNormal) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This angle test only decides whether an already-visible local
@@ -334,10 +304,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
 
           float visibleSurfaceGrazingAngleCoverage(vec3 paintViewNormal) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This is only an alpha floor for fragments that already passed the
+            // This is only alpha coverage for fragments that already passed the
             // center visible-surface gates. It smooths the 90-degree falloff by
-            // angle so the screen-sample Gaussian cannot leave a comb of hard
-            // triangle-sized notches along an otherwise visible side edge.
+            // angle only; screen-sample coverage is intentionally not used here
+            // because it can draw a comb of triangle-sized teeth along the
+            // otherwise continuous visible wrap.
             float grazingFeatherEnd = visibleFacingNormalThreshold + 0.72;
             return smoothstep(visibleFacingNormalThreshold, grazingFeatherEnd, paintViewNormal.z);
           }
@@ -459,24 +430,16 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // until it suddenly discards and leaves a hard angular cutoff.
             float visibleSurfaceCoverage = 1.0;
             if (visibleSurfaceMatched && useVisibleNormalTexture) {
-              float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintViewNormal);
+              float edgeSoftness = clamp(visibleEdgeSoftness, 0.0, 1.0);
+              float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintViewNormal) * edgeSoftness;
               if (grazingEdgeAmount > 0.0) {
                 float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage(paintViewNormal);
-                float wideBoundaryCoverage = visibleSurfaceWideGaussianCoverage(
-                  depthUv,
-                  fragmentDepth,
-                  paintViewNormal,
-                  visibleNormalMatchThreshold
-                );
                 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-                // Near the 90-degree cutoff, the visible-only sampled Gaussian
-                // must be allowed to lower opacity; otherwise individual
-                // triangle edges become a comb of solid teeth. The center
-                // fragment is already depth/normal matched above, so this can
-                // only soften an approved visible fragment, not revive hidden
-                // or back-side paint.
-                float softBoundaryCoverage = min(grazingAngleCoverage, wideBoundaryCoverage);
-                visibleSurfaceCoverage = mix(1.0, softBoundaryCoverage, grazingEdgeAmount);
+                // Soft visible-edge mode uses only the continuous normal-angle
+                // falloff after the center fragment has already matched the
+                // frontmost depth/normal buffers. Hard mode sets softness to
+                // zero, keeping a crisp cutoff without sampled triangle teeth.
+                visibleSurfaceCoverage = mix(1.0, grazingAngleCoverage, grazingEdgeAmount);
               }
             }
             if (!visibleSurfaceMatched && useVisibleNormalTexture) {

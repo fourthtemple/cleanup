@@ -1403,6 +1403,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         spacing: rounded(this.textureAirbrushSpacingPercent?.() ?? this.textureBrushSpacing?.value ?? 1, 3),
         opacity: rounded(this.textureBrushOpacity?.value || 0.42, 5),
         hardness: rounded(this.textureBrushHardness?.value || 0.35, 5),
+        visibleEdgeMode: this.textureAirbrushVisibleEdgeMode?.() || "soft",
         scatter: rounded(this.textureBrushScatter?.value || 0.35, 5),
         pressure: rounded(pressure, 5),
         pressureRadius: pressureSettings.radius === true,
@@ -1421,6 +1422,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         [this.textureBrushSpacing, settings.spacing],
         [this.textureBrushOpacity, settings.opacity],
         [this.textureBrushHardness, settings.hardness],
+        [this.textureVisibleEdgeMode, settings.visibleEdgeMode || settings.edgeMode],
         [this.textureBrushScatter, settings.scatter]
       ];
       let changed = false;
