@@ -215,11 +215,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           varying vec3 vPaintViewNormal;
           varying vec3 vPaintViewPosition;
 
-          vec3 paintFragmentViewNormal() {
-            vec3 viewNormal = normalize(vPaintViewNormal);
-            if (length(viewNormal) > 0.000001) {
-              return viewNormal;
-            }
+          vec3 paintFragmentGeometricViewNormal() {
             vec3 geometricNormal = cross(dFdx(vPaintViewPosition), dFdy(vPaintViewPosition));
             geometricNormal *= gl_FrontFacing ? 1.0 : -1.0;
             float geometricLength = length(geometricNormal);
@@ -227,6 +223,14 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               return normalize(geometricNormal);
             }
             return vec3(0.0, 0.0, -1.0);
+          }
+
+          vec3 paintFragmentViewNormal() {
+            vec3 viewNormal = normalize(vPaintViewNormal);
+            if (length(viewNormal) > 0.000001) {
+              return viewNormal;
+            }
+            return paintFragmentGeometricViewNormal();
           }
 
           bool visibleSurfaceDepthNormalMatch(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
@@ -309,8 +313,9 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // angle only; screen-sample coverage is intentionally not used here
             // because it can draw a comb of triangle-sized teeth along the
             // otherwise continuous visible wrap.
+            float grazingFeatherStart = visibleFacingNormalThreshold - 0.32;
             float grazingFeatherEnd = visibleFacingNormalThreshold + 0.72;
-            return smoothstep(visibleFacingNormalThreshold, grazingFeatherEnd, paintViewNormal.z);
+            return smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
           }
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
@@ -344,20 +349,25 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // still let near-wrap UV fragments receive paint around the back.
             // Do not make this Neighbor-only. Normal airbrush, Neighbor, and
             // layer airbrush all share the same visible-side-only rule.
-            // The smoothed paint normal gives a hard, non-faceted cutoff; the
-            // visible-normal buffer below makes sure that cutoff belongs to the
-            // current frontmost visible surface, not a hidden wrap surface.
+            // The geometric paint normal owns the hard eligibility cutoff; the
+            // smoothed/vertex normal below only shapes the soft airbrush fade.
+            // This prevents vertex-normal seams from carving angular holes into
+            // a frontmost visible surface.
             //
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This is global airbrush behavior, not a Neighbor-only rule:
-            // fragments whose paint normal faces away from the paint camera
-            // are not eligible for paint. This is not permission to paint
-            // through or behind the model; the visible-normal and depth gates
-            // below must still agree with the current frontmost screen surface.
+            // fragments whose geometric paint normal faces away from the paint
+            // camera are not eligible for paint. Smoothed/vertex normals may tip
+            // backward at the 90-degree wrap, but that only reduces alpha; it
+            // does not decide hidden-side eligibility by itself. This is not
+            // permission to paint through or behind the model; the visible-normal buffer
+            // and depth gates below must still agree with the current frontmost
+            // screen surface.
             vec3 paintViewNormal = paintFragmentViewNormal();
-            if (paintViewNormal.z <= visibleFacingNormalThreshold) {
+            vec3 paintGateViewNormal = paintFragmentGeometricViewNormal();
+            if (paintGateViewNormal.z <= visibleFacingNormalThreshold) {
               discard;
             }
             if (
