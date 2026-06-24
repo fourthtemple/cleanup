@@ -227,6 +227,48 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return vec3(0.0, 0.0, -1.0);
           }
 
+          bool visibleSurfaceDepthNormalMatch(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
+            if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {
+              return false;
+            }
+            float sceneDepth = texture2D(depthTexture, sampleUv).r;
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Background depth is not a visible model surface. Neighboring
+            // samples are only allowed to rescue edge quantization when they
+            // still point at the current rendered front surface.
+            if (sceneDepth >= 0.9999) {
+              return false;
+            }
+            float deltaFromVisibleSurface = fragmentDepth - sceneDepth;
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Keep both sides bounded: this helper does not restore the old
+            // "closer than depth is okay" shortcut and it does not widen the
+            // strict behind/back-side depth gate.
+            if (
+              deltaFromVisibleSurface > visibleOnlyDepthEpsilon
+              || deltaFromVisibleSurface < -visibleOnlyFrontDepthEpsilon
+            ) {
+              return false;
+            }
+            if (useVisibleNormalTexture) {
+              vec3 visibleNormal = texture2D(visibleNormalTexture, sampleUv).rgb * 2.0 - 1.0;
+              float visibleNormalLength = length(visibleNormal);
+              if (visibleNormalLength <= 0.000001) {
+                return false;
+              }
+              visibleNormal = visibleNormal / visibleNormalLength;
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // A nearby depth sample is useful only when its frontmost normal
+              // still agrees with this paint fragment. This prevents edge
+              // rescue from authorizing a wrap/back fragment that merely has a
+              // similar depth value.
+              if (dot(visibleNormal, paintViewNormal) < normalMatchThreshold) {
+                return false;
+              }
+            }
+            return true;
+          }
+
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
             if (erasing) {
               return clamp((sourceColor.a - color.a) / max(0.0001, sourceColor.a), 0.0, 1.0);
@@ -289,25 +331,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               discard;
             }
             vec2 depthUv = ndc.xy * 0.5 + 0.5;
-            float sceneDepth = texture2D(depthTexture, depthUv).r;
             float fragmentDepth = ndc.z * 0.5 + 0.5;
-            if (useVisibleNormalTexture) {
-              vec3 visibleNormal = texture2D(visibleNormalTexture, depthUv).rgb * 2.0 - 1.0;
-              float visibleNormalLength = length(visibleNormal);
-              if (visibleNormalLength <= 0.000001) {
-                discard;
-              }
-              visibleNormal = visibleNormal / visibleNormalLength;
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // Depth can be numerically close at a side wrap. The sampled
-              // visible normal is the frontmost visible surface at this screen
-              // pixel; if the paint fragment normal does not agree with it, the
-              // fragment is a hidden/wrapped/back-side candidate and must die.
-              if (dot(visibleNormal, paintViewNormal) < visibleNormalMatchThreshold) {
-                discard;
-              }
-            }
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
@@ -349,12 +373,44 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // check above agrees with the current front surface; behind/back-side
             // fragments still use the strict epsilon and must be rejected.
             // Do not restore the old unbounded "closer than depth is okay" shortcut.
-            float depthDelta = fragmentDepth - sceneDepth;
-            if (
-              sceneDepth >= 0.9999
-              || depthDelta > visibleOnlyDepthEpsilon
-              || depthDelta < -visibleOnlyFrontDepthEpsilon
-            ) {
+            bool visibleSurfaceMatched = visibleSurfaceDepthNormalMatch(
+              depthUv,
+              fragmentDepth,
+              paintViewNormal,
+              visibleNormalMatchThreshold
+            );
+            if (!visibleSurfaceMatched && useVisibleNormalTexture) {
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // This is an edge rasterization repair only. At grazing visible
+              // silhouettes, the UV-space fragment can land between depth
+              // pixels even though the surface is visibly frontmost. Check the
+              // immediate screen neighbors, but require a much stronger visible
+              // normal match and keep the same strict depth windows.
+              vec2 screenPixel = 1.0 / max(viewportSize, vec2(1.0));
+              float edgeNormalMatchThreshold = max(0.55, visibleNormalMatchThreshold);
+              visibleSurfaceMatched = visibleSurfaceDepthNormalMatch(
+                depthUv + vec2(screenPixel.x, 0.0),
+                fragmentDepth,
+                paintViewNormal,
+                edgeNormalMatchThreshold
+              ) || visibleSurfaceDepthNormalMatch(
+                depthUv - vec2(screenPixel.x, 0.0),
+                fragmentDepth,
+                paintViewNormal,
+                edgeNormalMatchThreshold
+              ) || visibleSurfaceDepthNormalMatch(
+                depthUv + vec2(0.0, screenPixel.y),
+                fragmentDepth,
+                paintViewNormal,
+                edgeNormalMatchThreshold
+              ) || visibleSurfaceDepthNormalMatch(
+                depthUv - vec2(0.0, screenPixel.y),
+                fragmentDepth,
+                paintViewNormal,
+                edgeNormalMatchThreshold
+              );
+            }
+            if (!visibleSurfaceMatched) {
               discard;
             }
             vec2 screenPoint = vec2(
