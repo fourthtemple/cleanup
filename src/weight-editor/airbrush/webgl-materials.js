@@ -398,14 +398,12 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               paintViewNormal,
               visibleNormalMatchThreshold
             );
-            float visibleSurfaceCoverage = useVisibleNormalTexture
-              ? visibleSurfaceGaussianCoverage(
-                  depthUv,
-                  fragmentDepth,
-                  paintViewNormal,
-                  visibleNormalMatchThreshold
-                )
-              : 1.0;
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Center-visible fragments are already proven visible and should
+            // keep full paint opacity. Only fragments rescued by nearby visible
+            // samples get the Gaussian edge feather; otherwise internal seams
+            // and folds can become dark bands inside a solid stroke.
+            float visibleSurfaceCoverage = 1.0;
             if (!visibleSurfaceMatched && useVisibleNormalTexture) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
               // This is an edge rasterization repair only. At grazing visible

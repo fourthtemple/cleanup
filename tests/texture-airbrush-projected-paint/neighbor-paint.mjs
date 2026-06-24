@@ -1299,7 +1299,9 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /coverage \+= visibleSurfaceDepthNormalMatch\(sampleUv, fragmentDepth, paintViewNormal, normalMatchThreshold\) \? 4\.0 : 0\.0/);
   assert.match(material.fragmentShader, /return clamp\(coverage \/ 16\.0, 0\.0, 1\.0\)/);
   assert.match(material.fragmentShader, /bool visibleSurfaceMatched = visibleSurfaceDepthNormalMatch/);
-  assert.match(material.fragmentShader, /float visibleSurfaceCoverage = useVisibleNormalTexture/);
+  assert.match(material.fragmentShader, /Center-visible fragments are already proven visible/);
+  assert.match(material.fragmentShader, /Only fragments rescued by nearby visible/);
+  assert.match(material.fragmentShader, /float visibleSurfaceCoverage = 1\.0/);
   assert.match(material.fragmentShader, /if \(!visibleSurfaceMatched && useVisibleNormalTexture\)/);
   assert.match(material.fragmentShader, /vec2 screenPixel = 1\.0 \/ max\(viewportSize, vec2\(1\.0\)\)/);
   assert.match(material.fragmentShader, /float edgeNormalMatchThreshold = max\(0\.55, visibleNormalMatchThreshold\)/);
