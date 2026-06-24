@@ -136,6 +136,10 @@ test("package exposes native airbrush validation commands", () => {
   const manifest = packageJson();
 
   assert.equal(manifest.scripts["validate:airbrush"], "node ./scripts/validate-airbrush-runtime.mjs");
+  assert.equal(
+    manifest.scripts["validate:airbrush-after-orbit-neighbor"],
+    "node ./scripts/validate-airbrush-runtime.mjs --after-orbit-neighbor --timeout 90000"
+  );
   assert.equal(manifest.scripts["validate:webgpu-airbrush"], "node ./scripts/validate-webgpu-airbrush.mjs");
 });
 

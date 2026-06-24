@@ -167,6 +167,73 @@ test("side panel pen drag scrolls panel content without grabbing controls", () =
   }
 });
 
+test("side panel pen drag scroll accepts Safari tablet mouse-shaped pointer events", () => {
+  const editor = new TestEditor();
+  const app = { classList: classListMock() };
+  let capturedPointer = null;
+  let prevented = 0;
+  let stopped = 0;
+  let selectionCleared = 0;
+  editor.app = app;
+  editor.viewerPanelScroll = {
+    scrollLeft: 12,
+    scrollTop: 30,
+    setPointerCapture(pointerId) {
+      capturedPointer = pointerId;
+    },
+    releasePointerCapture() {}
+  };
+  const panelTextTarget = {
+    closest() {
+      return null;
+    }
+  };
+  const originalDocument = globalThis.document;
+  globalThis.document = {
+    onwebkitmouseforcechanged: null,
+    getSelection() {
+      return {
+        removeAllRanges() {
+          selectionCleared += 1;
+        }
+      };
+    }
+  };
+
+  try {
+    assert.equal(editor.beginSidePanelPenScroll({
+      pointerType: "mouse",
+      button: 0,
+      pointerId: 12,
+      clientX: 20,
+      clientY: 40,
+      target: panelTextTarget
+    }), true);
+    assert.equal(capturedPointer, 12);
+
+    assert.equal(editor.dragSidePanelPenScroll({
+      pointerId: 12,
+      clientX: 15,
+      clientY: 64,
+      preventDefault() {
+        prevented += 1;
+      },
+      stopPropagation() {
+        stopped += 1;
+      }
+    }), true);
+
+    assert.equal(editor.viewerPanelScroll.scrollLeft, 17);
+    assert.equal(editor.viewerPanelScroll.scrollTop, 6);
+    assert.equal(app.classList.contains("is-side-panel-pen-scrolling"), true);
+    assert.equal(selectionCleared, 1);
+    assert.equal(prevented, 1);
+    assert.equal(stopped, 1);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
 test("opening the timeline drawer does not auto-expand the selected or first bone", () => {
   const editor = new TestEditor();
   editor.app = { classList: classListMock(["is-timeline-compact"]) };

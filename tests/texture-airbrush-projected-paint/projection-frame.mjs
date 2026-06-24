@@ -17,6 +17,101 @@ class TestEditor {}
 
 installTextureAirbrushProjectedPaintMethods(TestEditor);
 
+test("depth cache keys normalize negative zero matrix values", () => {
+  class WebGlFrameEditor {}
+  installTextureAirbrushWebGlBackendMethods(WebGlFrameEditor, { THREE: {} });
+  const editor = new WebGlFrameEditor();
+  const inverseElements = [
+    -0, 1, 0, 0,
+    0, -0, 1, 0,
+    0, 0, -0, 0,
+    1, 2, 3, 1
+  ];
+  const projectionElements = [
+    1, 0, -0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, -0,
+    0, 0, 0, 1
+  ];
+  editor.camera = {
+    updateMatrixWorld() {},
+    matrixWorldInverse: { elements: inverseElements },
+    projectionMatrix: { elements: projectionElements }
+  };
+  editor.renderer = {
+    getPixelRatio() {
+      return 1;
+    }
+  };
+  editor.progress = -0;
+  const rect = { width: 910, height: 858 };
+
+  const negativeZeroKey = editor.textureAirbrushDepthCacheKey(rect);
+  inverseElements[0] = 0;
+  inverseElements[5] = 0;
+  inverseElements[10] = 0;
+  projectionElements[2] = 0;
+  projectionElements[11] = 0;
+  editor.progress = 0;
+  const positiveZeroKey = editor.textureAirbrushDepthCacheKey(rect);
+
+  assert.equal(negativeZeroKey, positiveZeroKey);
+  assert.doesNotMatch(negativeZeroKey, /-0\.00000/);
+});
+
+test("live projection frames stay current across negative zero camera key flips", () => {
+  class WebGlFrameEditor {}
+  installTextureAirbrushWebGlBackendMethods(WebGlFrameEditor, { THREE: {} });
+  const editor = new WebGlFrameEditor();
+  const rect = { left: 0, top: 0, width: 910, height: 858 };
+  const inverseElements = [
+    -0, 1, 0, 0,
+    0, -0, 1, 0,
+    0, 0, -0, 0,
+    1, 2, 3, 1
+  ];
+  const projectionElements = [
+    1, 0, -0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, -0,
+    0, 0, 0, 1
+  ];
+  editor.canvas = {
+    getBoundingClientRect() {
+      return rect;
+    }
+  };
+  editor.camera = {
+    updateMatrixWorld() {},
+    matrixWorldInverse: { elements: inverseElements },
+    projectionMatrix: { elements: projectionElements }
+  };
+  editor.model = {};
+  editor.renderer = {
+    getPixelRatio() {
+      return 1;
+    }
+  };
+  editor.texturePaintLayerModeActive = () => false;
+  editor.progress = -0;
+  const projectionFrame = {
+    canvas: editor.canvas,
+    camera: editor.camera,
+    model: editor.model,
+    rect,
+    frameKey: editor.textureAirbrushDepthCacheKey(rect)
+  };
+
+  inverseElements[0] = 0;
+  inverseElements[5] = 0;
+  inverseElements[10] = 0;
+  projectionElements[2] = 0;
+  projectionElements[11] = 0;
+  editor.progress = 0;
+
+  assert.equal(editor.textureAirbrushLiveProjectionFrameCurrent(projectionFrame), true);
+});
+
 test("empty layer GPU undo uses a clear snapshot instead of copying the first target", () => {
   class PaintEditor {}
   class Color {}
@@ -140,6 +235,115 @@ test("empty layer GPU undo uses a clear snapshot instead of copying the first ta
   assert.equal(displayUpdates, 1);
   assert.equal(composites, 0);
   assert.equal(flushes, 0);
+});
+
+test("GPU layer history restore refreshes display without draining layer paint queues", () => {
+  class PaintEditor {}
+  class Color {}
+  installPaintToolMethods(PaintEditor, { THREE: { Color } });
+  const editor = new PaintEditor();
+  const layer = { id: "paint-1", isEmpty: true };
+  const material = {
+    uuid: "material",
+    needsUpdate: false,
+    userData: {
+      texturePaintLayerStack: {
+        baseCanvas: { width: 1, height: 1 },
+        layers: [layer]
+      }
+    }
+  };
+  const targetEntry = {
+    layerMode: true,
+    emptyTransparent: true,
+    paintRevision: 7,
+    width: 64,
+    height: 32,
+    target: {
+      name: "painted-layer-target",
+      texture: { uuid: "target-texture" }
+    },
+    layer
+  };
+  layer.gpuTarget = targetEntry;
+  const restoredTexture = { uuid: "restored-texture" };
+  const entry = {
+    type: "gpu",
+    material,
+    targetEntry,
+    after: { texture: restoredTexture }
+  };
+  const redoState = { kind: "texture-paint" };
+  editor.redoStack = [redoState];
+  const order = [];
+  editor.copyTextureToRenderTarget = (texture, target) => {
+    order.push("copy");
+    assert.equal(texture, restoredTexture);
+    assert.equal(target, targetEntry.target);
+    return true;
+  };
+  editor.prepareTexturePaintLayerTargetChange = () => {
+    throw new Error("history restore should not drain active layer paint queues");
+  };
+  editor.cancelTextureAirbrushDeferredBroadLayerPrewarm = () => {
+    order.push("cancel");
+  };
+  editor.resetTexturePaintLayerDisplayCaches = (candidateMaterial) => {
+    order.push("reset-display");
+    assert.equal(candidateMaterial, material);
+    return 1;
+  };
+  editor.bumpTexturePaintLayerMutationSerial = () => {
+    editor.texturePaintLayerMutationSerial = (editor.texturePaintLayerMutationSerial || 0) + 1;
+    order.push(`bump:${editor.texturePaintLayerMutationSerial}`);
+    return editor.texturePaintLayerMutationSerial;
+  };
+  editor.textureAirbrushResetLiveProjectionFrame = () => {
+    order.push("reset-frame");
+  };
+  editor.flushTexturePaintLayerGpuTargetsToCanvases = (options = {}) => {
+    order.push("flush-canvases");
+    assert.equal(options.material, material);
+    assert.equal(options.composite, false);
+    return 1;
+  };
+  editor.texturePaintCompositeMaterialLayerDisplay = (candidateMaterial, options = {}) => {
+    order.push(`display:${editor.texturePaintLayerMutationSerial}`);
+    assert.equal(candidateMaterial, material);
+    assert.equal(options.changedLayer, layer);
+    assert.equal(options.live, false);
+    return true;
+  };
+  editor.texturePaintCompositeMaterialLayerGpuTargets = () => {
+    throw new Error("display refresh should handle the restored material");
+  };
+  editor.renderTexturePaintLayerPanel = () => {
+    order.push("panel");
+  };
+  editor.scheduleTextureAirbrushPostStrokePrewarm = () => {
+    order.push("prewarm");
+  };
+  editor.updateClonePaintPreviews = () => {};
+  editor.syncPatchJson = () => {};
+  editor.updateUndoButton = () => {};
+
+  assert.equal(editor.restoreTexturePaintSnapshot([entry], "after"), true);
+  assert.deepEqual(order, [
+    "copy",
+    "cancel",
+    "reset-display",
+    "bump:1",
+    "reset-frame",
+    "flush-canvases",
+    "display:1",
+    "panel",
+    "prewarm"
+  ]);
+  assert.deepEqual(editor.redoStack, [redoState]);
+  assert.equal(targetEntry.emptyTransparent, false);
+  assert.equal(layer.isEmpty, false);
+  assert.equal(targetEntry.paintRevision, 8);
+  assert.equal(material.needsUpdate, true);
 });
 
 test("painted layer GPU undo ignores stale empty flags and copies the target", () => {
@@ -546,6 +750,67 @@ test("airbrush stroke reset keeps a current prewarmed live projection frame", ()
 
   assert.equal(editor.textureAirbrushResetLiveProjectionFrame({ keepCurrent: true }), true);
   assert.notEqual(editor.textureAirbrushLiveProjectionFrame(), firstFrame);
+  assert.equal(modelUpdates, 2);
+  assert.equal(boundsRefreshes, 2);
+});
+
+test("airbrush live projection frame invalidates after orbit updates camera matrix", () => {
+  class WebGlFrameEditor {}
+  installTextureAirbrushWebGlBackendMethods(WebGlFrameEditor, {
+    THREE: {
+      Vector2: class {
+        constructor(x = 0, y = 0) {
+          this.x = x;
+          this.y = y;
+        }
+      }
+    }
+  });
+  const editor = new WebGlFrameEditor();
+  let cameraUpdates = 0;
+  let orbitMatrixValue = 1;
+  let modelUpdates = 0;
+  let boundsRefreshes = 0;
+  editor.canvas = {
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 100, height: 100 };
+    }
+  };
+  editor.camera = {
+    matrixWorldInverse: { elements: Array.from({ length: 16 }, (_, index) => index + 1) },
+    projectionMatrix: { elements: Array.from({ length: 16 }, (_, index) => index + 17) },
+    updateMatrixWorld(force) {
+      assert.equal(force, true);
+      cameraUpdates += 1;
+      this.matrixWorldInverse.elements[0] = orbitMatrixValue;
+    }
+  };
+  editor.renderer = {
+    getPixelRatio() {
+      return 1;
+    }
+  };
+  editor.model = {
+    updateMatrixWorld(force) {
+      assert.equal(force, true);
+      modelUpdates += 1;
+    }
+  };
+  editor.progress = 0;
+  editor.paintRecords = [{ object: {} }];
+  editor.refreshSkinnedRaycastBounds = () => {
+    boundsRefreshes += 1;
+  };
+
+  const firstFrame = editor.textureAirbrushLiveProjectionFrame();
+  orbitMatrixValue = 2;
+
+  assert.equal(editor.textureAirbrushLiveProjectionFrameCurrent(firstFrame), false);
+  const secondFrame = editor.textureAirbrushLiveProjectionFrame();
+
+  assert.notEqual(secondFrame, firstFrame);
+  assert.equal(secondFrame.frameKey.includes("2.0000000"), true);
+  assert.equal(cameraUpdates >= 3, true);
   assert.equal(modelUpdates, 2);
   assert.equal(boundsRefreshes, 2);
 });

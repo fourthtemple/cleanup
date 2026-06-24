@@ -81,6 +81,15 @@ test("layer strokes only use variable radius for real pressure pointers", () => 
   assert.equal(mousePayload.pressurePointer, false);
   assert.equal(mouseBatch.strokeSegments[0].radiusPixels, undefined);
 
+  const pointerPressurePayload = editor.textureAirbrushScreenStrokePayload(
+    { type: "pointermove", clientX: 30, clientY: 0, pointerType: "mouse", pressure: 0.35 },
+    { clientX: 10, clientY: 0 }
+  );
+  const [pointerPressureBatch] = editor.textureAirbrushScreenStrokeBatches([pointerPressurePayload]);
+
+  assert.equal(pointerPressurePayload.pressurePointer, true);
+  assert.equal(pointerPressureBatch.strokeSegments[0].radiusPixels, 20);
+
   const penPayload = editor.textureAirbrushScreenStrokePayload(
     { clientX: 40, clientY: 0, pointerType: "pen", pressure: 0.5 },
     { clientX: 20, clientY: 0 }
@@ -89,6 +98,25 @@ test("layer strokes only use variable radius for real pressure pointers", () => 
 
   assert.equal(penPayload.pressurePointer, true);
   assert.equal(penBatch.strokeSegments[0].radiusPixels, 20);
+
+  class SafariMouseEvent {}
+  SafariMouseEvent.WEBKIT_FORCE_AT_MOUSE_DOWN = 1;
+  SafariMouseEvent.WEBKIT_FORCE_AT_FORCE_MOUSE_DOWN = 2;
+  const safariPayload = editor.textureAirbrushScreenStrokePayload(
+    {
+      constructor: SafariMouseEvent,
+      clientX: 60,
+      clientY: 0,
+      pointerType: "mouse",
+      pressure: 0.5,
+      webkitForce: 0.25
+    },
+    { clientX: 40, clientY: 0 }
+  );
+  const [safariBatch] = editor.textureAirbrushScreenStrokeBatches([safariPayload]);
+
+  assert.equal(safariPayload.pressurePointer, true);
+  assert.equal(safariBatch.strokeSegments[0].radiusPixels, 20);
 });
 
 test("exact first layer display refresh waits until active painting stops", () => {

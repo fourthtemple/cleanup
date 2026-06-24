@@ -37,8 +37,21 @@ export function installTextureAirbrushNearBrushMethods(BirdWeightEditor) {
         return this.textureAirbrushProjectedRegionFromEvent?.(record, options.event, hit, options) || 0;
       }
       if (options.event && !options.fullRegion && !options.meshFallback) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // USER-APPROVED FIX, DO NOT SIMPLIFY:
+        // live airbrush must stop here after the projected shader path. The old
+        // direct UV fallback can paint whichever UV island is near the hit, even
+        // when that island is hidden or facing away from the current camera.
+        //
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Live airbrush must not fall back to direct UV brushing: the UV path
+        // paints in texture space and can touch non-camera-facing islands.
         const changed = this.textureAirbrushProjectedMeshFromEvent?.(options.event, options) || 0;
-        return changed || this.textureAirbrushUvBrushOnFace?.(record, hit, options.event, options) || 0;
+        return changed;
       }
       const material = this.clonePaintMaterialForHit?.(record, hit);
       const editable = this.editableClonePaintTexture?.(material);

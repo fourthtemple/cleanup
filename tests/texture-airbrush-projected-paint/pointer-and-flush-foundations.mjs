@@ -3,6 +3,7 @@ import test from "node:test";
 import { installClonePaintMethods } from "../../src/weight-editor/clone-paint.js";
 import { installPaintToolMethods } from "../../src/weight-editor/paint-tools.js";
 import { TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS } from "../../src/weight-editor/airbrush/constants.js";
+import { installTextureAirbrushPressureMethods } from "../../src/weight-editor/airbrush/pressure.js";
 import { installTextureAirbrushScreenStrokeMethods } from "../../src/weight-editor/airbrush/screen-strokes.js";
 import { installTextureAirbrushPointerMethods } from "../../src/weight-editor/airbrush/pointer.js";
 import { installTextureAirbrushWebGlBackendMethods } from "../../src/weight-editor/airbrush/webgl-backend.js";
@@ -435,11 +436,583 @@ test("primary pen pointer down still starts an airbrush stroke", () => {
   });
 });
 
+test("Safari mouse fallback can drag an airbrush stroke without pointer events", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const painted = [];
+  let undoLabel = null;
+  let prevented = 0;
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {};
+  editor.showTextureStrokeCursor = () => {};
+  editor.beginTexturePaintStrokeUndo = (label) => {
+    undoLabel = label;
+  };
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      x: event.clientX,
+      y: event.clientY,
+      reset: options?.reset === true,
+      webkitForce: event.webkitForce
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasMouseDownFallback({
+    button: 0,
+    buttons: 1,
+    clientX: 12,
+    clientY: 20,
+    webkitForce: 0.18,
+    preventDefault() {
+      prevented += 1;
+    }
+  }), true);
+  assert.equal(editor.onCanvasMouseMoveFallback({
+    button: 0,
+    buttons: 1,
+    clientX: 16,
+    clientY: 24,
+    webkitForce: 0.62,
+    preventDefault() {
+      prevented += 1;
+    }
+  }), true);
+  assert.equal(editor.onCanvasMouseUpFallback({}), true);
+
+  assert.equal(undoLabel, "Texture airbrush");
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, false);
+  assert.deepEqual(painted, [
+    { x: 12, y: 20, reset: true, webkitForce: 0.18 },
+    { x: 16, y: 24, reset: false, webkitForce: 0.62 }
+  ]);
+  assert.equal(prevented, 2);
+});
+
+test("mouse fallback ignores duplicate mousedown immediately after pointerdown", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  let painted = 0;
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {};
+  editor.showTextureStrokeCursor = () => {};
+  editor.beginTexturePaintStrokeUndo = () => {};
+  editor.paintTextureStrokeFromEvent = () => {
+    painted += 1;
+    return true;
+  };
+
+  editor.onPointerDown({
+    button: 0,
+    buttons: 1,
+    pointerType: "pen",
+    clientX: 10,
+    clientY: 20,
+    preventDefault() {}
+  });
+
+  assert.equal(editor.onCanvasMouseDownFallback({
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    preventDefault() {}
+  }), false);
+  assert.equal(painted, 1);
+});
+
+test("Safari WebKit force changes feed the active airbrush stroke", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  installTextureAirbrushPressureMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const painted = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.controls = { enabled: false };
+  editor.showTextureStrokeCursor = () => {};
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      x: event.clientX,
+      y: event.clientY,
+      reset: options?.reset === true,
+      webkitForce: event.webkitForce
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasWebKitMouseForceChanged({
+    button: 0,
+    buttons: 1,
+    clientX: 32,
+    clientY: 44,
+    webkitForce: 0.72,
+    preventDefault() {}
+  }), true);
+
+  assert.deepEqual(painted, [
+    { x: 32, y: 44, reset: false, webkitForce: 0.72 }
+  ]);
+});
+
+test("Safari WebKit force changes keep painting active strokes when buttons is zero", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  installTextureAirbrushPressureMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const painted = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.controls = { enabled: false };
+  editor.showTextureStrokeCursor = () => {};
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      x: event.clientX,
+      y: event.clientY,
+      reset: options?.reset === true,
+      webkitForce: event.webkitForce
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasWebKitMouseForceChanged({
+    type: "webkitmouseforcechanged",
+    button: 0,
+    buttons: 0,
+    clientX: 36,
+    clientY: 48,
+    webkitForce: 1.5
+  }), true);
+
+  assert.deepEqual(painted, [
+    { x: 36, y: 48, reset: false, webkitForce: 1.5 }
+  ]);
+});
+
+test("Safari mousemove force feeds active airbrush strokes when pointer pressure is default", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  installTextureAirbrushPressureMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const painted = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.controls = { enabled: false };
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      x: event.clientX,
+      y: event.clientY,
+      reset: options?.reset === true,
+      pressure: event.pressure,
+      webkitForce: event.webkitForce
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasPressureMouseMoveFallback({
+    type: "mousemove",
+    pointerType: "mouse",
+    pressure: 0.5,
+    buttons: 1,
+    clientX: 42,
+    clientY: 56,
+    webkitForce: 1.6
+  }), true);
+
+  assert.equal(painted.length, 1);
+  assert.deepEqual({
+    x: painted[0].x,
+    y: painted[0].y,
+    reset: painted[0].reset,
+    webkitForce: painted[0].webkitForce
+  }, {
+    x: 42,
+    y: 56,
+    reset: false,
+    webkitForce: 1.6
+  });
+  assert.ok(Math.abs(painted[0].pressure - 0.3) < 0.000001);
+});
+
+test("Safari WebKit force changes seed native pressure before the paint payload", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  installTextureAirbrushPressureMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const painted = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.controls = { enabled: false };
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      pressure: event.pressure,
+      source: event.__cleanupPressureSource,
+      reset: options?.reset === true,
+      webkitForce: event.webkitForce
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasWebKitMouseForceChanged({
+    type: "webkitmouseforcechanged",
+    pointerType: "mouse",
+    pressure: 0.5,
+    buttons: 0,
+    clientX: 12,
+    clientY: 16,
+    webkitForce: 1.6
+  }), true);
+
+  assert.equal(painted.length, 1);
+  assert.equal(painted[0].source, "native");
+  assert.equal(painted[0].reset, false);
+  assert.equal(painted[0].webkitForce, 1.6);
+  assert.ok(Math.abs(painted[0].pressure - 0.3) < 0.000001);
+});
+
+test("Safari native pressure is retained for mouse-shaped airbrush move samples", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  installTextureAirbrushPressureMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const queued = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.textureAirbrushCanUseScreenStroke = () => true;
+  editor.textureAirbrushQueueScreenStroke = (event, options) => {
+    queued.push({
+      x: event.clientX,
+      pressure: event.pressure,
+      webkitPressure: event.webkitPressure,
+      webkitForce: event.webkitForce,
+      retained: event.__cleanupRetainedNativePressure === true,
+      startX: options.strokeStart.clientX
+    });
+    return true;
+  };
+
+  editor.onCanvasWebKitMouseForceChanged({
+    type: "webkitmouseforcechanged",
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    webkitForce: 0.25
+  });
+  assert.equal(editor.queueAirbrushTextureStrokeEvent({
+    type: "pointermove",
+    pointerType: "mouse",
+    pressure: 0.5,
+    clientX: 20,
+    clientY: 20,
+    getCoalescedEvents() {
+      return [
+        { type: "pointermove", pointerType: "mouse", pressure: 0.5, clientX: 14, clientY: 20 },
+        { type: "pointermove", pointerType: "mouse", pressure: 0.5, clientX: 20, clientY: 20 }
+      ];
+    }
+  }), true);
+
+  assert.deepEqual(queued, [
+    { x: 10, pressure: 0.25, webkitPressure: 0.25, webkitForce: 0.25, retained: true, startX: 10 },
+    { x: 14, pressure: 0.25, webkitPressure: 0.25, webkitForce: 0.25, retained: true, startX: 10 },
+    { x: 20, pressure: 0.25, webkitPressure: 0.25, webkitForce: 0.25, retained: true, startX: 14 }
+  ]);
+});
+
+test("Safari WebKit force capable texture strokes do not cancel native force mouse events", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const previousDocument = globalThis.document;
+  globalThis.document = { onwebkitmouseforcechanged: null };
+  try {
+    const painted = [];
+    let prevented = 0;
+    let captured = 0;
+    editor.activeTool = "airbrush";
+    editor.controls = { enabled: true };
+    editor.canvas = {
+      setPointerCapture() {
+        captured += 1;
+      }
+    };
+    editor.showTextureStrokeCursor = () => {};
+    editor.beginTexturePaintStrokeUndo = () => {};
+    editor.paintTextureStrokeFromEvent = (event, options) => {
+      painted.push({
+        type: event.type,
+        x: event.clientX,
+        reset: options?.reset === true
+      });
+      return true;
+    };
+
+    editor.onPointerDown({
+      type: "pointerdown",
+      button: 0,
+      pointerId: 4,
+      pointerType: "mouse",
+      clientX: 10,
+      clientY: 20,
+      preventDefault() {
+        prevented += 1;
+      }
+    });
+    editor.onPointerMove({
+      type: "pointermove",
+      pointerType: "mouse",
+      clientX: 12,
+      clientY: 22,
+      preventDefault() {
+        prevented += 1;
+      }
+    });
+
+    assert.equal(prevented, 0);
+    assert.equal(captured, 0);
+    assert.deepEqual(painted, [
+      { type: "pointerdown", x: 10, reset: true },
+      { type: "pointermove", x: 12, reset: false }
+    ]);
+  } finally {
+    if (previousDocument === undefined) {
+      delete globalThis.document;
+    } else {
+      globalThis.document = previousDocument;
+    }
+  }
+});
+
+test("pointerrawupdate feeds active airbrush strokes when Safari exposes raw pen data", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const painted = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.controls = { enabled: false };
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      x: event.clientX,
+      y: event.clientY,
+      pressure: event.pressure,
+      reset: options?.reset === true
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasPointerRawUpdate({
+    type: "pointerrawupdate",
+    pointerType: "mouse",
+    buttons: 1,
+    clientX: 36,
+    clientY: 48,
+    pressure: 0.42,
+    preventDefault() {}
+  }), true);
+
+  assert.deepEqual(painted, [
+    { x: 36, y: 48, pressure: 0.42, reset: false }
+  ]);
+});
+
+test("Safari WebKit force changes can start fallback strokes without a button field", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const painted = [];
+  let undoLabel = null;
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {};
+  editor.showTextureStrokeCursor = () => {};
+  editor.beginTexturePaintStrokeUndo = (label) => {
+    undoLabel = label;
+  };
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      x: event.clientX,
+      y: event.clientY,
+      reset: options?.reset === true,
+      webkitForce: event.webkitForce
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasWebKitMouseForceChanged({
+    type: "webkitmouseforcechanged",
+    buttons: 1,
+    clientX: 22,
+    clientY: 28,
+    webkitForce: 0.33,
+    preventDefault() {}
+  }), true);
+  assert.equal(editor.painting, true);
+  assert.equal(undoLabel, "Texture airbrush");
+  assert.deepEqual(painted, [
+    { x: 22, y: 28, reset: true, webkitForce: 0.33 }
+  ]);
+
+  assert.equal(editor.onCanvasMouseUpFallback({}), true);
+});
+
+test("Safari fallback does not treat a real secondary button as primary", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  let painted = 0;
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {};
+  editor.showTextureStrokeCursor = () => {};
+  editor.beginTexturePaintStrokeUndo = () => {};
+  editor.paintTextureStrokeFromEvent = () => {
+    painted += 1;
+    return true;
+  };
+
+  assert.equal(editor.onCanvasMouseDownFallback({
+    button: 2,
+    buttons: 2,
+    clientX: 22,
+    clientY: 28,
+    webkitForce: 0.33,
+    preventDefault() {}
+  }, { allowMissingButton: true }), false);
+  assert.equal(painted, 0);
+});
+
+test("Safari touch force fallback can drag an airbrush stroke", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  installTextureAirbrushPressureMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const painted = [];
+  let prevented = 0;
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {};
+  editor.showTextureStrokeCursor = () => {};
+  editor.beginTexturePaintStrokeUndo = () => {};
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      x: event.clientX,
+      y: event.clientY,
+      pointerType: event.pointerType,
+      pressure: event.pressure,
+      force: event.force,
+      source: event.__cleanupPressureSource,
+      reset: options?.reset === true
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasTouchStartFallback({
+    changedTouches: [{
+      identifier: 9,
+      clientX: 18,
+      clientY: 22,
+      force: 0.3,
+      touchType: "stylus"
+    }],
+    preventDefault() {
+      prevented += 1;
+    }
+  }), true);
+  assert.equal(editor.onCanvasTouchMoveFallback({
+    changedTouches: [{
+      identifier: 9,
+      clientX: 28,
+      clientY: 32,
+      force: 0.7,
+      touchType: "stylus"
+    }],
+    preventDefault() {
+      prevented += 1;
+    }
+  }), true);
+  assert.equal(editor.onCanvasTouchEndFallback({
+    preventDefault() {
+      prevented += 1;
+    }
+  }), true);
+
+  assert.equal(editor.painting, false);
+  assert.equal(prevented, 5);
+  assert.deepEqual(painted, [
+    { x: 18, y: 22, pointerType: "pen", pressure: 0.3, force: 0.3, source: "native", reset: true },
+    { x: 28, y: 32, pointerType: "pen", pressure: 0.7, force: 0.7, source: "native", reset: false }
+  ]);
+});
+
+test("Safari touchmove uses active touches force before changedTouches", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  installTextureAirbrushPressureMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const painted = [];
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {};
+  editor.showTextureStrokeCursor = () => {};
+  editor.beginTexturePaintStrokeUndo = () => {};
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    painted.push({
+      x: event.clientX,
+      y: event.clientY,
+      pressure: event.pressure,
+      force: event.force,
+      source: event.__cleanupPressureSource,
+      reset: options?.reset === true
+    });
+    return true;
+  };
+
+  assert.equal(editor.onCanvasTouchStartFallback({
+    touches: [{
+      identifier: 9,
+      clientX: 18,
+      clientY: 22,
+      force: 0.2,
+      touchType: "stylus"
+    }],
+    preventDefault() {}
+  }), true);
+  assert.equal(editor.onCanvasTouchMoveFallback({
+    touches: [{
+      identifier: 9,
+      clientX: 30,
+      clientY: 34,
+      force: 0.8,
+      touchType: "stylus"
+    }],
+    changedTouches: [{
+      identifier: 9,
+      clientX: 28,
+      clientY: 32,
+      force: 0.1,
+      touchType: "stylus"
+    }],
+    preventDefault() {}
+  }), true);
+
+  assert.deepEqual(painted, [
+    { x: 18, y: 22, pressure: 0.2, force: 0.2, source: "native", reset: true },
+    { x: 30, y: 34, pressure: 0.8, force: 0.8, source: "native", reset: false }
+  ]);
+});
+
 test("airbrush coalesced samples use lightweight point events", () => {
   class PaintEditor {}
   installPaintToolMethods(PaintEditor, {});
   const editor = new PaintEditor();
   const samples = editor.texturePaintCoalescedEvents({
+    type: "pointermove",
     clientX: 20,
     clientY: 4,
     pointerType: "pen",
@@ -450,13 +1023,14 @@ test("airbrush coalesced samples use lightweight point events", () => {
     },
     getCoalescedEvents() {
       return [
-        { clientX: 10, clientY: 2, pressure: 0.4, pointerType: "pen", tiltX: 7 },
-        { clientX: 20, clientY: 4, pressure: 0.6, pointerType: "pen", tiltX: 11 }
+        { type: "pointermove", clientX: 10, clientY: 2, pressure: 0.4, pointerType: "pen", tiltX: 7 },
+        { type: "pointermove", clientX: 20, clientY: 4, pressure: 0.6, pointerType: "pen", tiltX: 11 }
       ];
     }
   });
 
   assert.deepEqual(samples.map((event) => ({
+    type: event.type,
     x: event.clientX,
     y: event.clientY,
     pressure: event.pressure,
@@ -464,8 +1038,70 @@ test("airbrush coalesced samples use lightweight point events", () => {
     tiltX: event.tiltX,
     hasPreventDefault: typeof event.preventDefault === "function"
   })), [
-    { x: 10, y: 2, pressure: 0.4, pointerType: "pen", tiltX: 7, hasPreventDefault: false },
-    { x: 20, y: 4, pressure: 0.6, pointerType: "pen", tiltX: 11, hasPreventDefault: false }
+    { type: "pointermove", x: 10, y: 2, pressure: 0.4, pointerType: "pen", tiltX: 7, hasPreventDefault: false },
+    { type: "pointermove", x: 20, y: 4, pressure: 0.6, pointerType: "pen", tiltX: 11, hasPreventDefault: false }
+  ]);
+});
+
+test("airbrush coalesced samples preserve Safari WebKit force", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const samples = editor.texturePaintCoalescedEvents({
+    clientX: 20,
+    clientY: 4,
+    pointerType: "pen",
+    pressure: 0.5,
+    webkitForce: 0.5,
+    force: 0.51,
+    getCoalescedEvents() {
+      return [
+        { clientX: 10, clientY: 2, pressure: 0.5, pointerType: "pen", webkitForce: 0.2, force: 0.21 },
+        { clientX: 20, clientY: 4, pressure: 0.5, pointerType: "pen", webkitForce: 0.8, force: 0.81 }
+      ];
+    }
+  });
+
+  assert.deepEqual(samples.map((event) => ({
+    x: event.clientX,
+    y: event.clientY,
+    webkitForce: event.webkitForce,
+    force: event.force
+  })), [
+    { x: 10, y: 2, webkitForce: 0.2, force: 0.21 },
+    { x: 20, y: 4, webkitForce: 0.8, force: 0.81 }
+  ]);
+});
+
+test("airbrush coalesced samples preserve Safari vendor pressure", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const samples = editor.texturePaintCoalescedEvents({
+    type: "pointermove",
+    clientX: 20,
+    clientY: 4,
+    pointerType: "mouse",
+    pressure: 0.5,
+    webkitPressure: 0.4,
+    getCoalescedEvents() {
+      return [
+        { type: "pointermove", clientX: 10, clientY: 2, pressure: 0.5, pointerType: "mouse", webkitPressure: 0.2 },
+        { type: "pointermove", clientX: 20, clientY: 4, pressure: 0.5, pointerType: "mouse", webkitPressure: 0.7 }
+      ];
+    }
+  });
+
+  assert.deepEqual(samples.map((event) => ({
+    type: event.type,
+    x: event.clientX,
+    y: event.clientY,
+    pressure: event.pressure,
+    pointerType: event.pointerType,
+    webkitPressure: event.webkitPressure
+  })), [
+    { type: "pointermove", x: 10, y: 2, pressure: 0.5, pointerType: "mouse", webkitPressure: 0.2 },
+    { type: "pointermove", x: 20, y: 4, pressure: 0.5, pointerType: "mouse", webkitPressure: 0.7 }
   ]);
 });
 

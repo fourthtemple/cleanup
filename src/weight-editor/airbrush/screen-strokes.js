@@ -1,5 +1,9 @@
 import { TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS } from "./constants.js";
 import { clampByte } from "./math.js";
+import {
+  textureAirbrushEventPressureValue,
+  textureAirbrushPressurePointerType
+} from "./pressure.js?v=pressure-cleanup-20260623a";
 import { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js";
 
 const TEXTURE_AIRBRUSH_PRESSURE_STYLE_DELTA = 0.12;
@@ -82,18 +86,11 @@ function quantizedBrushOpacity(opacity = 1) {
 }
 
 function pressurePointerType(event = null) {
-  const pointerType = String(event?.pointerType || "").toLowerCase();
-  return pointerType === "pen" || pointerType === "touch";
+  return textureAirbrushPressurePointerType(event);
 }
 
 function eventPressureValue(event = null) {
-  if (!pressurePointerType(event)) {
-    return null;
-  }
-  const pressure = Number(event?.pressure);
-  return Number.isFinite(pressure)
-    ? Math.max(0.02, Math.min(1, pressure))
-    : null;
+  return textureAirbrushEventPressureValue(event);
 }
 
 function pressureRadiusThreshold(baseRadiusPixels = 1, pressureDelta = TEXTURE_AIRBRUSH_PRESSURE_STYLE_DELTA) {
@@ -156,6 +153,22 @@ function currentTimeMs() {
     return performance.now();
   }
   return Date.now();
+}
+
+function liveProjectionFrameNeedsVisibleRewarm(editor = null) {
+  const frame = editor?.textureAirbrushLiveProjectionFrameState || null;
+  if (!frame) {
+    return true;
+  }
+  if (typeof editor.textureAirbrushLiveProjectionFrameCurrent !== "function") {
+    return false;
+  }
+  return editor.textureAirbrushLiveProjectionFrameCurrent(frame) !== true;
+}
+
+function activeTexturePaintLayerMode(editor = null) {
+  return editor?.texturePaintLayerModeActive?.() === true
+    && editor?.texturePaintHasActivePaintLayer?.() === true;
 }
 
 function probePointForClientEvent(event = null, rect = null) {
@@ -234,6 +247,12 @@ function appendMergedStrokeBatch(merged = [], batch = null) {
       Math.max(1, Number(previous.radiusPixels) || 1),
       Math.max(1, Number(batch.radiusPixels) || 1)
     );
+    previous.neighborProjectionRewarmed = previous.neighborProjectionRewarmed === true
+      || batch.neighborProjectionRewarmed === true;
+    previous.postCameraProjectionRewarmed = previous.postCameraProjectionRewarmed === true
+      || batch.postCameraProjectionRewarmed === true;
+    previous.postCameraProjectionAccumulates = previous.postCameraProjectionAccumulates === true
+      || batch.postCameraProjectionAccumulates === true;
     previous.strokeSegments.push(...remainingSegments.slice(0, appendCount));
     remainingSegments = remainingSegments.slice(appendCount);
   }
@@ -516,6 +535,32 @@ function layerCachedContinuousPassesReady(editor = null, frame = null, batch = n
   return frame.seedPaintPasses === false && warmPasses.length === layerPasses.length;
 }
 
+function paintMaterialSlotCount(record = null) {
+  const material = record?.object?.material;
+  if (Array.isArray(material)) {
+    return material.filter(Boolean).length;
+  }
+  return material ? 1 : 0;
+}
+
+function partialLayerFrameNeedsPaintPassDiscovery(frame = null) {
+  if (
+    !frame?.paintPassCache?.size
+    || frame.paintPassCacheSeeded === true
+    || frame.seedPaintPasses !== false
+  ) {
+    return false;
+  }
+  const layerPassCount = [...frame.paintPassCache.values()]
+    .filter((pass) => pass?.targetEntry?.layerMode === true).length;
+  if (!layerPassCount) {
+    return false;
+  }
+  const paintableSlots = (frame.paintRecords || [])
+    .reduce((total, record) => total + paintMaterialSlotCount(record), 0);
+  return paintableSlots > layerPassCount;
+}
+
 function layerBatchesCanUseSeededProjectionFrame(editor = null, batches = []) {
   if (
     !batches.some((batch) => batch?.layerMode === true && batch.erase !== true && lowSpacingCachedPassStroke(batch))
@@ -580,8 +625,7 @@ function seedReadyActiveLayerResetProjection(editor = null, batch = null) {
     || batch.erase === true
     || batch.strokeReset !== true
     || !lowSpacingCachedPassStroke(batch)
-    || editor.activeTool !== "airbrush"
-    || editor.texturePaintLayerModeActive?.() !== true
+    || !activeTexturePaintLayerMode(editor)
     || typeof editor.textureAirbrushLiveProjectionFrame !== "function"
     || typeof editor.textureAirbrushSeedProjectionFramePaintPass !== "function"
   ) {
@@ -628,8 +672,7 @@ function prewarmColdActiveLayerResetProjection(editor = null, batch = null) {
     || batch.erase === true
     || batch.strokeReset !== true
     || !lowSpacingCachedPassStroke(batch)
-    || editor.activeTool !== "airbrush"
-    || editor.texturePaintLayerModeActive?.() !== true
+    || !activeTexturePaintLayerMode(editor)
     || typeof editor.prewarmTextureAirbrushLayerResetStroke !== "function"
   ) {
     return null;
@@ -910,6 +953,8 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       }) || brushOptions;
       const radiusPixels = Math.max(1, stabilizedOptions.radiusPixels ?? baseRadiusPixels);
       const color = baseOptions.color || this.textureAirbrushColor();
+      const pressureInputActive = this.textureAirbrushPressureInputActive?.(event, stabilizedOptions)
+        ?? pressurePointerType(event);
       const payload = {
         clientX: current.clientX,
         clientY: current.clientY,
@@ -922,8 +967,9 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         spacing: baseOptions.spacing ?? this.textureAirbrushSpacingPercent?.() ?? 1,
         strength: stabilizedOptions.strength ?? 1,
         pressure: stabilizedOptions.pressure ?? 1,
+        pressureSource: stabilizedOptions.pressureSource || "default",
         pressureRadius: stabilizedOptions.pressureRadius === true,
-        pressurePointer: pressurePointerType(event),
+        pressurePointer: pressureInputActive === true,
         pressureOpacity: stabilizedOptions.pressureOpacity === true,
         pressureHardness: stabilizedOptions.pressureHardness === true,
         pressureScatter: stabilizedOptions.pressureScatter === true,
@@ -949,7 +995,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         payload.strokeUndo = strokeUndo;
       }
       const style = payloadBrushStyle(payload);
-      return {
+      const result = {
         ...payload,
         styleKey: style.styleKey,
         styleRadiusPixels: style.radiusPixels,
@@ -959,6 +1005,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         styleScatter: style.scatter,
         styleStrength: style.strength
       };
+      return result;
     },
 
     textureAirbrushQueueScreenStroke(event, options = {}) {
@@ -966,6 +1013,18 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         return false;
       }
       const payload = this.textureAirbrushScreenStrokePayload(event, options.strokeStart);
+      if (payload && options.postCameraProjectionRewarmed === true) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // This marks a visible-surface cache refresh for the first reset after
+        // camera/orbit movement. It must never relax the paint shader gates.
+        payload.postCameraProjectionRewarmed = true;
+      }
+      if (payload && options.neighborProjectionRewarmed === true) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // This flag only says the current visible-surface projection caches were
+        // rewarmed after an orbit; it must never loosen depth or facing tests.
+        payload.neighborProjectionRewarmed = true;
+      }
       return this.textureAirbrushQueueScreenStrokePayload?.(payload) || false;
     },
 
@@ -1045,8 +1104,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         payload?.layerMode !== true
         || payload.erase === true
         || payload.strokeReset !== true
-        || this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        || !activeTexturePaintLayerMode(this)
       ) {
         return false;
       }
@@ -1080,8 +1138,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
 
     textureAirbrushCachedLayerStartProbeReady(event = null, options = {}) {
       if (
-        this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        !activeTexturePaintLayerMode(this)
         || (this.textureAirbrushFlushingScreenStroke && options.allowFlushing !== true)
       ) {
         return false;
@@ -1259,6 +1316,52 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       if (!previous || !finiteClientPointLike(current) || !finiteClientPointLike(start)) {
         return false;
       }
+      if (
+        this.texturePaintNeighborModeEnabled?.() === true
+        && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser")
+        && !previous.neighborPaintSeed?.enabled
+      ) {
+        const neighborPaintSeed = this.textureAirbrushActiveNeighborPaintSeed?.enabled
+          ? this.textureAirbrushActiveNeighborPaintSeed
+          : this.textureAirbrushBeginNeighborPaintStroke?.(event, this.activeTool) || null;
+        if (neighborPaintSeed?.enabled) {
+          previous.neighborPaintSeed = neighborPaintSeed;
+          previous.neighborPaintKey = this.textureAirbrushNeighborSeedKey?.(neighborPaintSeed)
+            || neighborPaintSeed.key
+            || "neighbor";
+          const style = payloadBrushStyle(previous);
+          previous.styleKey = style.styleKey;
+          previous.styleRadiusPixels = style.radiusPixels;
+          previous.styleColor = style.color;
+          previous.styleOpacity = style.opacity;
+          previous.styleHardness = style.hardness;
+          previous.styleScatter = style.scatter;
+          previous.styleStrength = style.strength;
+        }
+      }
+      if (this.textureAirbrushPostCameraProjectionStrokeRewarmedActive === true) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Retargeting edits the pending visible-only stroke payload in place.
+        // Preserve the post-orbit warm marker on that same payload; do not make
+        // the first stroke depend on a later flush or hidden-side paint.
+        previous.postCameraProjectionRewarmed = true;
+      }
+      if (this.textureAirbrushPostCameraProjectionStrokeAccumulateActive === true) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Preserve the post-camera visible-only accumulation marker when a
+        // queued payload is retargeted in place.
+        previous.postCameraProjectionAccumulates = true;
+      }
+      if (
+        this.textureAirbrushNeighborProjectionStrokeRewarmedActive === true
+        && this.texturePaintNeighborModeEnabled?.() === true
+        && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser")
+      ) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Neighbor retargets must keep using the refreshed current-camera
+        // visible projection for the whole first stroke after orbit.
+        previous.neighborProjectionRewarmed = true;
+      }
       const spacingPercent = Math.max(0.1, Math.min(200, Number(baseOptions.spacing ?? previous.spacing ?? 1)));
       if (spacingPercent > 100 || !this.textureAirbrushRetargetPressureIsStable?.(event, baseOptions, previous)) {
         return false;
@@ -1282,19 +1385,201 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       this.textureAirbrushStrokeSpacingState = null;
     },
 
+    textureAirbrushEndPostCameraProjectionStroke() {
+      this.textureAirbrushPostCameraProjectionStrokeRewarmedActive = false;
+      this.textureAirbrushNeighborProjectionStrokeRewarmedActive = false;
+      this.textureAirbrushPostCameraProjectionStrokeAccumulateActive = false;
+    },
+
+    textureAirbrushRewarmNeighborResetProjection(event = null) {
+      if (
+        this.activeTool !== "airbrush"
+        || this.texturePaintNeighborModeEnabled?.() !== true
+      ) {
+        return false;
+      }
+      // This rewarm is a buffer/cache refresh only. Neighbor airbrushing must
+      // remain visible-surface only; do not compensate for stale buffers by
+      // widening projection to hidden or back-side fragments.
+      const needsLayerCameraRewarm = activeTexturePaintLayerMode(this)
+        && this.textureAirbrushLayerProjectionFirstStrokeRewarm === true;
+      const needsLiveProjectionRewarm = liveProjectionFrameNeedsVisibleRewarm(this);
+      const needsBroadCameraRewarm = this.textureAirbrushNeighborProjectionDirty === true
+        || this.textureAirbrushNeighborProjectionFirstStrokeRewarm === true
+        || needsLayerCameraRewarm
+        || needsLiveProjectionRewarm;
+      const prewarmOptions = {
+        ...(needsBroadCameraRewarm ? { all: true } : {}),
+        force: true,
+        preserveLayerDisplay: true
+      };
+      let warmed = false;
+      let broadWarmed = false;
+      if (
+        activeTexturePaintLayerMode(this)
+        && this.prewarmTextureAirbrushLayerResetStroke?.(event) === true
+      ) {
+        warmed = true;
+        if (!needsBroadCameraRewarm) {
+          return true;
+        }
+      }
+      if (this.textureAirbrushPrewarm?.(event, null, prewarmOptions) === true) {
+        warmed = true;
+        broadWarmed = true;
+        this.textureAirbrushNeighborProjectionDirty = false;
+      }
+      if (broadWarmed && needsBroadCameraRewarm) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // This consumes only the "first stroke after camera motion needs warm
+        // buffers" marker. The paint shader still rejects hidden/back-facing
+        // fragments; this flag is not permission to broaden visible coverage.
+        this.textureAirbrushNeighborProjectionFirstStrokeRewarm = false;
+        if (needsLayerCameraRewarm) {
+          this.textureAirbrushLayerProjectionFirstStrokeRewarm = false;
+        }
+      }
+      if (needsBroadCameraRewarm && !broadWarmed) {
+        return false;
+      }
+      return warmed;
+    },
+
+    textureAirbrushRewarmLayerResetProjection(event = null) {
+      const layerRewarmNeeded = this.textureAirbrushLayerProjectionFirstStrokeRewarm === true
+        || liveProjectionFrameNeedsVisibleRewarm(this);
+      if (
+        this.activeTool !== "airbrush"
+        || !activeTexturePaintLayerMode(this)
+        || !layerRewarmNeeded
+      ) {
+        return false;
+      }
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // This is the non-Neighbor version of the post-orbit warm repair: rebuild
+      // broad visible-surface layer projection/display caches before the first
+      // reset stroke paints. Do not use it to authorize hidden/back-side paint.
+      const warmed = this.textureAirbrushPrewarm?.(event, null, {
+        all: true,
+        force: true,
+        preserveLayerDisplay: true
+      }) === true;
+      if (warmed) {
+        this.textureAirbrushLayerProjectionFirstStrokeRewarm = false;
+      }
+      return warmed;
+    },
+
     textureAirbrushQueueSpacedScreenStroke(event, options = {}) {
       if (!this.textureAirbrushCanUseScreenStroke?.()) {
         return false;
       }
-      if (options.reset === true) {
-        this.textureAirbrushResetLiveProjectionFrame?.({ keepCurrent: true });
+      const neighborPaintActive = this.texturePaintNeighborModeEnabled?.() === true
+        && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
+      const postCameraStrokeRewarmActive = this.textureAirbrushPostCameraProjectionStrokeRewarmedActive === true;
+      const neighborStrokeRewarmActive = neighborPaintActive
+        && this.textureAirbrushNeighborProjectionStrokeRewarmedActive === true;
+      const postCameraStrokeAccumulateActive = this.textureAirbrushPostCameraProjectionStrokeAccumulateActive === true;
+      const forcePostCameraStrokeReset = options.reset !== true
+        && this.textureAirbrushForceNextScreenStrokeResetAfterCameraChange === true
+        && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
+      const strokeReset = options.reset === true || forcePostCameraStrokeReset;
+      let neighborProjectionRewarmed = neighborStrokeRewarmActive;
+      let postCameraProjectionRewarmed = postCameraStrokeRewarmActive;
+      let postCameraProjectionAccumulates = postCameraStrokeAccumulateActive;
+      if (strokeReset) {
+        this.textureAirbrushEndPostCameraProjectionStroke?.();
+        neighborProjectionRewarmed = false;
+        postCameraProjectionRewarmed = false;
+        postCameraProjectionAccumulates = false;
+        if (forcePostCameraStrokeReset) {
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // A camera change happened mid-stroke. Treat this sample like a fresh
+          // visible-only reset so it cannot reuse a projection frame from the
+          // previous camera.
+          this.textureAirbrushForceNextScreenStrokeResetAfterCameraChange = false;
+        }
+        const liveProjectionRewarmNeeded = liveProjectionFrameNeedsVisibleRewarm(this);
+        const postCameraCoverageRepairBeforeReset = neighborPaintActive
+          && (
+            this.textureAirbrushNeighborProjectionDirty === true
+            || this.textureAirbrushNeighborProjectionFirstStrokeRewarm === true
+            || (
+              activeTexturePaintLayerMode(this)
+              && this.textureAirbrushLayerProjectionFirstStrokeRewarm === true
+            )
+          );
+        const layerPostCameraCoverageRepairBeforeReset = !neighborPaintActive
+          && activeTexturePaintLayerMode(this)
+          && this.textureAirbrushLayerProjectionFirstStrokeRewarm === true;
+        const neighborProjectionDirtyBeforeReset = neighborPaintActive
+          && (
+            this.textureAirbrushNeighborProjectionDirty === true
+            || this.textureAirbrushNeighborProjectionFirstStrokeRewarm === true
+            || liveProjectionRewarmNeeded
+            || (
+              activeTexturePaintLayerMode(this)
+              && this.textureAirbrushLayerProjectionFirstStrokeRewarm === true
+            )
+          );
+        this.textureAirbrushResetLiveProjectionFrame?.({ keepCurrent: !neighborPaintActive });
         this.textureAirbrushResetStrokePressureState?.();
         this.textureAirbrushResetStrokeBrushState?.();
+        this.textureAirbrushBeginNeighborPaintStroke?.(event, this.activeTool);
+        if (neighborPaintActive) {
+          const rewarmSucceeded = this.textureAirbrushRewarmNeighborResetProjection?.(event) === true;
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // A dirty camera projection must be fixed by rebuilding visible-surface
+          // buffers, not by letting the brush reach hidden/back-side fragments.
+          neighborProjectionRewarmed = neighborProjectionDirtyBeforeReset
+            && rewarmSucceeded
+            && this.textureAirbrushNeighborProjectionDirty !== true;
+          postCameraProjectionRewarmed = neighborProjectionRewarmed;
+          if (neighborProjectionRewarmed) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Keep the post-orbit warm marker alive for the entire active
+            // visible-only stroke. Live painting can flush in many tiny batches;
+            // every batch in this first stroke must use the same current-camera
+            // warm projection state instead of waiting for a second released
+            // stroke to become solid.
+            this.textureAirbrushNeighborProjectionStrokeRewarmedActive = true;
+            this.textureAirbrushPostCameraProjectionStrokeRewarmedActive = true;
+          }
+          if (neighborProjectionRewarmed && postCameraCoverageRepairBeforeReset) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This mirrors the user's release-and-paint-again workaround only
+            // for a real post-camera/orbit repair stroke. It accumulates
+            // repeated visible fragments inside the already strict depth/facing
+            // gates; it is not a hidden-side or through-object paint bypass.
+            postCameraProjectionAccumulates = true;
+            this.textureAirbrushPostCameraProjectionStrokeAccumulateActive = true;
+          }
+        } else if (this.textureAirbrushRewarmLayerResetProjection?.(event) === true) {
+          postCameraProjectionRewarmed = true;
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // Non-Neighbor layer painting has the same post-camera batch split:
+          // carry the visible-only warm marker across the active stroke so the
+          // first pass after orbit does not depend on releasing and painting
+          // again.
+          this.textureAirbrushPostCameraProjectionStrokeRewarmedActive = true;
+          if (layerPostCameraCoverageRepairBeforeReset) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Non-Neighbor layer orbit repair gets the same visible-only
+            // accumulation treatment as Neighbor. Cold cache warming alone
+            // stays opacity-capped.
+            postCameraProjectionAccumulates = true;
+            this.textureAirbrushPostCameraProjectionStrokeAccumulateActive = true;
+          }
+        }
+        if (forcePostCameraStrokeReset && !postCameraProjectionRewarmed) {
+          this.textureAirbrushForceNextScreenStrokeResetAfterCameraChange = true;
+        }
+      } else if (neighborPaintActive && !this.textureAirbrushActiveNeighborPaintSeed?.enabled) {
         this.textureAirbrushBeginNeighborPaintStroke?.(event, this.activeTool);
       }
       const baseOptions = this.textureAirbrushScreenStrokeBaseOptions?.() || {};
       if (
-        options.reset !== true
+        !strokeReset
         && this.textureAirbrushRetargetQueuedContinuousStroke?.(event, options.strokeStart, baseOptions)
       ) {
         return true;
@@ -1310,7 +1595,25 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       if (spacingPercent <= 100) {
         this.textureAirbrushStrokeSpacingState = null;
         if (samplePayload) {
-          samplePayload.strokeReset = options.reset === true;
+          samplePayload.strokeReset = strokeReset;
+          if (postCameraProjectionRewarmed) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // First post-camera layer paint gets complete visible-surface warm
+            // state immediately; it still paints only the shader-visible side.
+            samplePayload.postCameraProjectionRewarmed = true;
+          }
+          if (neighborProjectionRewarmed) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Carry the post-orbit warm state to the first live flush only so it
+            // can use complete visible-surface caches on the first stroke pass.
+            samplePayload.neighborProjectionRewarmed = true;
+          }
+          if (postCameraProjectionAccumulates) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Accumulation here is visible-only and post-camera specific. Do
+            // not replace this with hidden-side paint or a looser culling rule.
+            samplePayload.postCameraProjectionAccumulates = true;
+          }
         }
         return this.textureAirbrushQueueScreenStrokePayload?.(samplePayload) || false;
       }
@@ -1322,11 +1625,14 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         const stampEvent = clientEventAtPoint(this, event, point);
         return Boolean(stampEvent && this.textureAirbrushQueueScreenStroke?.(stampEvent, {
           strokeStart: point,
-          preview: options.preview
+          preview: options.preview,
+          postCameraProjectionRewarmed,
+          neighborProjectionRewarmed,
+          postCameraProjectionAccumulates
         }));
       };
 
-      if (options.reset === true || !this.textureAirbrushStrokeSpacingState) {
+      if (strokeReset || !this.textureAirbrushStrokeSpacingState) {
         this.textureAirbrushStrokeSpacingState = {
           distanceUntilNext: spacingPixels,
           lastPoint: current,
@@ -1470,6 +1776,12 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
     },
 
     finishTextureAirbrushScreenStrokeFlush() {
+      const activeStrokeUndo = this.texturePaintActiveStrokeUndo?.()
+        || this.texturePaintStrokeUndo
+        || null;
+      if (activeStrokeUndo) {
+        this.textureAirbrushAttachStrokeUndoToPendingScreenWork?.(activeStrokeUndo);
+      }
       if (!this.textureAirbrushScreenStrokeHasPendingWork?.()) {
         this.resolveTextureAirbrushScreenStrokeFlushWaiters?.();
         this.flushTexturePaintDeferredLayerCompositesWhenIdle?.();
@@ -1532,6 +1844,10 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         const strokeUndo = segment.strokeUndo || null;
         const neighborPaintSeed = segment.neighborPaintSeed || null;
         const neighborPaintKey = segment.neighborPaintKey || "";
+        const neighborProjectionRewarmed = segment.neighborProjectionRewarmed === true;
+        const postCameraProjectionRewarmed = segment.postCameraProjectionRewarmed === true
+          || neighborProjectionRewarmed;
+        const postCameraProjectionAccumulates = segment.postCameraProjectionAccumulates === true;
         if (
           !activeBatch
           || activeBatch.styleKey !== styleKey
@@ -1556,6 +1872,9 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             layerMutationSerial: mutationSerial,
             neighborPaintSeed,
             neighborPaintKey,
+            neighborProjectionRewarmed,
+            postCameraProjectionRewarmed,
+            postCameraProjectionAccumulates,
             strokeReset: segment.strokeReset === true,
             strokeStartedWithReset,
             layerCachedStartContinuation: segment.layerCachedStartContinuation === true,
@@ -1584,6 +1903,13 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           || segment.layerCachedStartContinuation === true;
         activeBatch.layerCachedStartContinuation = activeBatch.layerCachedStartContinuation
           || segment.layerCachedStartContinuation === true;
+        activeBatch.neighborProjectionRewarmed = activeBatch.neighborProjectionRewarmed
+          || segment.neighborProjectionRewarmed === true;
+        activeBatch.postCameraProjectionRewarmed = activeBatch.postCameraProjectionRewarmed
+          || segment.postCameraProjectionRewarmed === true
+          || segment.neighborProjectionRewarmed === true;
+        activeBatch.postCameraProjectionAccumulates = activeBatch.postCameraProjectionAccumulates
+          || segment.postCameraProjectionAccumulates === true;
         activeBatch.radiusPixels = Math.max(activeBatch.radiusPixels, radiusPixels);
         activeBatch.strokeSegments.push(strokeSegment);
       }
@@ -1618,6 +1944,12 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       this.textureAirbrushScreenFlushScheduled = false;
       const liveFlush = options.live === true;
       const currentLayerMutationSerial = this.texturePaintLayerMutationSerialValue?.() ?? 0;
+      const activeStrokeUndo = this.texturePaintActiveStrokeUndo?.()
+        || this.texturePaintStrokeUndo
+        || null;
+      if (activeStrokeUndo) {
+        this.textureAirbrushAttachStrokeUndoToPendingScreenWork?.(activeStrokeUndo);
+      }
       const queue = (this.textureAirbrushScreenStrokeQueue || [])
         .filter((segment) => layerStrokeWorkIsCurrent(segment, currentLayerMutationSerial));
       const pendingBatches = (this.textureAirbrushPendingScreenStrokeBatches || [])
@@ -1638,6 +1970,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       let layerPaintDisplayRefresh = null;
       let shouldRefreshLayerPaintDisplay = false;
       let anyLayerGpuPaintBatch = false;
+      let forceExactPostOrbitLayerDisplay = false;
       try {
         const queuedBatches = this.textureAirbrushScreenStrokeBatches(queue);
         const mergedBatches = mergeCompatibleStrokeBatches([
@@ -1653,6 +1986,16 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         const hasLayerResetBatch = Boolean(resetLayerBatch);
         const hasLayerResetOriginBatch = liveFlush
           && mergedBatches.some((batch) => batch.layerMode === true && batch.erase !== true && batch.strokeStartedWithReset === true);
+        const hasPostCameraLayerRewarmBatch = liveFlush
+          && mergedBatches.some((batch) => (
+            batch.layerMode === true
+            && batch.erase !== true
+            && batch.strokeStartedWithReset === true
+            && (
+              batch.postCameraProjectionRewarmed === true
+              || batch.neighborProjectionRewarmed === true
+            )
+          ));
         let layerResetWarmProjection = Boolean(
           (hasLayerResetBatch && layerResetStrokeHasWarmProjection(this, resetLayerBatch))
           || (cachedStartContinuationBatch && layerResetStrokeHasWarmProjection(this, cachedStartContinuationBatch))
@@ -1689,6 +2032,18 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         const layerSeededFrameReady = liveFlush
           && !hasLayerResetOriginBatch
           && layerBatchesCanUseSeededProjectionFrame(this, mergedBatches);
+        let canUseSeededFrameAfterPostOrbitRewarm = false;
+        if (hasPostCameraLayerRewarmBatch) {
+          canUseSeededFrameAfterPostOrbitRewarm = layerBatchesCanUseSeededProjectionFrame(this, mergedBatches);
+          if (canUseSeededFrameAfterPostOrbitRewarm) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // The broad rewarm has rebuilt the visible depth/facing caches for
+            // the new camera. Treat the reset as warm so the first drag pass gets
+            // the same coverage as releasing and starting a second stroke.
+            layerResetWarmProjection = true;
+            layerResetTargetReady = true;
+          }
+        }
         const useLayerResetSafetyCap = hasLayerResetBatch
           && !layerResetWarmProjection
           && !layerResetTargetReady;
@@ -1715,6 +2070,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         const batches = liveFlush
           ? splitLiveStrokeBatches(mergedBatches, liveBatchSegmentLimit)
           : mergedBatches;
+        if (activeStrokeUndo) {
+          for (const batch of batches) {
+            batch.strokeUndo ||= activeStrokeUndo;
+          }
+        }
         const requestedLiveBatchLimit = liveFlush
           ? useLayerResetSafetyCap
             ? Math.max(1, Math.min(
@@ -1772,8 +2132,14 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           ? this.textureAirbrushResolveBackend?.({ gpu: true })
           : null;
         const useFullLayerSeededFrame = anyLayerGpuPaintBatch
-          && layerSeededFrameReady
-          && !hasLayerResetOriginBatch;
+          && (
+            layerSeededFrameReady
+            || canUseSeededFrameAfterPostOrbitRewarm
+          )
+          && (
+            !hasLayerResetOriginBatch
+            || hasPostCameraLayerRewarmBatch
+          );
         const projectionFrameOptions = anyLayerGpuPaintBatch && !useFullLayerSeededFrame
           ? { seedLayerProxies: false, seedPaintPasses: false }
           : {};
@@ -1809,6 +2175,19 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             && batch.strokeStartedWithReset === true
             && layerResetWarmProjection === true
             && lowSpacingCachedPassStroke(batch);
+          const discoverPartialLayerPasses = reusePartialLayerPasses
+            && renderAllCachedLayerPasses
+            && partialLayerFrameNeedsPaintPassDiscovery(projectionFrame);
+          const forceLayerDisplayComposite = layerGpuBatch
+            && batch.strokeStartedWithReset === true
+            && (
+              batch.postCameraProjectionRewarmed === true
+              || batch.neighborProjectionRewarmed === true
+            );
+          const batchNeighborProjectionRewarmed = batch.neighborProjectionRewarmed === true;
+          const batchPostCameraProjectionRewarmed = batch.postCameraProjectionRewarmed === true
+            || batchNeighborProjectionRewarmed;
+          const batchPostCameraProjectionAccumulates = batch.postCameraProjectionAccumulates === true;
           const previousStrokeUndoContext = this.texturePaintStrokeUndoContext;
           if (batch.strokeUndo) {
             this.texturePaintStrokeUndoContext = batch.strokeUndo;
@@ -1830,9 +2209,14 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
               ...(layerMode && !layerGpuBatch ? { resolvedBackend: { backend: "cpu", webGpuStatus: "layer-paint" } } : {}),
               ...((!layerMode || layerGpuBatch) && backend?.backend === "webgl" ? { resolvedBackend: backend } : {}),
               ...((!layerMode || layerGpuBatch) && projectionFrame ? { projectionFrame } : {}),
-              ...(layerGpuBatch ? { deferLayerComposite: true } : {}),
+              ...(layerGpuBatch && !forceLayerDisplayComposite ? { deferLayerComposite: true } : {}),
+              ...(forceLayerDisplayComposite ? { forceLayerDisplayComposite: true } : {}),
               ...(renderAllCachedLayerPasses ? { renderAllCachedPasses: true } : {}),
               ...(reusePartialLayerPasses ? { reusePartialLayerPasses: true } : {}),
+              ...(discoverPartialLayerPasses ? { discoverPartialLayerPasses: true } : {}),
+              ...(batchPostCameraProjectionRewarmed ? { postCameraProjectionRewarmed: true } : {}),
+              ...(batchNeighborProjectionRewarmed ? { neighborProjectionRewarmed: true } : {}),
+              ...(batchPostCameraProjectionAccumulates ? { strokeOpacityCap: false } : {}),
               ...(batch.neighborPaintSeed ? { neighborPaintSeed: batch.neighborPaintSeed } : {}),
               pressureApplied: true
             }) || 0;
@@ -1846,6 +2230,20 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           if (batchChanged > 0 && batch.erase === true) {
             erasedBatchChanged = true;
           }
+          if (
+            batchChanged > 0
+            && layerGpuBatch
+            && batch.strokeStartedWithReset === true
+            && (
+              batch.postCameraProjectionRewarmed === true
+              || batch.neighborProjectionRewarmed === true
+            )
+          ) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This only makes the visible layer display catch up immediately
+            // after an orbit rewarm; it does not change projection visibility.
+            forceExactPostOrbitLayerDisplay = true;
+          }
           changed += batchChanged;
           processedBatches += 1;
           processedSegments += batch.strokeSegments.length;
@@ -1858,7 +2256,13 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             || processedSegments >= requestedLiveSegmentLimit
             || elapsedMs >= liveBatchBudgetMs
           ) {
-            this.textureAirbrushPendingScreenStrokeBatches = batches.slice(batchIndex + 1);
+            const pendingBatches = batches.slice(batchIndex + 1);
+            if (batch.strokeUndo) {
+              for (const pendingBatch of pendingBatches) {
+                pendingBatch.strokeUndo ||= batch.strokeUndo;
+              }
+            }
+            this.textureAirbrushPendingScreenStrokeBatches = pendingBatches;
             hasPendingWork = true;
             break;
           }
@@ -1876,21 +2280,44 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           if (!material || !layer || refreshedMaterials.has(material)) {
             return false;
           }
-          refreshedMaterials.add(material);
-          if (options.forceExact === true) {
-            return (this.flushTexturePaintLayerGpuTargetsToCanvases?.() || 0) > 0;
+          const refreshed = options.forceExact === true
+            ? (this.flushTexturePaintLayerGpuTargetsToCanvases?.({ material }) || 0) > 0
+            : this.texturePaintCompositeMaterialLayerDisplay?.(material, {
+                changedLayer: layer
+              }) === true;
+          if (refreshed) {
+            refreshedMaterials.add(material);
           }
-          return this.texturePaintCompositeMaterialLayerDisplay?.(material, {
-            changedLayer: layer
-          }) === true;
+          return refreshed;
         };
+        let exactPostOrbitDisplayRefreshed = false;
         if (layerPaintDisplayRefresh?.wasEmpty === true) {
           this.texturePaintNeedsExactFirstPaintDisplayRefresh = true;
         }
-        refreshLayerPaintDisplay(
-          layerPaintDisplayRefresh?.material,
-          layerPaintDisplayRefresh?.layer
-        );
+        if (
+          forceExactPostOrbitLayerDisplay
+          && layerPaintDisplayRefresh?.material
+          && layerPaintDisplayRefresh?.layer
+        ) {
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // The delayed exact refresh is a display-cache repair only. Use it to
+          // show the already visible-surface-gated paint immediately, not to
+          // expand what the brush can hit.
+          exactPostOrbitDisplayRefreshed = refreshLayerPaintDisplay(
+            layerPaintDisplayRefresh.material,
+            layerPaintDisplayRefresh.layer,
+            { forceExact: true }
+          );
+          if (exactPostOrbitDisplayRefreshed) {
+            this.texturePaintNeedsExactFirstPaintDisplayRefresh = false;
+          }
+        }
+        if (!exactPostOrbitDisplayRefreshed) {
+          refreshLayerPaintDisplay(
+            layerPaintDisplayRefresh?.material,
+            layerPaintDisplayRefresh?.layer
+          );
+        }
         if (this.texturePaintNeedsExactFirstPaintDisplayRefresh === true) {
           this.scheduleTexturePaintExactFirstPaintDisplayRefresh?.();
         }

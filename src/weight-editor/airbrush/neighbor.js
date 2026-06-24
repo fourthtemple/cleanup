@@ -43,6 +43,68 @@ function recordsMatch(left = null, right = null) {
   );
 }
 
+function roundedPositionValue(value = 0) {
+  return Math.round(Number(value || 0) * 10000);
+}
+
+function attributeComponent(attribute = null, vertexIndex = 0, componentIndex = 0) {
+  if (!attribute) {
+    return null;
+  }
+  if (typeof attribute.getComponent === "function") {
+    const value = attribute.getComponent(vertexIndex, componentIndex);
+    return Number.isFinite(Number(value)) ? Number(value) : null;
+  }
+  const itemSize = Math.max(1, Math.floor(Number(attribute.itemSize) || 1));
+  const arrayIndex = vertexIndex * itemSize + componentIndex;
+  if (!attribute.array || arrayIndex < 0 || arrayIndex >= attribute.array.length) {
+    return null;
+  }
+  const value = Number(attribute.array[arrayIndex]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function skinSignatureForNeighborVertex(geometry = null, vertexIndex = 0) {
+  const skinIndex = geometry?.attributes?.skinIndex || null;
+  const skinWeight = geometry?.attributes?.skinWeight || null;
+  if (!skinIndex || !skinWeight) {
+    return "";
+  }
+  const itemSize = Math.min(
+    Math.floor(Number(skinIndex.itemSize) || 0),
+    Math.floor(Number(skinWeight.itemSize) || 0),
+    4
+  );
+  const influences = [];
+  for (let index = 0; index < itemSize; index += 1) {
+    const weight = attributeComponent(skinWeight, vertexIndex, index) || 0;
+    if (weight <= 0.0001) {
+      continue;
+    }
+    influences.push(`${Math.round(attributeComponent(skinIndex, vertexIndex, index) || 0)}:${Math.round(weight * 10000)}`);
+  }
+  return influences.sort().join(",");
+}
+
+function textureNeighborPositionKey(record = null, vertexIndex = 0) {
+  const position = record?.geometry?.attributes?.position || null;
+  if (!position || vertexIndex < 0 || vertexIndex >= Math.max(0, Number(position.count) || 0)) {
+    return "";
+  }
+  const x = attributeComponent(position, vertexIndex, 0);
+  const y = attributeComponent(position, vertexIndex, 1);
+  const z = attributeComponent(position, vertexIndex, 2);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return "";
+  }
+  return [
+    roundedPositionValue(x),
+    roundedPositionValue(y),
+    roundedPositionValue(z),
+    skinSignatureForNeighborVertex(record?.geometry, vertexIndex)
+  ].join(":");
+}
+
 function firstValidFaceVertex(record = null, face = null) {
   for (const vertexIndex of faceVertexIndexes(face)) {
     if (!record?.deleted?.has?.(vertexIndex)) {
@@ -92,10 +154,48 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
     },
 
     textureAirbrushNeighborLinkedVertices(record = null, vertexIndex = null) {
-      const linked = typeof this.linkedSeamVertices === "function"
-        ? this.linkedSeamVertices(record, vertexIndex)
-        : null;
+      if (!record || !Number.isInteger(vertexIndex)) {
+        return [];
+      }
+      const map = this.textureAirbrushNeighborPositionSeamMap?.(record);
+      const linked = map?.get(vertexIndex)
+        || (typeof this.linkedSeamVertices === "function"
+          ? this.linkedSeamVertices(record, vertexIndex)
+          : null);
       return linked?.length ? linked : [vertexIndex];
+    },
+
+    textureAirbrushNeighborPositionSeamMap(record = null) {
+      const position = record?.geometry?.attributes?.position || null;
+      const vertexCount = Math.max(0, Math.floor(Number(position?.count) || 0));
+      if (!record || !position || !vertexCount) {
+        return null;
+      }
+      if (record.texturePaintNeighborPositionSeamMap) {
+        return record.texturePaintNeighborPositionSeamMap;
+      }
+      const groups = new Map();
+      for (let vertexIndex = 0; vertexIndex < vertexCount; vertexIndex += 1) {
+        const key = textureNeighborPositionKey(record, vertexIndex);
+        if (!key) {
+          continue;
+        }
+        if (!groups.has(key)) {
+          groups.set(key, []);
+        }
+        groups.get(key).push(vertexIndex);
+      }
+      const map = new Map();
+      for (const group of groups.values()) {
+        if (group.length < 2) {
+          continue;
+        }
+        for (const vertexIndex of group) {
+          map.set(vertexIndex, group);
+        }
+      }
+      record.texturePaintNeighborPositionSeamMap = map;
+      return map;
     },
 
     textureAirbrushNeighborComponent(record = null, seedVertexIndex = null) {
@@ -193,6 +293,12 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       if (!this.textureAirbrushNeighborRecordMatches?.(seed, pass?.record)) {
         return false;
       }
+      // Neighbor mode broadens the eligible connected surface island only.
+      // Visibility is still enforced later by the airbrush projection shader;
+      // do not use this pass gate to allow painting hidden faces.
+      if (seed.component?.size) {
+        return true;
+      }
       if (Number.isInteger(seed.materialIndex) && (pass?.materialIndex ?? 0) !== seed.materialIndex) {
         return false;
       }
@@ -210,20 +316,21 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       if (!this.textureAirbrushNeighborRecordMatches?.(seed, record)) {
         return false;
       }
+      const hasConnectedComponent = seed.component?.size;
       const resolvedMaterialIndex = Number.isInteger(materialIndex)
         ? materialIndex
         : hit?.face?.materialIndex ?? 0;
-      if (Number.isInteger(seed.materialIndex) && resolvedMaterialIndex !== seed.materialIndex) {
+      if (!hasConnectedComponent && Number.isInteger(seed.materialIndex) && resolvedMaterialIndex !== seed.materialIndex) {
         return false;
       }
       const resolvedMaterial = material || (record && hit
         ? this.clonePaintMaterialForHit?.(record, hit) || null
         : null);
-      if (seed.material && resolvedMaterial && resolvedMaterial !== seed.material) {
+      if (!hasConnectedComponent && seed.material && resolvedMaterial && resolvedMaterial !== seed.material) {
         return false;
       }
       const hitNormal = normalizedNormal(hit?.face?.normal);
-      if (seed.seedNormal && hitNormal) {
+      if (!hasConnectedComponent && seed.seedNormal && hitNormal) {
         const normalDot = seed.seedNormal.x * hitNormal.x
           + seed.seedNormal.y * hitNormal.y
           + seed.seedNormal.z * hitNormal.z;
@@ -231,7 +338,7 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
           return false;
         }
       }
-      if (!seed.component?.size) {
+      if (!hasConnectedComponent) {
         return true;
       }
       const vertices = faceVertexIndexes(hit?.face);

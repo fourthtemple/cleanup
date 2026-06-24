@@ -152,6 +152,77 @@ test("airbrush prewarm prepares WebGL paint targets without a hover hit", () => 
   );
 });
 
+test("broad post-orbit airbrush prewarm warms every WebGL material even with a cursor hit", () => {
+  class WebGlPrewarmEditor {}
+  installTextureAirbrushWebGlBackendMethods(WebGlPrewarmEditor, { THREE: {} });
+  const editor = new WebGlPrewarmEditor();
+  const firstMaterial = { color: {}, uuid: "first" };
+  const secondMaterial = { map: {}, uuid: "second" };
+  const record = {
+    object: {
+      material: [firstMaterial, secondMaterial]
+    }
+  };
+  const calls = [];
+  editor.activeTool = "airbrush";
+  editor.renderer = {};
+  editor.model = {};
+  editor.paintRecords = [record];
+  editor.texturePaintHitForEvent = () => ({
+    record,
+    hit: { face: { materialIndex: 0 } }
+  });
+  editor.clonePaintMaterialForHit = () => firstMaterial;
+  editor.textureAirbrushBrushShaderMaterial = () => {
+    calls.push("shader");
+    return {};
+  };
+  editor.textureAirbrushEnsureCopyScene = () => {
+    calls.push("copy-scene");
+  };
+  editor.textureAirbrushRenderDepthTarget = () => {
+    calls.push("depth");
+    return { name: "depth-target" };
+  };
+  editor.textureAirbrushGpuTargetForMaterial = (candidateMaterial) => {
+    calls.push(["target", candidateMaterial.uuid]);
+    return { target: { texture: {} } };
+  };
+  editor.textureAirbrushGpuProxyForRecord = (candidateRecord, materialIndex, candidateMaterial) => {
+    calls.push(["proxy", materialIndex, candidateMaterial.uuid]);
+    return {};
+  };
+  const liveFrame = {};
+  editor.textureAirbrushLiveProjectionFrame = (options) => {
+    calls.push(["live-frame", options]);
+    return liveFrame;
+  };
+
+  assert.equal(editor.textureAirbrushPrewarm({ clientX: 50, clientY: 60 }, null, {
+    all: true,
+    force: true
+  }), true);
+
+  assert.deepEqual(
+    calls.filter((call) => Array.isArray(call) && call[0] === "target"),
+    [
+      ["target", "first"],
+      ["target", "second"]
+    ]
+  );
+  assert.deepEqual(
+    calls.filter((call) => Array.isArray(call) && call[0] === "proxy"),
+    [
+      ["proxy", 0, "first"],
+      ["proxy", 1, "second"]
+    ]
+  );
+  assert.deepEqual(
+    calls.filter((call) => Array.isArray(call) && call[0] === "live-frame"),
+    [["live-frame", {}]]
+  );
+});
+
 test("layer airbrush prewarm prepares the active layer GPU target and live composite", () => {
   class WebGlPrewarmEditor {}
   installTextureAirbrushWebGlBackendMethods(WebGlPrewarmEditor, { THREE: {} });
@@ -225,6 +296,62 @@ test("layer airbrush prewarm prepares the active layer GPU target and live compo
     }]
   ]);
   assert.equal(liveFrame.depthTarget?.name, "depth-target");
+});
+
+test("broad post-orbit layer prewarm stays broad even with a cursor hit", () => {
+  class WebGlPrewarmEditor {}
+  installTextureAirbrushWebGlBackendMethods(WebGlPrewarmEditor, { THREE: {} });
+  const editor = new WebGlPrewarmEditor();
+  const material = { uuid: "hit-material", userData: {} };
+  const record = { object: { material } };
+  const calls = [];
+  editor.activeTool = "airbrush";
+  editor.renderer = {};
+  editor.model = {};
+  editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintActiveMaterial = material;
+  editor.texturePaintHitForEvent = () => ({
+    record,
+    hit: { face: { materialIndex: 0 } }
+  });
+  editor.clonePaintMaterialForHit = () => material;
+  editor.textureAirbrushBrushShaderMaterial = () => {
+    calls.push("shader");
+    return {};
+  };
+  editor.textureAirbrushEnsureCopyScene = () => {
+    calls.push("copy-scene");
+  };
+  editor.textureAirbrushPrewarmLayerMaterial = () => {
+    throw new Error("all:true post-orbit warm must not stay on the single hit material");
+  };
+  editor.textureAirbrushPrewarmAllLayerMaterials = (options) => {
+    calls.push(["all-layer", options]);
+    return 2;
+  };
+  const liveFrame = {};
+  editor.textureAirbrushLiveProjectionFrame = (options) => {
+    calls.push(["live-frame", options]);
+    return liveFrame;
+  };
+
+  assert.equal(editor.textureAirbrushPrewarm({ clientX: 30, clientY: 45 }, null, {
+    all: true,
+    force: true,
+    preserveLayerDisplay: true
+  }), true);
+
+  assert.deepEqual(calls, [
+    "shader",
+    "copy-scene",
+    ["all-layer", {
+      all: true,
+      force: true,
+      preserveLayerDisplay: true,
+      activeOnly: false
+    }],
+    ["live-frame", {}]
+  ]);
 });
 
 test("layer hover prewarm seeds the first-hit live projection probe", () => {

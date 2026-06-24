@@ -3,7 +3,7 @@ import {
   clampByte,
   isBrightArtifactPixel
 } from "./math.js";
-import { installTextureAirbrushNearBrushMethods } from "./uv-near.js";
+import { installTextureAirbrushNearBrushMethods } from "./uv-near.js?v=visible-side-facing-20260623a";
 
 function finiteScreenPoint(point = null, rect = null) {
   if (!Number.isFinite(point?.clientX) || !Number.isFinite(point?.clientY)) {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import * as THREE from "../node_modules/three/build/three.module.js";
 import { installPaintToolMethods } from "../src/weight-editor/paint-tools.js";
@@ -23,8 +24,10 @@ function classListMock(initial = []) {
     add(name) {
       names.add(name);
     },
-    remove(name) {
-      names.delete(name);
+    remove(...removedNames) {
+      for (const name of removedNames) {
+        names.delete(name);
+      }
     },
     toggle(name, force) {
       const shouldAdd = force === undefined ? !names.has(name) : Boolean(force);
@@ -49,6 +52,16 @@ function withLocalStorageMock(t) {
   const originalWindow = globalThis.window;
   const store = new Map();
   globalThis.window = {
+    location: { search: "" },
+    requestAnimationFrame(callback) {
+      callback();
+      return 1;
+    },
+    clearTimeout() {},
+    setTimeout(callback) {
+      callback();
+      return 1;
+    },
     localStorage: {
       getItem(key) {
         return store.has(key) ? store.get(key) : null;
@@ -303,6 +316,97 @@ test("camera changes only prewarm texture airbrush painting tools", () => {
     [null, null, { all: true }],
     [null, null, { all: true }]
   ]);
+});
+
+test("orbit camera changes invalidate airbrush projection without paint prewarm", () => {
+  const editor = new TestEditor();
+  const prewarmCalls = [];
+  let resetFrames = 0;
+  const staleNeighborSeed = { enabled: true };
+  editor.activeTool = "orbit";
+  editor.textureAirbrushActiveNeighborPaintSeed = staleNeighborSeed;
+  editor.textureAirbrushCameraPrewarmScheduled = true;
+  editor.textureAirbrushResetLiveProjectionFrame = () => {
+    resetFrames += 1;
+    return true;
+  };
+  editor.prewarmTexturePaintActiveLayerMaterialGpu = () => {
+    throw new Error("orbit camera changes should not prewarm layer material");
+  };
+  editor.prewarmTexturePaintActiveLayerProjectionGpu = () => {
+    throw new Error("orbit camera changes should not prewarm layer projection");
+  };
+  editor.prewarmTexturePaintActiveLayerCursorProbe = () => {
+    throw new Error("orbit camera changes should not prewarm cursor probe");
+  };
+  editor.scheduleTextureAirbrushPrewarm = (...args) => {
+    prewarmCalls.push(args);
+    return true;
+  };
+
+  assert.equal(editor.textureAirbrushCameraChanged(), true);
+  assert.equal(resetFrames, 1);
+  assert.equal(editor.textureAirbrushActiveNeighborPaintSeed, null);
+  assert.equal(editor.textureAirbrushCameraPrewarmSerial, 1);
+  assert.equal(editor.textureAirbrushCameraPrewarmScheduled, false);
+  assert.deepEqual(prewarmCalls, []);
+});
+
+test("camera changes clear the active neighbor seed even if a stale paint stroke is down", () => {
+  const editor = new TestEditor();
+  const activeNeighborSeed = { enabled: true };
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.textureAirbrushActiveNeighborPaintSeed = activeNeighborSeed;
+  editor.textureAirbrushResetLiveProjectionFrame = () => true;
+  editor.scheduleTextureAirbrushSettledCameraPrewarm = () => true;
+
+  assert.equal(editor.textureAirbrushCameraChanged(), true);
+  assert.equal(editor.textureAirbrushActiveNeighborPaintSeed, null);
+});
+
+test("paint startup settles damped orbit motion with one projection reset", () => {
+  const editor = new TestEditor();
+  const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 220);
+  const model = new THREE.Object3D();
+  const calls = [];
+  let updateCalls = 0;
+
+  editor.camera = camera;
+  editor.model = model;
+  editor.controls = {
+    update() {
+      updateCalls += 1;
+      calls.push(["controls-update", updateCalls]);
+      editor.textureAirbrushCameraChanged();
+      return updateCalls < 3;
+    }
+  };
+  editor.textureAirbrushActiveNeighborPaintSeed = { enabled: true };
+  editor.textureAirbrushCameraPrewarmScheduled = true;
+  editor.textureAirbrushResetLiveProjectionFrame = () => {
+    calls.push(["reset-frame"]);
+    return true;
+  };
+
+  assert.equal(editor.settleTextureAirbrushCameraMotion(), true);
+  assert.deepEqual(calls, [
+    ["controls-update", 1],
+    ["controls-update", 2],
+    ["controls-update", 3],
+    ["reset-frame"]
+  ]);
+  assert.equal(editor.textureAirbrushActiveNeighborPaintSeed, null);
+  assert.equal(editor.textureAirbrushCameraPrewarmSerial, 1);
+  assert.equal(editor.textureAirbrushCameraPrewarmScheduled, false);
+});
+
+test("OrbitControls change events invalidate airbrush projection frames", () => {
+  const source = fs.readFileSync(new URL("../src/weight-editor/scene-and-controls.js", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /this\.controls\.addEventListener\("change",\s*\(\)\s*=>\s*this\.textureAirbrushCameraChanged\?\.\(\)\)/
+  );
 });
 
 test("layer camera prewarm warms the active layer before broad materials", (t) => {
@@ -615,6 +719,96 @@ test("selecting airbrush schedules active layer warm before broad prewarm", () =
   assert.equal(broadPrewarmCalls, 1);
 });
 
+test("returning from orbit to Neighbor airbrush rewarms projection immediately", () => {
+  const editor = new TestEditor();
+  const prewarmCalls = [];
+  editor.activeTool = "orbit";
+  editor.controls = {};
+  editor.app = { classList: classListMock() };
+  editor.canvas = { classList: classListMock() };
+  editor.toolButtons = [];
+  editor.usesSelectionStrokeUndo = () => false;
+  editor.usesTextureStrokeUndo = () => false;
+  editor.usesSelectionBrushCursor = () => false;
+  editor.texturePaintNeighborModeEnabled = () => true;
+  editor.texturePaintLayerModeActive = () => false;
+  editor.hasSelection = () => false;
+  editor.hideTextureBrushCursor = () => {};
+  editor.hideLassoOverlay = () => {};
+  editor.preparePoseGizmoModeSwitch = () => {};
+  editor.setBonePlacementPending = () => {};
+  editor.pausePlayback = () => {};
+  editor.setViewMode = () => {};
+  editor.updateMoveGizmo = () => {};
+  editor.updateBoneMoveGizmo = () => {};
+  editor.updateIkMoveGizmo = () => {};
+  editor.updateGizmoOnlyPreviewButton = () => {};
+  editor.updateNeighborHover = () => {};
+  editor.syncClonePaintControls = () => {};
+  editor.setStatus = () => {};
+  editor.recordTutorialMacroToolChange = () => {};
+  editor.textureAirbrushPrewarm = (...args) => {
+    prewarmCalls.push(["immediate", ...args]);
+    return true;
+  };
+  editor.scheduleTextureAirbrushPrewarm = (...args) => {
+    prewarmCalls.push(["scheduled", ...args]);
+    return true;
+  };
+
+  editor.setTool("airbrush");
+
+  assert.deepEqual(prewarmCalls, [
+    ["immediate", null, null, { all: true, force: true }],
+    ["scheduled", null, null, { all: true }]
+  ]);
+});
+
+test("switching from airbrush to orbit drains queued paint before changing active tool", () => {
+  const editor = new TestEditor();
+  const calls = [];
+  editor.activeTool = "airbrush";
+  editor.controls = {};
+  editor.app = { classList: classListMock(["is-texture-airbrush"]) };
+  editor.canvas = { classList: classListMock(["is-texture-airbrush"]) };
+  editor.toolButtons = [];
+  editor.usesSelectionStrokeUndo = () => false;
+  editor.usesTextureStrokeUndo = (tool) => tool === "airbrush";
+  editor.usesSelectionBrushCursor = () => false;
+  editor.hasSelection = () => false;
+  editor.hideTextureBrushCursor = () => {};
+  editor.hideLassoOverlay = () => {};
+  editor.preparePoseGizmoModeSwitch = () => {};
+  editor.setBonePlacementPending = () => {};
+  editor.updateMoveGizmo = () => {};
+  editor.updateBoneMoveGizmo = () => {};
+  editor.updateIkMoveGizmo = () => {};
+  editor.updateGizmoOnlyPreviewButton = () => {};
+  editor.updateNeighborHover = () => {};
+  editor.syncClonePaintControls = () => {};
+  editor.recordTutorialMacroToolChange = () => {};
+  editor.setStatus = (message) => {
+    editor.lastStatus = message;
+  };
+  editor.flushTextureAirbrushScreenStroke = () => {
+    calls.push(["flush", editor.activeTool]);
+    return 1;
+  };
+  editor.endTexturePaintStrokeUndo = () => {
+    calls.push(["end-undo", editor.activeTool]);
+    return true;
+  };
+
+  editor.setTool("orbit");
+
+  assert.equal(editor.activeTool, "orbit");
+  assert.deepEqual(calls, [
+    ["flush", "airbrush"],
+    ["end-undo", "airbrush"]
+  ]);
+  assert.equal(editor.lastStatus, "Orbit camera: left drag rotates, wheel zooms, right drag pans");
+});
+
 test("pen orbit button zoom is isolated to the orbit tool", () => {
   const editor = new TestEditor();
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 220);
@@ -625,6 +819,7 @@ test("pen orbit button zoom is isolated to the orbit tool", () => {
   let rendered = 0;
   let stopped = 0;
   let prevented = 0;
+  let cameraChanges = 0;
   camera.position.set(0, 0, 10);
   editor.camera = camera;
   editor.canvas = {
@@ -647,6 +842,9 @@ test("pen orbit button zoom is isolated to the orbit tool", () => {
   };
   editor.render = () => {
     rendered += 1;
+  };
+  editor.textureAirbrushCameraChanged = () => {
+    cameraChanges += 1;
   };
   const event = {
     pointerType: "pen",
@@ -687,10 +885,12 @@ test("pen orbit button zoom is isolated to the orbit tool", () => {
   assert.equal(camera.position.distanceTo(target) < 10, true);
   assert.equal(controlsUpdated, 1);
   assert.equal(rendered, 1);
+  assert.equal(cameraChanges, 1);
 
   assert.equal(editor.endPenOrbitButtonZoom({ pointerId: 17 }), true);
   assert.equal(releasedPointer, 17);
   assert.equal(editor.controls.enabled, true);
+  assert.equal(cameraChanges, 2);
 });
 
 test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
@@ -749,4 +949,64 @@ test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
     button: 0,
     reset: true
   });
+});
+
+test("airbrush pointerdown settles orbit motion before reset stroke projection", () => {
+  const editor = new TestEditor();
+  const calls = [];
+  let updateCalls = 0;
+
+  editor.activeTool = "airbrush";
+  editor.camera = new THREE.PerspectiveCamera(38, 1, 0.1, 220);
+  editor.model = new THREE.Object3D();
+  editor.controls = {
+    enabled: true,
+    update() {
+      updateCalls += 1;
+      calls.push(["controls-update", updateCalls]);
+      editor.textureAirbrushCameraChanged();
+      return updateCalls < 3;
+    }
+  };
+  editor.canvas = {
+    setPointerCapture() {
+      calls.push(["capture"]);
+    }
+  };
+  editor.textureAirbrushResetLiveProjectionFrame = () => {
+    calls.push(["reset-frame"]);
+    return true;
+  };
+  editor.showTextureStrokeCursor = () => {
+    calls.push(["cursor"]);
+  };
+  editor.usesSelectionStrokeUndo = () => false;
+  editor.usesTextureStrokeUndo = () => true;
+  editor.beginTexturePaintStrokeUndo = () => {
+    calls.push(["begin-undo"]);
+  };
+  editor.paintTextureStrokeFromEvent = (event, options) => {
+    calls.push(["paint", options?.reset === true]);
+    return true;
+  };
+
+  editor.onPointerDown({
+    button: 0,
+    pointerId: 4,
+    preventDefault() {
+      calls.push(["prevent"]);
+    }
+  });
+
+  assert.deepEqual(calls, [
+    ["prevent"],
+    ["controls-update", 1],
+    ["controls-update", 2],
+    ["controls-update", 3],
+    ["reset-frame"],
+    ["cursor"],
+    ["begin-undo"],
+    ["capture"],
+    ["paint", true]
+  ]);
 });

@@ -151,7 +151,7 @@ test("layer low spacing can render all cached paint passes without raycasts", ()
       brushOpacity: { value: 0 },
       brushHardness: { value: 0 },
       scatterAmount: { value: 0 },
-      depthEpsilon: { value: 0 },
+      visibleOnlyDepthEpsilon: { value: 0 },
       uvOffset: { value: vector() }
     },
     needsUpdate: true
@@ -688,6 +688,12 @@ test("airbrush WebGL brush shader supports per-stroke opacity caps", () => {
   assert.match(material.fragmentShader, /useStrokeSourceTexture/);
   assert.match(material.fragmentShader, /useCurrentTargetTexture/);
   assert.match(material.fragmentShader, /strokeSourceClear/);
+  assert.match(material.vertexShader, /vPaintTargetUv = targetUv/);
+  assert.match(material.fragmentShader, /varying vec2 vPaintTargetUv/);
+  assert.match(material.fragmentShader, /texture2D\(strokeSourceTexture, vPaintTargetUv\)/);
+  assert.match(material.fragmentShader, /texture2D\(currentTargetTexture, vPaintTargetUv\)/);
+  assert.doesNotMatch(material.fragmentShader, /texture2D\(strokeSourceTexture, vPaintUv\)/);
+  assert.doesNotMatch(material.fragmentShader, /texture2D\(currentTargetTexture, vPaintUv\)/);
   assert.match(material.fragmentShader, /nextAlpha = alpha \+ sourceColor\.a \* \(1\.0 - alpha\)/);
   assert.match(material.fragmentShader, /if \(sourceColor\.a < 0\.9999\)/);
   assert.match(material.fragmentShader, /return clamp\(alphaProgress, 0\.0, 1\.0\)/);
@@ -791,7 +797,11 @@ test("airbrush WebGL projection uses the stroke-start snapshot to cap opacity", 
         useStrokeSource: shaderMaterial.uniforms.useStrokeSourceTexture.value,
         current: shaderMaterial.uniforms.currentTargetTexture.value,
         useCurrentTarget: shaderMaterial.uniforms.useCurrentTargetTexture.value,
-        sourceClear: shaderMaterial.uniforms.strokeSourceClear.value
+        sourceClear: shaderMaterial.uniforms.strokeSourceClear.value,
+        uvOffset: {
+          x: shaderMaterial.uniforms.uvOffset.value.x,
+          y: shaderMaterial.uniforms.uvOffset.value.y
+        }
       });
     }
   };
@@ -812,7 +822,18 @@ test("airbrush WebGL projection uses the stroke-start snapshot to cap opacity", 
   editor.textureAirbrushShaderColor = () => ({ r: 1, g: 0, b: 0 });
   editor.textureBrushRadiusValue = () => 0.04;
   editor.textureAirbrushGpuProxyForRecord = () => ({ scene: {} });
-  editor.textureAirbrushGpuUvBleedOffsets = () => [vector()];
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // Live airbrush must render exactly one UV pass. If code asks for bleed
+  // offsets again, the test throws because bleed offsets can paint hidden UVs
+  // just to make coverage look fuller.
+  const bleedOffsets = [vector(), vector(), vector()];
+  bleedOffsets[1].set(1 / targetEntry.width, 0);
+  bleedOffsets[2].set(0, 1 / targetEntry.height);
+  editor.textureAirbrushGpuUvBleedOffsets = () => {
+    throw new Error("DO NOT PAINT ON NON CAMERA FACING SIDES via UV bleed offsets");
+  };
   editor.captureTexturePaintGpuUndoTarget = () => true;
   editor.texturePaintGpuStrokeSourceSnapshot = () => ({ texture: sourceTexture });
   editor.markTexturePaintStrokeChanged = () => {};
@@ -858,16 +879,19 @@ test("airbrush WebGL projection uses the stroke-start snapshot to cap opacity", 
   });
 
   assert.equal(changed > 0, true);
-  assert.deepEqual(renders, [{
-    target,
-    blending: THREE.NoBlending,
-    transparent: false,
-    source: sourceTexture,
-    useStrokeSource: true,
-    current: null,
-    useCurrentTarget: false,
-    sourceClear: false
-  }]);
+  assert.deepEqual(renders, [
+    {
+      target,
+      blending: THREE.NoBlending,
+      transparent: false,
+      source: sourceTexture,
+      useStrokeSource: true,
+      current: null,
+      useCurrentTarget: false,
+      sourceClear: false,
+      uvOffset: { x: 0, y: 0 }
+    }
+  ]);
   assert.equal(shaderMaterial.blending, "previous-blending");
   assert.equal(shaderMaterial.transparent, true);
   assert.equal(shaderMaterial.uniforms.strokeSourceTexture.value, null);

@@ -140,7 +140,6 @@ export function installTextureAirbrushScreenOverlayMethods(BirdWeightEditor) {
       const red = clampByte(color.r);
       const green = clampByte(color.g);
       const blue = clampByte(color.b);
-      const paintLuma = Math.max(1, 0.2126 * red + 0.7152 * green + 0.0722 * blue);
       const opacity = Math.max(0.001, Math.min(1, Number(payload.opacity ?? 0.42)));
       const hardness = Math.max(0, Math.min(1, Number(payload.hardness ?? 0.35)));
       const scatter = Math.max(0, Math.min(1, Number(payload.scatter ?? 0.35)));
@@ -161,11 +160,6 @@ export function installTextureAirbrushScreenOverlayMethods(BirdWeightEditor) {
 
       const image = context.getImageData(minX, minY, width, height);
       const data = image.data;
-      const baseImage = this.textureAirbrushScreenBaseImage?.width === layer.width
-        && this.textureAirbrushScreenBaseImage?.height === layer.height
-        ? this.textureAirbrushScreenBaseImage
-        : this.captureTextureAirbrushScreenBase?.(layerState);
-      const baseData = baseImage?.data || null;
       for (let y = 0; y < height; y += 1) {
         const screenY = (minY + y + 0.5) / scale;
         for (let x = 0; x < width; x += 1) {
@@ -180,26 +174,9 @@ export function installTextureAirbrushScreenOverlayMethods(BirdWeightEditor) {
           if (alphaByte <= data[offset + 3]) {
             continue;
           }
-          let shadedRed = red;
-          let shadedGreen = green;
-          let shadedBlue = blue;
-          if (baseData) {
-            const baseOffset = ((minY + y) * layer.width + (minX + x)) * 4;
-            const baseRed = baseData[baseOffset];
-            const baseGreen = baseData[baseOffset + 1];
-            const baseBlue = baseData[baseOffset + 2];
-            const baseLuma = 0.2126 * baseRed + 0.7152 * baseGreen + 0.0722 * baseBlue;
-            const shade = Math.max(
-              0.08,
-              Math.min(1.15, (baseLuma / paintLuma) * (0.92 + hardness * 0.28) + 0.04)
-            );
-            shadedRed = clampByte(red * shade);
-            shadedGreen = clampByte(green * shade);
-            shadedBlue = clampByte(blue * shade);
-          }
-          data[offset] = shadedRed;
-          data[offset + 1] = shadedGreen;
-          data[offset + 2] = shadedBlue;
+          data[offset] = red;
+          data[offset + 1] = green;
+          data[offset + 2] = blue;
           data[offset + 3] = alphaByte;
         }
       }

@@ -3,6 +3,7 @@ import test from "node:test";
 import { installClonePaintMethods } from "../../src/weight-editor/clone-paint.js";
 import { installPaintToolMethods } from "../../src/weight-editor/paint-tools.js";
 import { TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS } from "../../src/weight-editor/airbrush/constants.js";
+import { installTextureAirbrushScreenOverlayMethods } from "../../src/weight-editor/airbrush/screen-overlay.js";
 import { installTextureAirbrushScreenStrokeMethods } from "../../src/weight-editor/airbrush/screen-strokes.js";
 import { installTextureAirbrushPointerMethods } from "../../src/weight-editor/airbrush/pointer.js";
 import { installTextureAirbrushWebGlBackendMethods } from "../../src/weight-editor/airbrush/webgl-backend.js";
@@ -16,6 +17,47 @@ import {
 class TestEditor {}
 
 installTextureAirbrushProjectedPaintMethods(TestEditor);
+
+test("airbrush screen overlay previews solid pigment instead of sampling the rendered model", () => {
+  class OverlayEditor {}
+  installTextureAirbrushScreenOverlayMethods(OverlayEditor);
+  const editor = new OverlayEditor();
+  const previousWindow = globalThis.window;
+  let paintedImage = null;
+  try {
+    globalThis.window = { devicePixelRatio: 1 };
+    const context = {
+      getImageData: (x, y, width, height) => ({ width, height, data: new Uint8ClampedArray(width * height * 4) }),
+      putImageData(image) { paintedImage = image; }
+    };
+    editor.canvas = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 16, height: 16 }) };
+    editor.textureAirbrushScreenLayer = { hidden: true, width: 0, height: 0, getContext: () => context };
+    editor.captureTextureAirbrushScreenBase = () => {
+      throw new Error("screen preview should not shade paint with rendered model pixels");
+    };
+
+    assert.equal(editor.drawTextureAirbrushScreenStroke({
+      strokeStart: { clientX: 8, clientY: 8 },
+      clientX: 8,
+      clientY: 8,
+      color: { r: 200, g: 120, b: 40 },
+      opacity: 1,
+      hardness: 1,
+      scatter: 0,
+      strength: 1,
+      radiusPixels: 3
+    }), true);
+
+    const data = paintedImage.data;
+    const paintedOffset = data.findIndex((value, index) => index % 4 === 3 && value > 0) - 3;
+    assert.equal(data[paintedOffset], 200);
+    assert.equal(data[paintedOffset + 1], 120);
+    assert.equal(data[paintedOffset + 2], 40);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
 
 test("airbrush cursor hover prewarm preserves the current layer display", () => {
   class PointerEditor {}
@@ -47,6 +89,38 @@ test("airbrush cursor hover prewarm preserves the current layer display", () => 
 
   assert.equal(editor.updateTextureBrushCursor(event), true);
   assert.deepEqual(calls, [[event, hit, { preserveLayerDisplay: true }]]);
+});
+
+test("clean preview keeps active airbrush cursor visible", () => {
+  class PointerEditor {}
+  installTextureAirbrushPointerMethods(PointerEditor);
+  const editor = new PointerEditor();
+  const event = { clientX: 24, clientY: 36 };
+  const calls = [];
+  editor.activeTool = "airbrush";
+  editor.cleanPreview = true;
+  editor.textureBrushCursor = {};
+  editor.canvas = {};
+  editor.rememberBrushCursorEvent = () => true;
+  editor.texturePaintHitForEvent = () => ({ record: { id: "hover-record" } });
+  editor.scheduleTextureAirbrushPrewarm = () => {};
+  editor.textureBrushRadiusScreenPixels = () => 11;
+  editor.showTextureBrushCursorElement = () => {
+    calls.push("show");
+  };
+  editor.setTextureBrushCursorMode = (mode) => {
+    calls.push(["mode", mode]);
+  };
+  editor.positionBrushCursor = (candidateEvent, radius) => {
+    calls.push(["position", candidateEvent, radius]);
+  };
+
+  assert.equal(editor.updateTextureBrushCursor(event), true);
+  assert.deepEqual(calls, [
+    "show",
+    ["mode", "airbrush"],
+    ["position", event, 11]
+  ]);
 });
 
 test("preserved layer material prewarm does not swap the visible layer display", () => {

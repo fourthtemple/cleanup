@@ -342,7 +342,7 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
       }
       const remembered = this.rememberBrushCursorEvent(event);
       const isTextureBrush = this.activeTool === "airbrush" || this.activeTool === "texture-eraser" || this.activeTool === "clone";
-      if (!isTextureBrush || this.cleanPreview || !remembered) {
+      if (!isTextureBrush || !remembered) {
         this.hideTextureBrushCursor();
         return false;
       }

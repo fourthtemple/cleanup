@@ -54,6 +54,41 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
   const TUTORIAL_RECIPES_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-recipes:v1";
   const TUTORIAL_RECIPES_ASSET_URL = "./assets/tutorial-recipes.json?v=20260609a";
 
+  function sceneVectorArray(vector = null) {
+    const values = typeof vector?.toArray === "function"
+      ? vector.toArray()
+      : Array.isArray(vector)
+        ? vector
+        : [vector?.x, vector?.y, vector?.z];
+    return Array.from(values || [])
+      .slice(0, 3)
+      .map((value) => Number(value))
+      .map((value) => Number.isFinite(value) ? value : 0);
+  }
+
+  function sceneVectorDistance(left = [], right = []) {
+    const dx = Number(left[0] || 0) - Number(right[0] || 0);
+    const dy = Number(left[1] || 0) - Number(right[1] || 0);
+    const dz = Number(left[2] || 0) - Number(right[2] || 0);
+    return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  function sceneCameraPaintSnapshotClose(left = null, right = null) {
+    if (!left || !right) {
+      return false;
+    }
+    const positionDistance = sceneVectorDistance(left.position, right.position);
+    const targetDistance = sceneVectorDistance(left.target, right.target);
+    const upDistance = sceneVectorDistance(left.up, right.up);
+    const viewDistance = Math.max(1, sceneVectorDistance(right.position, right.target));
+    const positionTolerance = Math.max(0.12, Math.min(0.45, viewDistance * 0.0012));
+    return positionDistance <= positionTolerance
+      && targetDistance <= 0.06
+      && upDistance <= 0.002
+      && Math.abs(Number(left.zoom || 1) - Number(right.zoom || 1)) <= 0.0005
+      && Math.abs(Number(left.fov || 0) - Number(right.fov || 0)) <= 0.01;
+  }
+
   function tutorialLocalStorageGet(key) {
     try {
       return window.localStorage?.getItem(key) ?? null;
@@ -234,6 +269,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       };
       this.controls.screenSpacePanning = true;
       this.controls.addEventListener("start", () => this.flushTextureAirbrushScreenStroke?.());
+      this.controls.addEventListener("change", () => this.textureAirbrushCameraChanged?.());
       this.controls.addEventListener("end", () => this.textureAirbrushCameraChanged?.());
       this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
 
@@ -467,9 +503,13 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       });
       this.transformControls.addEventListener("objectChange", () => {
         if (this.ikDrag) {
-          this.applyIkMove();
+          this.requestIkLiveMove?.();
         } else if (this.boneMoveDrag) {
-          this.applyBoneMove();
+          if (this.boneMoveDrag.mode === "pose") {
+            this.requestBoneLiveMove?.();
+          } else {
+            this.applyBoneMove();
+          }
         } else {
           this.applySelectionMove();
         }
@@ -802,8 +842,72 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (this.activeTool !== "airbrush" && this.activeTool !== "texture-eraser") {
         return false;
       }
+      const neighborPaintActive = this.texturePaintNeighborModeEnabled?.() === true;
+      const layerPaintActive = this.texturePaintLayerModeActive?.() === true;
+      const paintStrokeHasCameraSplitWork = (
+        this.painting === true
+        || this.textureAirbrushScreenStrokeHasPendingWork?.() === true
+      );
+      if (
+        paintStrokeHasCameraSplitWork
+        && !this.textureAirbrushFlushingScreenStroke
+        && this.textureAirbrushScreenStrokeHasPendingWork?.() === true
+      ) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // A scheduled settled-camera prewarm can land after the user has
+        // already started repainting. Finish queued paint with the old
+        // visible-only projection before rebuilding current camera buffers.
+        this.flushTextureAirbrushScreenStroke?.({ live: true });
+      }
+      if (paintStrokeHasCameraSplitWork) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // This is a stroke split for a scheduled camera/depth refresh only. The
+        // next sample must rewarm visible-surface caches; it must not paint
+        // hidden, back-side, or through-object fragments.
+        this.textureAirbrushForceNextScreenStrokeResetAfterCameraChange = true;
+      }
       this.updateBrushCursorForLastPointer?.();
-      if (this.activeTool === "airbrush" && this.texturePaintLayerModeActive?.() === true) {
+      if (layerPaintActive) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES. Layer airbrush also needs
+        // the first reset after camera/orbit movement to rebuild visible-only
+        // projection/display caches before painting; this is not a hidden-side
+        // paint permission.
+        this.textureAirbrushLayerProjectionFirstStrokeRewarm = true;
+      }
+      if (neighborPaintActive) {
+        // Neighbor repaint after any camera/orbit change needs a fresh
+        // visible-surface depth/projection frame. Do not "fix" coverage by
+        // letting Neighbor paint hidden or back-side fragments.
+        //
+        // DO NOT PAINT ON NON CAMERA FACING SIDES. A successful background
+        // prewarm may clear the dirty flag before the user paints, but the
+        // next reset stroke still needs the same first-stroke display/projection
+        // treatment. Keep this one-shot marker until that visible-only reset
+        // consumes it.
+        this.textureAirbrushNeighborProjectionFirstStrokeRewarm = true;
+        this.textureAirbrushResetLiveProjectionFrame?.({ keepCurrent: false });
+        this.textureAirbrushActiveNeighborPaintSeed = null;
+        const prewarmOptions = {
+          all: true,
+          force: true,
+          preserveLayerDisplay: true
+        };
+        const immediate = this.textureAirbrushPrewarm?.(null, null, prewarmOptions) === true;
+        if (immediate) {
+          this.textureAirbrushNeighborProjectionDirty = false;
+        }
+        const scheduled = immediate
+          ? false
+          : this.scheduleTextureAirbrushPrewarm?.(null, null, prewarmOptions) === true;
+        if (
+          this.texturePaintLayerModeActive?.() === true
+          && this.textureAirbrushLayerPrewarmNeeded?.(null, { all: true }) === true
+        ) {
+          this.scheduleTextureAirbrushDeferredBroadLayerPrewarm?.();
+        }
+        return immediate || scheduled;
+      }
+      if (this.activeTool === "airbrush" && layerPaintActive) {
         const activeLayerScheduled = this.scheduleTextureAirbrushPrewarm?.(null, null, {
           all: true,
           limit: 1
@@ -910,13 +1014,90 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return hadPending;
     },
 
+    textureAirbrushCameraPaintStrokeSnapshot() {
+      if (!this.camera || !this.controls) {
+        return null;
+      }
+      return {
+        position: sceneVectorArray(this.camera.position),
+        target: sceneVectorArray(this.controls.target),
+        up: sceneVectorArray(this.camera.up),
+        zoom: Number(this.camera.zoom || 1),
+        fov: Number(this.camera.fov || 0)
+      };
+    },
+
+    textureAirbrushPaintCameraChangeIsTrivial(currentSnapshot = this.textureAirbrushCameraPaintStrokeSnapshot?.()) {
+      return sceneCameraPaintSnapshotClose(this.textureAirbrushLastPaintCameraSplitSnapshot, currentSnapshot);
+    },
+
     textureAirbrushCameraChanged() {
-      if (this.activeTool !== "airbrush" && this.activeTool !== "texture-eraser") {
+      if (this.textureAirbrushCameraMotionSettling === true) {
         return false;
       }
-      this.textureAirbrushResetLiveProjectionFrame?.();
+      const canPrewarmPaintTool = this.activeTool === "airbrush" || this.activeTool === "texture-eraser";
+      const paintStrokeHasCameraSplitWork = canPrewarmPaintTool
+        && (
+          this.painting === true
+          || this.textureAirbrushScreenStrokeHasPendingWork?.() === true
+        );
+      const currentPaintCameraSplitSnapshot = paintStrokeHasCameraSplitWork
+        ? this.textureAirbrushCameraPaintStrokeSnapshot?.()
+        : null;
+      if (
+        paintStrokeHasCameraSplitWork
+        && this.textureAirbrushPaintCameraChangeIsTrivial?.(currentPaintCameraSplitSnapshot) === true
+      ) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Tiny late orbit-settle samples can arrive after the user starts the
+        // next airbrush stroke. Re-splitting for each sub-pixel camera sample
+        // causes the first post-orbit stroke to look spotty. Large camera moves
+        // still take the reset path below; this branch never broadens paint to
+        // hidden/back-side fragments.
+        return false;
+      }
+      if (
+        paintStrokeHasCameraSplitWork
+        && !this.textureAirbrushFlushingScreenStroke
+        && this.textureAirbrushScreenStrokeHasPendingWork?.() === true
+      ) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Camera/depth changed while a stroke was down. Finish queued paint
+        // against the old visible-only projection before invalidating it; the
+        // next sample will be forced through a fresh visible-only reset/rewarm.
+        this.flushTextureAirbrushScreenStroke?.({ live: true });
+      }
+      if (paintStrokeHasCameraSplitWork) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // This is an internal stroke split after camera motion. It must rebuild
+        // current visible-depth/camera-facing caches, never allow hidden-side
+        // or through-object paint.
+        this.textureAirbrushForceNextScreenStrokeResetAfterCameraChange = true;
+      }
+      const reset = this.textureAirbrushResetLiveProjectionFrame?.() === true;
+      this.textureAirbrushActiveNeighborPaintSeed = null;
+      if (this.texturePaintNeighborModeEnabled?.() === true) {
+        this.textureAirbrushNeighborProjectionDirty = true;
+        // DO NOT PAINT ON NON CAMERA FACING SIDES. This does not expand paint
+        // reach; it only marks that the first Neighbor reset after camera
+        // movement must rebuild visible-surface buffers before painting.
+        this.textureAirbrushNeighborProjectionFirstStrokeRewarm = true;
+      }
+      if (this.texturePaintLayerModeActive?.() === true) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES. Layer repaint after orbit
+        // must repair warm caches on the next reset, never by loosening shader
+        // visibility or camera-facing checks.
+        this.textureAirbrushLayerProjectionFirstStrokeRewarm = true;
+      }
+      if (paintStrokeHasCameraSplitWork && currentPaintCameraSplitSnapshot) {
+        this.textureAirbrushLastPaintCameraSplitSnapshot = currentPaintCameraSplitSnapshot;
+      }
       this.textureAirbrushCameraPrewarmSerial = (this.textureAirbrushCameraPrewarmSerial || 0) + 1;
       this.textureAirbrushCameraPrewarmStableFrames = 0;
+      if (!canPrewarmPaintTool) {
+        this.textureAirbrushCameraPrewarmScheduled = false;
+        return reset;
+      }
       if (this.activeTool === "airbrush" && this.texturePaintLayerModeActive?.() === true) {
         const activeMaterial = this.texturePaintActiveMaterial || null;
         this.prewarmTexturePaintActiveLayerMaterialGpu?.(activeMaterial, {
@@ -926,6 +1107,56 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.prewarmTexturePaintActiveLayerCursorProbe?.(activeMaterial);
       }
       return this.scheduleTextureAirbrushSettledCameraPrewarm?.() === true;
+    },
+
+    settleTextureAirbrushCameraMotion(options = {}) {
+      if (!this.controls || typeof this.controls.update !== "function") {
+        return false;
+      }
+      const maxIterations = Math.max(1, Math.min(64, Math.floor(Number(options.maxIterations) || 48)));
+      let changed = false;
+      this.textureAirbrushCameraMotionSettling = true;
+      try {
+        for (let index = 0; index < maxIterations; index += 1) {
+          if (this.controls.update() !== true) {
+            break;
+          }
+          changed = true;
+        }
+      } finally {
+        this.textureAirbrushCameraMotionSettling = false;
+      }
+      const currentPaintCameraSplitSnapshot = this.textureAirbrushCameraPaintStrokeSnapshot?.();
+      if ((this.activeTool === "airbrush" || this.activeTool === "texture-eraser") && currentPaintCameraSplitSnapshot) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // This is just the baseline for deciding whether later orbit-settle
+        // camera samples are big enough to split paint. It does not weaken the
+        // visible-depth/camera-facing shader gates.
+        this.textureAirbrushLastPaintCameraSplitSnapshot = currentPaintCameraSplitSnapshot;
+      }
+      if (!changed) {
+        return false;
+      }
+      this.camera?.updateMatrixWorld?.(true);
+      this.model?.updateMatrixWorld?.(true);
+      this.textureAirbrushResetLiveProjectionFrame?.();
+      this.textureAirbrushActiveNeighborPaintSeed = null;
+      if (this.texturePaintNeighborModeEnabled?.() === true) {
+        this.textureAirbrushNeighborProjectionDirty = true;
+        // DO NOT PAINT ON NON CAMERA FACING SIDES. Settled orbit motion gets
+        // the same one-shot visible-only first-stroke rewarm as normal camera
+        // change events.
+        this.textureAirbrushNeighborProjectionFirstStrokeRewarm = true;
+      }
+      if (this.texturePaintLayerModeActive?.() === true) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES. The next layer reset after
+        // settled camera motion must use fresh visible-surface projection state.
+        this.textureAirbrushLayerProjectionFirstStrokeRewarm = true;
+      }
+      this.textureAirbrushCameraPrewarmSerial = (this.textureAirbrushCameraPrewarmSerial || 0) + 1;
+      this.textureAirbrushCameraPrewarmStableFrames = 0;
+      this.textureAirbrushCameraPrewarmScheduled = false;
+      return true;
     },
 
     textureAirbrushPrewarmStableCameraFrame() {
@@ -1226,7 +1457,24 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         tutorialLocalStorageRemove(TUTORIAL_EDITOR_STORAGE_KEY);
         return false;
       }
+      if (this.tutorialReproMacroNameFromBrowser?.()) {
+        return true;
+      }
       return tutorialLocalStorageGet(TUTORIAL_EDITOR_STORAGE_KEY) === "1";
+    },
+
+    tutorialReproMacroNameFromBrowser() {
+      const params = new URLSearchParams(window.location.search || "");
+      const requested = params.get("reproMacro") || params.get("repro-macro") || params.get("tutorialMacro") || params.get("tutorial-macro");
+      if (!requested && params.has("afterOrbitPaint")) {
+        return "after-orbit-paint";
+      }
+      const clean = String(requested || "")
+        .trim()
+        .replace(/[^a-z0-9_-]+/gi, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 80);
+      return clean || "";
     },
 
     storedTutorialRecipes() {
@@ -1488,6 +1736,32 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       });
       this.bindTutorialMacroControls?.();
       this.updateTutorialEditControls();
+      const reproMacroName = this.tutorialReproMacroNameFromBrowser?.();
+      if (reproMacroName) {
+        window.requestAnimationFrame(() => this.activateTutorialReproMacro?.(reproMacroName));
+      }
+    },
+
+    activateTutorialReproMacro(name) {
+      const macroName = this.tutorialReproMacroNameFromBrowser?.() || name;
+      if (!macroName || !this.tutorialDrawer) {
+        return false;
+      }
+      this.tutorialReproMacroActive = true;
+      const neighborIntent = this.applyTutorialMacroNeighborPaintIntent?.(macroName);
+      if (neighborIntent === null || neighborIntent === undefined) {
+        void this.prepareTutorialReproMacroBrushState?.(macroName);
+      }
+      const source = this.tutorialDrawer.querySelector?.('[data-tutorial-macro="airbrush"]');
+      if (source) {
+        this.attachTutorialDemoControls?.(source);
+        source.classList.add("is-active");
+        source.closest?.(".tutorial-card")?.classList.add("is-active");
+      }
+      this.tutorialActiveMacroName = macroName;
+      this.updateTutorialMacroControls?.();
+      this.setStatus(`Macro recorder ready: ${macroName}`);
+      return true;
     },
 
     clearTutorialHighlights() {
@@ -1651,7 +1925,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     tutorialMacroModeActive() {
-      return Boolean(this.tutorialDrawerOpen || this.tutorialSessionActive);
+      return Boolean(this.tutorialDrawerOpen || this.tutorialSessionActive || this.tutorialReproMacroActive);
     },
 
     captureTutorialSessionState() {
@@ -1973,7 +2247,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.tutorialsToggle?.setAttribute("aria-expanded", String(nextOpen));
       this.tutorialDrawer.setAttribute("aria-hidden", String(!nextOpen));
       if (nextOpen) {
-        this.beginTutorialSession?.();
+        if (this.tutorialReproMacroActive !== true) {
+          this.beginTutorialSession?.();
+        }
         this.tutorialDrawer.hidden = false;
         if (this.tutorialBackdrop) {
           this.tutorialBackdrop.hidden = false;
@@ -1988,8 +2264,16 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.tutorialCloseButton?.focus({ preventScroll: true });
         return;
       }
-      this.clearTutorialHighlights?.();
-      void this.endTutorialSession?.();
+      const keepReproRecording = this.tutorialReproMacroActive === true && Boolean(this.tutorialMacroRecording);
+      if (!keepReproRecording) {
+        this.clearTutorialHighlights?.();
+      }
+      if (this.tutorialReproMacroActive !== true) {
+        void this.endTutorialSession?.();
+      } else if (!keepReproRecording) {
+        this.tutorialReproMacroActive = false;
+        this.updateTutorialMacroControls?.();
+      }
       this.tutorialDrawer.classList.remove("is-open");
       this.tutorialBackdrop?.classList.remove("is-open", "is-macro-recording");
       this.queueTutorialViewportResize();
@@ -2233,19 +2517,86 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.undoLastEdit();
       });
 
+      const handleTexturePointerRawUpdate = (event) => {
+        if (event.__cleanupPointerRawHandled === true) {
+          return;
+        }
+        event.__cleanupPointerRawHandled = true;
+        this.onCanvasPointerRawUpdate?.(event);
+      };
+      const handleWebKitForceWillBegin = (event) => {
+        if (event.__cleanupWebKitForceWillBeginHandled === true) {
+          return;
+        }
+        event.__cleanupWebKitForceWillBeginHandled = true;
+        this.onCanvasWebKitMouseForceWillBegin?.(event);
+      };
+      const handleWebKitForceChanged = (event) => {
+        if (event.__cleanupWebKitForceChangedHandled === true) {
+          return;
+        }
+        event.__cleanupWebKitForceChangedHandled = true;
+        this.onCanvasWebKitMouseForceChanged?.(event);
+      };
+      const handleWebKitForceDown = (event) => {
+        if (event.__cleanupWebKitForceDownHandled === true) {
+          return;
+        }
+        event.__cleanupWebKitForceDownHandled = true;
+        this.onCanvasWebKitMouseForceDown?.(event);
+      };
+      const handleWebKitForceUp = (event) => {
+        if (event.__cleanupWebKitForceUpHandled === true) {
+          return;
+        }
+        event.__cleanupWebKitForceUpHandled = true;
+        this.onCanvasWebKitMouseForceUp?.(event);
+      };
+      const handlePressureMouseMove = (event) => {
+        if (event.__cleanupPressureMouseMoveHandled === true) {
+          return;
+        }
+        event.__cleanupPressureMouseMoveHandled = true;
+        this.onCanvasPressureMouseMoveFallback?.(event);
+      };
+
       this.canvas.addEventListener("pointerdown", (event) => this.beginPenOrbitButtonZoom(event), { capture: true });
       this.canvas.addEventListener("pointermove", (event) => this.dragPenOrbitButtonZoom(event), { capture: true });
       this.canvas.addEventListener("pointerdown", (event) => this.onPointerDown(event));
       this.canvas.addEventListener("pointermove", (event) => this.onPointerMove(event));
-      this.canvas.addEventListener("mousedown", (event) => this.onCanvasClick?.(event));
+      this.canvas.addEventListener("pointerrawupdate", handleTexturePointerRawUpdate);
+      this.canvas.addEventListener("mousedown", (event) => {
+        if (this.onCanvasMouseDownFallback?.(event) === true) {
+          return;
+        }
+        this.onCanvasClick?.(event);
+      });
+      this.canvas.addEventListener("mousemove", (event) => this.onCanvasMouseMoveFallback?.(event));
+      this.canvas.addEventListener("mousemove", handlePressureMouseMove, { capture: true });
+      this.canvas.addEventListener("webkitmouseforcewillbegin", handleWebKitForceWillBegin);
+      this.canvas.addEventListener("webkitmouseforcechanged", handleWebKitForceChanged);
+      this.canvas.addEventListener("webkitmouseforcedown", handleWebKitForceDown);
+      this.canvas.addEventListener("webkitmouseforceup", handleWebKitForceUp);
+      this.canvas.addEventListener("touchstart", (event) => this.onCanvasTouchStartFallback?.(event), { passive: false });
+      this.canvas.addEventListener("touchmove", (event) => this.onCanvasTouchMoveFallback?.(event), { passive: false });
+      this.canvas.addEventListener("touchforcechange", (event) => this.onCanvasTouchForceChangeFallback?.(event), { passive: false });
       this.canvas.addEventListener("click", (event) => this.onCanvasClick?.(event));
       this.canvas.addEventListener("pointerleave", () => this.hideTextureBrushCursor?.());
+      window.addEventListener("pointerrawupdate", handleTexturePointerRawUpdate, { capture: true });
+      window.addEventListener("webkitmouseforcewillbegin", handleWebKitForceWillBegin, { capture: true });
+      window.addEventListener("webkitmouseforcechanged", handleWebKitForceChanged, { capture: true });
+      window.addEventListener("webkitmouseforcedown", handleWebKitForceDown, { capture: true });
+      window.addEventListener("webkitmouseforceup", handleWebKitForceUp, { capture: true });
+      window.addEventListener("mousemove", handlePressureMouseMove, { capture: true });
       window.addEventListener("pointerup", (event) => {
         this.endPenOrbitButtonZoom(event);
         this.draggingPoseControl = false;
         this.endPoseControlUndo();
         this.onPointerUp();
       });
+      window.addEventListener("mouseup", (event) => this.onCanvasMouseUpFallback?.(event));
+      window.addEventListener("touchend", (event) => this.onCanvasTouchEndFallback?.(event), { passive: false });
+      window.addEventListener("touchcancel", (event) => this.onCanvasTouchEndFallback?.(event), { passive: false });
       window.addEventListener("pointercancel", (event) => this.endPenOrbitButtonZoom(event));
 
       this.clearSelectionButton.addEventListener("click", () => this.withSelectionUndo?.("Clear selection", () => this.clearSelection()));
@@ -2314,6 +2665,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       });
       this.texturePaintNeighborToggle?.addEventListener("change", () => {
         this.setTexturePaintNeighborMode?.(this.texturePaintNeighborToggle.checked === true);
+        this.recordTutorialMacroBrushState?.("neighbor");
       });
       this.syncTexturePaintNeighborMode?.();
       this.clonePaintSourceButton?.addEventListener("click", () => {
@@ -3066,6 +3418,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       const axis = this.cameraGizmoDrag.axis;
       this.cameraGizmoDrag = null;
       this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
+      this.textureAirbrushCameraChanged?.();
       this.setStatus(axis ? `Camera ${String(axis).toUpperCase()} axis ready` : "Camera gizmo ready");
     },
 
@@ -3084,6 +3437,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.camera.lookAt(target);
       this.controls.update();
       this.updateBoneLabels?.();
+      this.textureAirbrushCameraChanged?.();
     },
 
     cameraGizmoSpeedValue() {
@@ -3120,6 +3474,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.camera.lookAt(target);
       this.controls.update();
       this.updateBoneLabels?.();
+      this.textureAirbrushCameraChanged?.();
     },
 
     rollCameraBy(angleRadians, options = {}) {
@@ -3131,6 +3486,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.camera.lookAt(this.controls.target);
       this.controls.update();
       this.updateBoneLabels?.();
+      if (!options.silent) {
+        this.textureAirbrushCameraChanged?.();
+      }
       if (!options.silent) {
         this.setStatus(`Camera rolled ${Math.round(THREE.MathUtils.radToDeg(angleRadians))} degrees`);
       }
@@ -3144,6 +3502,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.camera.lookAt(this.controls.target);
       this.controls.update();
       this.updateBoneLabels?.();
+      this.textureAirbrushCameraChanged?.();
       this.setStatus("Camera roll reset");
     },
 
@@ -3275,16 +3634,80 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return result;
     },
 
-    beginPoseControlUndo(label = "Pose edit") {
-      if (this.poseControlUndoActive && this.undoStack.length) {
+    capturePoseControlHistorySnapshot() {
+      return {
+        activeBoneName: this.activeBoneName || "",
+        poseBoneName: this.poseBoneSelect?.value || "",
+        selectedBoneChainRootName: this.selectedBoneChainRootName || "",
+        progress: this.progress,
+        poseGizmoMode: this.activePoseGizmoMode?.() || "",
+        poseKeyframeMode: this.poseKeyframeMode,
+        poseKeyframesGenerated: Boolean(this.poseKeyframesGenerated),
+        timelineKeysSourceWasAutoGenerated: Boolean(this.timelineKeysSourceWasAutoGenerated),
+        poseKeyframes: this.serializePoseKeyframes?.() || [],
+        adaptiveGuideKeyframes: this.serializePoseKeyframeMap?.(this.adaptiveGuideKeyframes) || [],
+        adaptiveGuideDeltaKeyframes: this.serializePoseKeyframeMap?.(this.adaptiveGuideDeltaKeyframes) || [],
+        adaptiveGuideCurveHandles: this.serializeAdaptiveGuideCurveHandles?.() || [],
+        adaptivePoseKeyframes: this.serializePoseKeyframeMap?.(this.adaptivePoseKeyframes) || [],
+        poseCurveHandles: this.serializePoseCurveHandles?.() || [],
+        poseKeyframeKinds: this.serializePoseKeyframeKinds?.() || [],
+        manualPoseAdditiveNames: [...(this.manualPoseAdditiveNames || [])],
+        manualPoseEditedChannels: [...(this.manualPoseEditedChannels || new Map()).entries()]
+          .map(([name, channels]) => [name, [...(channels || [])]]),
+        manualPose: [...(this.manualPose || new Map()).entries()].map(([name, pose]) => [name, { ...pose }])
+      };
+    },
+
+    poseControlHistorySnapshotsMatch(before, after) {
+      return JSON.stringify(before || null) === JSON.stringify(after || null);
+    },
+
+    pushPoseControlUndoState(label = "Pose edit", before = null, after = null) {
+      if (!before || !after || this.poseControlHistorySnapshotsMatch(before, after)) {
         return false;
+      }
+      this.undoStack.push({
+        kind: "pose-control",
+        label,
+        before,
+        after
+      });
+      if (this.undoStack.length > this.maxUndoSteps) {
+        this.disposeFastHistoryState?.(this.undoStack.shift());
+      }
+      for (const redoState of this.redoStack || []) {
+        this.disposeFastHistoryState?.(redoState);
+      }
+      this.redoStack = [];
+      this.updateUndoButton();
+      return true;
+    },
+
+    beginPoseControlUndo(label = "Pose edit", options = {}) {
+      if (this.poseControlUndoActive) {
+        return false;
+      }
+      if (options.fast === true) {
+        this.poseControlUndoActive = {
+          fast: true,
+          label,
+          before: this.capturePoseControlHistorySnapshot?.() || null
+        };
+        return Boolean(this.poseControlUndoActive.before);
       }
       this.poseControlUndoActive = this.pushUndoState(label);
       return this.poseControlUndoActive;
     },
 
     endPoseControlUndo() {
+      if (this.poseControlUndoActive?.fast) {
+        const { label, before } = this.poseControlUndoActive;
+        const after = this.capturePoseControlHistorySnapshot?.() || null;
+        this.poseControlUndoActive = false;
+        return this.pushPoseControlUndoState?.(label, before, after) || false;
+      }
       this.poseControlUndoActive = false;
+      return true;
     },
 
     updateUndoButton() {
@@ -3336,6 +3759,29 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         } finally {
           this.finishHistoryRestore();
         }
+      });
+      return true;
+    },
+
+    waitForTexturePaintHistoryReady(direction) {
+      const pendingPaint = this.texturePaintSettlePendingUndoBeforeHistory?.();
+      if (!pendingPaint || typeof pendingPaint.then !== "function") {
+        return false;
+      }
+      this.historyRestoreBusy = true;
+      this.pendingHistoryStep = null;
+      this.updateUndoButton();
+      this.setStatus(direction === "redo" ? "Finishing paint before redo..." : "Finishing paint before undo...");
+      pendingPaint.finally(() => {
+        this.historyRestoreBusy = false;
+        this.updateUndoButton();
+        if (direction === "redo") {
+          this.redoLastEdit();
+        } else {
+          this.undoLastEdit();
+        }
+      }).catch((error) => {
+        console.error?.("Texture paint history wait failed", error);
       });
       return true;
     },
@@ -3441,7 +3887,73 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return true;
     },
 
+    restorePoseControlHistorySnapshot(snapshot = null) {
+      if (!snapshot) {
+        return false;
+      }
+      if (Array.isArray(snapshot.poseKeyframes)) {
+        this.applySerializedPoseKeyframes?.(snapshot.poseKeyframes);
+        this.applySerializedPoseCurveHandles?.(snapshot.poseCurveHandles || []);
+        this.applySerializedPoseKeyframeKinds?.(snapshot.poseKeyframeKinds || []);
+        this.poseKeyframeMode = snapshot.poseKeyframeMode === "replace" ? "replace" : "additive";
+        this.poseKeyframesGenerated = Boolean(snapshot.poseKeyframesGenerated);
+        this.timelineKeysSourceWasAutoGenerated = Boolean(snapshot.timelineKeysSourceWasAutoGenerated);
+      }
+      this.adaptivePoseKeyframes = Array.isArray(snapshot.adaptivePoseKeyframes)
+        ? this.serializedPoseKeyframeMap?.(snapshot.adaptivePoseKeyframes) || new Map()
+        : new Map();
+      this.adaptiveGuideKeyframes = Array.isArray(snapshot.adaptiveGuideKeyframes)
+        ? this.serializedPoseKeyframeMap?.(snapshot.adaptiveGuideKeyframes) || new Map()
+        : new Map();
+      this.adaptiveGuideDeltaKeyframes = Array.isArray(snapshot.adaptiveGuideDeltaKeyframes)
+        ? this.serializedPoseKeyframeMap?.(snapshot.adaptiveGuideDeltaKeyframes) || new Map()
+        : new Map();
+      this.applySerializedAdaptiveGuideCurveHandles?.(snapshot.adaptiveGuideCurveHandles || []);
+      this.manualPose = new Map((snapshot.manualPose || [])
+        .filter(([name]) => this.bones.has(name))
+        .map(([name, pose]) => [name, { ...pose }]));
+      this.manualPoseAdditiveNames = new Set((snapshot.manualPoseAdditiveNames || [])
+        .filter((name) => this.manualPose.has(name)));
+      this.manualPoseEditedChannels = new Map((snapshot.manualPoseEditedChannels || [])
+        .filter(([name]) => this.bones.has(name))
+        .map(([name, channels]) => [name, new Set(channels || [])]));
+      this.selectedBoneChainRootName = snapshot.selectedBoneChainRootName || "";
+      if (snapshot.activeBoneName && this.bones.has(snapshot.activeBoneName)) {
+        this.activeBoneName = snapshot.activeBoneName;
+      }
+      if (snapshot.poseBoneName && this.bones.has(snapshot.poseBoneName) && this.poseBoneSelect) {
+        this.poseBoneSelect.value = snapshot.poseBoneName;
+        this.activeBoneName = snapshot.poseBoneName;
+      }
+      if (Number.isFinite(snapshot.progress)) {
+        this.progress = THREE.MathUtils.clamp(snapshot.progress, 0, 1);
+        if (this.timeScrub) {
+          this.timeScrub.value = String(this.progress);
+        }
+        this.syncTimelineControls?.();
+      }
+      this.applyPose(this.progress);
+      this.model?.updateMatrixWorld(true);
+      for (const record of this.paintRecords || []) {
+        record.object?.skeleton?.update?.();
+      }
+      this.syncPoseControlsToCurrentBone?.();
+      this.renderBoneChainOptions?.();
+      this.renderAddBoneChainMemberOptions?.();
+      this.updateBoneLayerList?.();
+      this.refreshRigOverlays?.();
+      this.restorePoseGizmoMode?.(snapshot.poseGizmoMode || "");
+      this.syncPatchJson();
+      return true;
+    },
+
     undoLastEdit() {
+      if (this.historyRestoreBusy) {
+        return this.runHistoryStep("undo");
+      }
+      if (this.waitForTexturePaintHistoryReady?.("undo")) {
+        return false;
+      }
       if (!this.historyRestoreBusy && this.isFastHistoryState(this.undoStack[this.undoStack.length - 1])) {
         return this.performUndoLastEdit();
       }
@@ -3473,6 +3985,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     redoLastEdit() {
+      if (this.historyRestoreBusy) {
+        return this.runHistoryStep("redo");
+      }
+      if (this.waitForTexturePaintHistoryReady?.("redo")) {
+        return false;
+      }
       if (!this.historyRestoreBusy && this.isFastHistoryState(this.redoStack?.[this.redoStack.length - 1])) {
         return this.performRedoLastEdit();
       }
@@ -3516,6 +4034,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       return state?.kind === "selection"
         || state?.kind === "texture-paint"
         || state?.kind === "texture-layer"
+        || state?.kind === "pose-control"
         || state?.kind === "rig";
     },
 
@@ -3530,6 +4049,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     applyFastHistoryState(state, direction, statusPrefix) {
+      this.prepareTexturePaintHistoryRestore?.();
       if (state?.kind === "selection") {
         const snapshot = direction === "redo" ? state.after : state.before;
         if (!Array.isArray(snapshot)) {
@@ -3540,6 +4060,10 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.restoreTexturePaintSnapshot?.(state.entries, direction === "redo" ? "after" : "before");
       } else if (state?.kind === "texture-layer") {
         if (!this.restoreTexturePaintLayerHistorySnapshot?.(direction === "redo" ? state.after : state.before)) {
+          return false;
+        }
+      } else if (state?.kind === "pose-control") {
+        if (!this.restorePoseControlHistorySnapshot?.(direction === "redo" ? state.after : state.before)) {
           return false;
         }
       } else if (state?.kind === "rig") {
@@ -3553,11 +4077,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     },
 
     setTool(tool, options = {}) {
-      if (tool !== this.activeTool) {
+      const previousTool = this.activeTool;
+      const toolChanged = tool !== previousTool;
+      if (toolChanged) {
         if (this.usesSelectionStrokeUndo?.(this.activeTool)) {
           this.endSelectionStrokeUndo?.();
         }
         if (this.usesTextureStrokeUndo?.(this.activeTool)) {
+          this.flushTextureAirbrushScreenStroke?.();
           this.endTexturePaintStrokeUndo?.();
         }
         this.texturePaintStrokePoint = null;
@@ -3659,6 +4186,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.setStatus(labels[tool] || "Ready");
       }
       if (tool === "airbrush") {
+        const neighborPostOrbitRewarm = toolChanged
+          && previousTool === "orbit"
+          && this.texturePaintNeighborModeEnabled?.() === true;
         if (this.texturePaintLayerModeActive?.() === true) {
           const activeMaterial = this.texturePaintActiveMaterial || null;
           this.prewarmTexturePaintActiveLayerMaterialGpu?.(activeMaterial, {
@@ -3666,6 +4196,13 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           });
           this.prewarmTexturePaintActiveLayerProjectionGpu?.(activeMaterial);
           this.prewarmTexturePaintActiveLayerCursorProbe?.(activeMaterial);
+          if (neighborPostOrbitRewarm) {
+            this.textureAirbrushPrewarm?.(null, null, {
+              all: true,
+              force: true,
+              preserveLayerDisplay: true
+            });
+          }
           this.scheduleTextureAirbrushPrewarm?.(null, null, {
             all: false,
             immediateLayer: false,
@@ -3673,6 +4210,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           });
           this.scheduleTextureAirbrushDeferredBroadLayerPrewarm?.();
         } else {
+          if (neighborPostOrbitRewarm) {
+            this.textureAirbrushPrewarm?.(null, null, {
+              all: true,
+              force: true
+            });
+          }
           this.scheduleTextureAirbrushPrewarm?.(null, null, { all: true });
         }
       }
@@ -4117,6 +4660,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.controls.enabled = drag.previousControlsEnabled;
       }
       this.penOrbitButtonZoom = null;
+      this.textureAirbrushCameraChanged?.();
       event.preventDefault?.();
       event.stopImmediatePropagation?.();
       event.stopPropagation?.();
@@ -4142,6 +4686,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         camera.updateProjectionMatrix?.();
         controls.update?.();
         this.updateCameraRelativeLights?.();
+        this.textureAirbrushCameraChanged?.();
         this.render?.();
         return true;
       }
@@ -4161,6 +4706,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       camera.updateProjectionMatrix?.();
       controls.update?.();
       this.updateCameraRelativeLights?.();
+      this.textureAirbrushCameraChanged?.();
       this.render?.();
       return true;
     },
@@ -4407,8 +4953,26 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       ));
     },
 
+    sidePanelPenScrollPointerIsTabletLike(event = null) {
+      const pointerType = String(event?.pointerType || "").toLowerCase();
+      if (pointerType === "pen" || pointerType === "touch") {
+        return true;
+      }
+      const force = Number(event?.webkitForce ?? event?.force);
+      if (Number.isFinite(force) && force > 0) {
+        return true;
+      }
+      const pressure = Number(event?.pressure);
+      if (Number.isFinite(pressure) && pressure > 0 && pressure !== 0.5) {
+        return true;
+      }
+      const documentRef = globalThis.document || null;
+      return (pointerType === "mouse" || pointerType === "")
+        && Boolean(documentRef && "onwebkitmouseforcechanged" in documentRef);
+    },
+
     beginSidePanelPenScroll(event) {
-      if (!this.viewerPanelScroll || String(event?.pointerType || "").toLowerCase() !== "pen" || event.button !== 0) {
+      if (!this.viewerPanelScroll || this.sidePanelPenScrollPointerIsTabletLike?.(event) !== true || event.button !== 0) {
         return false;
       }
       if (this.sidePanelPenScrollTargetIsInteractive(event.target)) {

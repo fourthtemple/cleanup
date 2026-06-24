@@ -1,6 +1,271 @@
 {
   "version": 1,
   "app": "Fourth Temple Cleanup",
-  "updatedAt": "2026-06-09T15:18:38.815Z",
-  "cards": []
+  "updatedAt": "2026-06-23T06:44:32.668Z",
+  "cards": [
+    {
+      "title": "Quick Start",
+      "targets": "#animation-library-folder-name,#create-animation-library-folder,#animation-library-import-button,#animation-library-list,#save-patch,#animation-library-save-as",
+      "steps": [
+        {
+          "text": "Enter a folder name for the character or project.",
+          "targets": "#animation-library-folder-name",
+          "action": "fill-demo-folder-name",
+          "macro": ""
+        },
+        {
+          "text": "Click **Create Folder**.",
+          "targets": "#create-animation-library-folder",
+          "action": "create-demo-folder",
+          "macro": ""
+        },
+        {
+          "text": "Click **Import To Folder** and choose the FBX, GLB, or GLTF files.",
+          "targets": "#animation-library-import-button",
+          "action": "seed-demo-cat",
+          "macro": ""
+        },
+        {
+          "text": "Click a library item to load it, or click its delete button if you do not want it.",
+          "targets": "#animation-library-list",
+          "action": "load-demo-cat",
+          "macro": ""
+        },
+        {
+          "text": "Make edits, then use **Save** or **Save As** to keep the cleanup in browser storage.",
+          "targets": "#save-patch,#animation-library-save-as",
+          "action": "",
+          "macro": ""
+        }
+      ]
+    },
+    {
+      "title": "Painting And Selection",
+      "targets": ".select-tool-panel,#tool-pen,#brush-radius,#through-selection-toggle,.airbrush-tool-panel,#texture-airbrush-tool,#clear-selection,#clear-all-selection,#invert-selection",
+      "steps": [
+        {
+          "text": "Use **Pen** for 2D raycast projection painting, or **Neighbor** to avoid accidental selections by mapping to the initial vertex neighborhood.",
+          "targets": ".select-tool-panel,#tool-pen,#tool-neighbor",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Adjust **Selection radius**; enable **Through** when you want the brush to pass through the mesh.",
+          "targets": "#brush-radius,#through-selection-toggle",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Use **Airbrush** for color work, or **Clear Selection**, **Reset All**, and **Invert Selection** to reshape the selected region. Play Demo 0.5x 0.75x 1x 1.5x 2x 3x 4x 6x 8x",
+          "targets": ".airbrush-tool-panel,#texture-airbrush-tool,#clear-selection,#clear-all-selection,#invert-selection",
+          "action": "",
+          "macro": "airbrush"
+        }
+      ]
+    },
+    {
+      "title": "FK/IK Posing And Keys",
+      "targets": ".weight-timeline-panel,#bone-chain-select,#pose-bone-select,#bone-gizmo,#fk-gizmo-mode-control,#ik-gizmo,#key-current-pose,#bone-layer-list",
+      "steps": [
+        {
+          "text": "Select **Shoulder**, **Arm**, **Forearm**, and **Hand**, click **Add Chain**, then choose the chain and hand.",
+          "targets": ".rig-bone-panel,#add-bone-chain-members,#add-bone-chain,#bone-chain-select,#pose-bone-select",
+          "action": "ensure-demo-fk-ik-chain",
+          "macro": ""
+        },
+        {
+          "text": "Use **FK** with **Rotate** or **Move** for direct posing.",
+          "targets": "#bone-gizmo,#fk-gizmo-mode-control",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Use **IK** to drag a limb target.",
+          "targets": "#ik-gizmo",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Press **Key**.",
+          "targets": "#key-current-pose",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Open the timeline curve editor for greater control.",
+          "targets": "#bone-layer-list,.bone-layer-expand-toggle,.bone-layer-curve-toolbar,.bone-layer-curve-canvas",
+          "action": "",
+          "macro": "fk-ik"
+        }
+      ]
+    },
+    {
+      "title": "Curve Editor",
+      "targets": ".weight-timeline-panel,#bone-layer-list,.bone-layer-expand-toggle,.bone-layer-curve-toolbar,.bone-layer-curve-canvas",
+      "steps": [
+        {
+          "text": "Create or select keyed motion first; the curve editor edits keyed bones and channels.",
+          "targets": ".weight-timeline-panel,#key-current-pose,#bone-layer-list",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Select a keyed bone such as **Left Shoulder**, then pull the bottom timeline drawer up and expand the keyed bone row you want to shape.",
+          "targets": ".weight-timeline-panel,#pose-bone-select,#bone-layer-list,.bone-layer-expand-toggle",
+          "action": "open-timeline-drawer",
+          "macro": ""
+        },
+        {
+          "text": "Choose a curve channel such as **Rotate Y** or **Move X**, then drag points in the graph to change that bone over time.",
+          "targets": ".bone-layer-curve-toolbar,.bone-layer-curve-canvas",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Use curve handles for easing; use **Smooth**, **Loop**, or **Delete** when the selected channel needs cleanup.",
+          "targets": ".bone-layer-curve-toolbar,.bone-layer-curve-canvas",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Use **Copy** and **Paste** to move keyed poses between frames; **Delete** removes the current key and **Clear** removes the keyed motion.",
+          "targets": "#copy-pose,#paste-pose,#delete-key,#clear-keys",
+          "action": "",
+          "macro": ""
+        }
+      ]
+    },
+    {
+      "title": "Motion Conversion",
+      "targets": "#motion-conversion-mode,#solved-key-detail,#motion-conversion-apply,#bone-layer-list,.weight-timeline-panel",
+      "steps": [
+        {
+          "text": "Choose a motion conversion before opening a model, or change it later and click **Convert** while editing.",
+          "targets": "#motion-conversion-mode",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "**Solved keys** converts the keyed motion into red source keys. Use it when you want direct curve editing across the animation.",
+          "targets": "#motion-conversion-mode,#motion-conversion-apply",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "**Adaptive keys** creates blue guide regions from the motion. Use it when you want to edit inside solved regions and keep the surrounding motion context.",
+          "targets": "#motion-conversion-mode,#solved-key-detail,#motion-conversion-apply",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "**Additive kinematics** keeps broad FK/IK edits layered over the animation. Use it for simple pose offsets across walking or looping motion.",
+          "targets": "#motion-conversion-mode,#motion-conversion-apply",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Click **Convert** while a model is open to resolve already keyed edits into the selected mode; unkeyed FK/IK poses are ignored.",
+          "targets": "#motion-conversion-apply,#bone-layer-list",
+          "action": "",
+          "macro": ""
+        }
+      ]
+    },
+    {
+      "title": "Bone Chains And Distribution",
+      "targets": ".rig-bone-panel,#add-bone-chain-members,#add-bone-chain,#bone-chain-select,#redistribute-chain-weights",
+      "steps": [
+        {
+          "text": "Open **Rig**, select ordered items in **Chain bones**, then click **Add Chain**.",
+          "targets": ".rig-bone-panel,#add-bone-chain-members,#add-bone-chain",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "The chain is already assigned; go back and make a selection only if you need to adjust the region.",
+          "targets": "#bone-chain-select,.select-tool-panel,#tool-pen,#tool-neighbor",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Press **Distribute Chain** to spread the selected vertices across the chain.",
+          "targets": "#redistribute-chain-weights",
+          "action": "",
+          "macro": ""
+        }
+      ]
+    },
+    {
+      "title": "Joint Constraints",
+      "targets": ".rig-bone-panel,.joint-constraint-panel,#joint-constraint-enabled,[data-joint-constraint-capture='min'],[data-joint-constraint-capture='max'],#joint-constraint-clear",
+      "steps": [
+        {
+          "text": "Select the joint you want to limit and turn **Joint Constraints** **On**.",
+          "targets": "#pose-bone-select,.rig-bone-panel,#joint-constraint-enabled",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Pose the joint at its lower limit and click **Min Pose**.",
+          "targets": ".weight-timeline-panel,[data-joint-constraint-capture='min']",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Pose the joint at its upper limit and click **Max Pose**; use **Clear** to remove the limit.",
+          "targets": ".weight-timeline-panel,[data-joint-constraint-capture='max'],#joint-constraint-clear",
+          "action": "",
+          "macro": ""
+        }
+      ]
+    },
+    {
+      "title": "Root Motion Cleanup",
+      "targets": "#unbake-root-motion,#save-patch,#fbx-export-target",
+      "steps": [
+        {
+          "text": "Load an animation where the hips carry travel motion.",
+          "targets": "#animation-library-import-button,#animation-library-list",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Click **Unbake Root** to separate root travel from hip posing.",
+          "targets": "#unbake-root-motion",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Preview the result, then **Save** before exporting for Unreal or Unity workflows.",
+          "targets": "#save-patch,#fbx-export-target,#export-fbx-button",
+          "action": "",
+          "macro": ""
+        }
+      ]
+    },
+    {
+      "title": "Export",
+      "targets": "#fbx-export-target,#export-fbx-button,#export-glb-button",
+      "steps": [
+        {
+          "text": "Choose an **FBX Target** such as Three.js/Web, Blender, Unity, Unreal, or Maya.",
+          "targets": "#fbx-export-target",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Use **Export FBX** for rigged animation pipelines.",
+          "targets": "#export-fbx-button",
+          "action": "",
+          "macro": ""
+        },
+        {
+          "text": "Use **Export GLB** when you want a web-friendly scene export.",
+          "targets": "#export-glb-button",
+          "action": "",
+          "macro": ""
+        }
+      ]
+    }
+  ]
 }

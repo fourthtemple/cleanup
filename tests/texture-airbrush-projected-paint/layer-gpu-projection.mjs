@@ -476,6 +476,38 @@ test("top layer GPU live paint uses a shader composite without duplicate brush r
   fullComposites = 0;
   exactDisplayComposites = 0;
   fastLayerDisplays = 0;
+  liveDisplayRestores = 0;
+
+  const forcedLayerDisplayChanged = editor.textureAirbrushGpuProjectFromEvent({ clientX: 30, clientY: 16 }, {
+    gpu: true,
+    deferLayerComposite: true,
+    forceLayerDisplayComposite: true,
+    strokeSegments: [{
+      start: { clientX: 28, clientY: 16 },
+      end: { clientX: 30, clientY: 16 }
+    }],
+    radiusPixels: 8,
+    color: { r: 255, g: 255, b: 0 },
+    opacity: 0.42,
+    hardness: 0.35,
+    scatter: 0.35,
+    strength: 1,
+    pressureApplied: true
+  });
+
+  assert.equal(forcedLayerDisplayChanged > 0, true);
+  assert.deepEqual(renderTargets, ["layer-target"]);
+  assert.equal(queuedComposites, 0);
+  assert.equal(fullComposites, 1);
+  assert.equal(exactDisplayComposites, 0);
+  assert.equal(fastLayerDisplays, 0);
+  assert.equal(liveDisplayRestores, 1);
+
+  renderTargets.length = 0;
+  queuedComposites = 0;
+  fullComposites = 0;
+  exactDisplayComposites = 0;
+  fastLayerDisplays = 0;
   layer.isEmpty = true;
   layerTargetEntry.emptyTransparent = true;
   layerTargetEntry.paintRevision = 7;
@@ -526,7 +558,13 @@ test("layer GPU projection reuses the warmed active layer target during live pai
   installTextureAirbrushWebGlBackendMethods(WebGlLayerEditor, {
     THREE: {
       NoBlending: "no-blending",
-      NormalBlending: "normal-blending"
+      NormalBlending: "normal-blending",
+      Vector2: class {
+        constructor(x = 0, y = 0) {
+          this.x = x;
+          this.y = y;
+        }
+      }
     }
   });
   const editor = new WebGlLayerEditor();

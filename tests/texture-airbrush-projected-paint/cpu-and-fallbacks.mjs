@@ -547,6 +547,46 @@ test("live GPU airbrush does not fall through to CPU texture paint when the shad
   assert.equal(cpuPathTouched, false);
 });
 
+test("live airbrush never falls through to CPU texture paint when visible shader misses", () => {
+  const editor = new TestEditor();
+  let uvBrushTouched = false;
+  let cpuRaycastTouched = false;
+  editor.canvas = {
+    getBoundingClientRect() {
+      cpuRaycastTouched = true;
+      return { left: 0, top: 0, width: 100, height: 100 };
+    }
+  };
+  editor.camera = {};
+  editor.model = {
+    updateMatrixWorld() {
+      cpuRaycastTouched = true;
+    }
+  };
+  editor.textureAirbrushOptionsWithPressure = (event, options) => options;
+  editor.textureAirbrushResolveBackend = () => ({ backend: "cpu", webGpuStatus: "test-cpu-requested" });
+  editor.textureAirbrushGpuProjectFromEvent = () => 0;
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // This throw is deliberate. A live shader miss must not fall through to the
+  // old CPU/UV path, because that path does not own the current visible-depth
+  // and camera-facing normal masks.
+  editor.textureAirbrushUvBrushOnFace = () => {
+    uvBrushTouched = true;
+    throw new Error("DO NOT PAINT ON NON CAMERA FACING SIDES via CPU UV fallback");
+  };
+  editor.setStatus = () => {};
+
+  const changed = editor.textureAirbrushProjectedMeshFromEvent({ clientX: 10, clientY: 12 }, {
+    cpuStrokeSamples: true
+  });
+
+  assert.equal(changed, 0);
+  assert.equal(uvBrushTouched, false);
+  assert.equal(cpuRaycastTouched, false);
+});
+
 test("live GPU airbrush does not fall through to CPU texture paint after a shader error", () => {
   const editor = new TestEditor();
   const previousWarn = console.warn;

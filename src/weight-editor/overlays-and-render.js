@@ -627,6 +627,27 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       this.status.textContent = message;
     },
 
+    poseGizmoDragActive() {
+      return Boolean(this.ikDrag || (this.boneMoveDrag && this.boneMoveDrag.mode === "pose"));
+    },
+
+    refreshPoseDragDisplay() {
+      if (this.markerVertexCount > 0) {
+        this.updateSelectionMarkers();
+      }
+      if (this.viewMode === "edit") {
+        this.updateAllVertexMarkers();
+      }
+      this.updateFilteredSkeletonHelper();
+      this.updateSelectedBoneHighlight();
+      this.updateBonePickerOverlay();
+      this.updateMeshWireOverlays?.();
+      this.updateCloneSpotlightTransforms?.();
+      if (this.showBonesLayer) {
+        this.updateBoneLabels();
+      }
+    },
+
     resize() {
       this.flushTextureAirbrushScreenStroke?.();
       const rect = this.canvas.getBoundingClientRect();
@@ -729,30 +750,33 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
         this.syncPlaybackReadouts({ now, throttle: true });
       }
       const timelineIsLive = this.playing || this.sequencePlaying || this.draggingScrub || this.curveDragging;
-      if (this.markerVertexCount > 0) {
-        this.updateSelectionMarkers();
+      const poseDragActive = this.poseGizmoDragActive?.() === true;
+      if (!poseDragActive) {
+        if (this.markerVertexCount > 0) {
+          this.updateSelectionMarkers();
+        }
+        if (this.viewMode === "edit") {
+          this.updateAllVertexMarkers();
+        }
+        this.updateFilteredSkeletonHelper();
+        this.updateSelectedBoneHighlight();
+        this.updateBonePickerOverlay();
+        this.updateMeshWireOverlays?.();
+        this.updateCloneSpotlightTransforms?.();
       }
-      if (this.viewMode === "edit") {
-        this.updateAllVertexMarkers();
-      }
-      this.updateFilteredSkeletonHelper();
-      this.updateSelectedBoneHighlight();
-      this.updateBonePickerOverlay();
-      this.updateMeshWireOverlays?.();
-      this.updateCloneSpotlightTransforms?.();
       if (timelineIsLive) {
         this.updateBoneLayerValues({ now, throttle: true, playback: this.playing || this.sequencePlaying });
       }
       if (this.activeTool === "move" && !this.moveDrag) {
         this.updateMoveGizmo();
       }
-      if (this.showBonesLayer) {
+      if (!poseDragActive && this.showBonesLayer) {
         this.updateBoneLabels();
       }
       const cameraChanged = this.controls.update();
       if (cameraChanged) {
         this.textureAirbrushCameraChanged?.();
-      } else {
+      } else if (!poseDragActive) {
         this.textureAirbrushPrewarmStableCameraFrame?.();
       }
       this.updateCameraRelativeLights?.();

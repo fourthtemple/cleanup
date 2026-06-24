@@ -439,6 +439,7 @@ test("direct layer airbrush uses the GPU vector path when available", () => {
   editor.camera = {};
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.textureAirbrushGpuLayerTargetForMaterial = () => ({});
   editor.clearTextureAirbrushScreenLayer = () => {};
   editor.refreshSkinnedRaycastBounds = () => {};
@@ -453,6 +454,58 @@ test("direct layer airbrush uses the GPU vector path when available", () => {
   assert.equal(projectedOptions.length, 1);
   assert.equal(projectedOptions[0].gpu, true);
   assert.equal(projectedOptions[0].resolvedBackend, undefined);
+});
+
+test("direct Neighbor airbrush rewarms dirty post-orbit projection before projecting", () => {
+  class DirectNeighborEditor {}
+  installPaintToolMethods(DirectNeighborEditor, {});
+  const editor = new DirectNeighborEditor();
+  let resetOptions = null;
+  let rewarmCalls = 0;
+  let projectedOptions = null;
+
+  editor.model = {};
+  editor.canvas = {
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 100, height: 100 };
+    }
+  };
+  editor.pointer = { x: 0, y: 0 };
+  editor.raycaster = { setFromCamera() {} };
+  editor.camera = {};
+  editor.activeTool = "airbrush";
+  editor.texturePaintLayerModeActive = () => false;
+  editor.texturePaintHasActivePaintLayer = () => false;
+  editor.texturePaintNeighborModeEnabled = () => true;
+  editor.textureAirbrushNeighborProjectionDirty = true;
+  editor.textureAirbrushNeighborProjectionFirstStrokeRewarm = true;
+  editor.textureAirbrushLiveProjectionFrameState = { stale: true };
+  editor.textureAirbrushLiveProjectionFrameCurrent = () => false;
+  editor.textureAirbrushActiveNeighborPaintSeed = { enabled: true, key: "visible-seed" };
+  editor.textureAirbrushResetLiveProjectionFrame = (options) => {
+    resetOptions = options;
+  };
+  editor.textureAirbrushBeginNeighborPaintStroke = () => editor.textureAirbrushActiveNeighborPaintSeed;
+  editor.textureAirbrushRewarmNeighborResetProjection = () => {
+    rewarmCalls += 1;
+    editor.textureAirbrushNeighborProjectionDirty = false;
+    return true;
+  };
+  editor.clearTextureAirbrushScreenLayer = () => {};
+  editor.refreshSkinnedRaycastBounds = () => {};
+  editor.texturePaintHitForEvent = () => null;
+  editor.textureAirbrushProjectedMeshFromEvent = (event, options) => {
+    projectedOptions = options;
+    return 1;
+  };
+
+  editor.paintFromEvent({ clientX: 10, clientY: 12 });
+
+  assert.deepEqual(resetOptions, { keepCurrent: false });
+  assert.equal(rewarmCalls, 1);
+  assert.equal(projectedOptions.neighborProjectionRewarmed, true);
+  assert.equal(projectedOptions.postCameraProjectionRewarmed, true);
+  assert.equal(projectedOptions.neighborPaintSeed, editor.textureAirbrushActiveNeighborPaintSeed);
 });
 
 test("layer GPU screen flush composites once after projected batches", () => {
@@ -758,6 +811,7 @@ test("warmed reset layer GPU live flush uses the background-style budget", () =>
   };
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.textureAirbrushLiveProjectionFrameState = warmFrame;
   editor.textureAirbrushLiveProjectionFrameCurrent = (frame) => frame === warmFrame;
   editor.texturePaintGpuPrewarmSnapshotCurrent = (candidate) => candidate === targetEntry;
@@ -845,6 +899,7 @@ test("warmed partial reset layer GPU live flush reuses the active layer pass imm
   };
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.textureAirbrushLiveProjectionFrameState = warmFrame;
   editor.textureAirbrushLiveProjectionFrameCurrent = (frame) => frame === warmFrame;
   editor.texturePaintGpuPrewarmSnapshotCurrent = (candidate) => candidate === targetEntry;

@@ -981,6 +981,10 @@ test("CPU layer projected paint uses each stroke sample position", () => {
 
   const changed = editor.textureAirbrushProjectedMeshFromEvent({ clientX: 40, clientY: 10 }, {
     gpu: false,
+    // This test exercises the legacy CPU sampler directly. Live airbrush calls
+    // must not set this flag because CPU texture-space paint has no current
+    // visible-depth/camera-facing shader mask.
+    allowUnsafeCpuAirbrush: true,
     resolvedBackend: { backend: "cpu", webGpuStatus: "layer-paint" },
     cpuStrokeSamples: true,
     strokeSegments: [{

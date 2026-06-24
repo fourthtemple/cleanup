@@ -1530,6 +1530,54 @@ input[type="color"] {
   margin-top: 7px;
 }
 
+.repro-macro-panel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 24;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(360px, calc(100% - 20px));
+  min-height: 30px;
+  padding: 5px 6px;
+  border: 1px solid rgba(224, 177, 83, 0.86);
+  background: rgba(14, 17, 20, 0.94);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.32);
+  color: var(--text);
+  font-size: 10px;
+  pointer-events: auto;
+}
+
+.repro-macro-panel[hidden] {
+  display: none;
+}
+
+.repro-macro-panel span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 170px;
+  color: rgba(244, 234, 214, 0.9);
+}
+
+.repro-macro-panel button {
+  flex: 0 0 auto;
+  min-height: 24px;
+  padding: 0 7px;
+  border-color: rgba(224, 177, 83, 0.72);
+  font-size: 10px;
+}
+
+.repro-macro-panel button[hidden] {
+  display: none;
+}
+
+.repro-macro-panel.is-recording {
+  border-color: rgba(255, 218, 116, 0.96);
+  background: rgba(28, 22, 13, 0.94);
+}
+
 .tutorial-eyebrow {
   margin: 0 0 4px;
   color: var(--gold);
@@ -2441,7 +2489,47 @@ button.is-active {
 
 .panel-resize-handle::before {
   content: "";
-  display: none;
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: block;
+  width: 2px;
+  background: rgba(223, 180, 93, 0.72);
+  box-shadow:
+    0 0 0 1px rgba(223, 180, 93, 0.16),
+    -4px 0 12px rgba(223, 180, 93, 0.18);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.timeline-drawer-handle::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: block;
+  height: 2px;
+  background: rgba(223, 180, 93, 0.72);
+  box-shadow:
+    0 0 0 1px rgba(223, 180, 93, 0.16),
+    0 -4px 12px rgba(223, 180, 93, 0.18);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.panel-resize-handle:hover::before,
+.panel-resize-handle:focus-visible::before,
+.panel-resize-handle:active::before,
+.weight-editor-app.is-side-panel-resizing .panel-resize-handle::before,
+.timeline-drawer-handle:hover::before,
+.timeline-drawer-handle:focus-visible::before,
+.timeline-drawer-handle:active::before,
+.weight-editor-app.is-timeline-drawer-dragging .timeline-drawer-handle::before {
+  opacity: 1;
 }
 
 .weight-editor-app.is-side-panel-resizing,
@@ -3007,14 +3095,14 @@ button.is-active {
 
 .timeline-drawer-handle {
   position: absolute;
-  top: -6px;
+  top: -5px;
   right: 0;
   left: 0;
   z-index: 8;
   width: auto;
   min-width: 0;
-  height: 12px;
-  min-height: 12px;
+  height: 10px;
+  min-height: 10px;
   padding: 0;
   border: 0;
   background: transparent;

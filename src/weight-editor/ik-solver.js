@@ -5,8 +5,10 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
   } = deps;
 
   const IK_ITERATIONS = 18;
+  const IK_LIVE_ITERATIONS = 7;
   const IK_TARGET_EPSILON = 0.003;
   const IK_SMOOTH_CHAIN_PASSES = 4;
+  const IK_LIVE_SMOOTH_CHAIN_PASSES = 2;
 
   function cloneManualPoseMap(source) {
     return new Map([...source.entries()].map(([name, pose]) => [name, { ...pose }]));
@@ -449,7 +451,11 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       }
 
       if (!this.ikDrag && !this.transformControls.dragging) {
-        this.updateIkTargetFromChain(chainNames);
+        if (this.ikTargetPreservePositionOnce) {
+          this.ikTargetPreservePositionOnce = false;
+        } else {
+          this.updateIkTargetFromChain(chainNames);
+        }
       }
       this.boneMoveGizmoArmed = false;
       this.transformControls.setMode("translate");
@@ -476,27 +482,76 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
         return false;
       }
       this.setBonePlacementPending(false);
-      this.beginPoseControlUndo("IK solve");
+      this.beginPoseControlUndo("IK solve", { fast: true });
       this.ikDrag = {
         chainNames,
         expandedChainNames: this.ikHasExplicitChainSelection?.()
           ? []
           : this.inferredIkExpandedChainNames?.(chainNames[chainNames.length - 1]) || [],
         manualPoseBefore: cloneManualPoseMap(this.manualPose),
-        targetStart: this.ikTarget.position.clone()
+        targetStart: this.ikTarget.position.clone(),
+        liveMoveFrameId: null,
+        liveMoveCancel: null,
+        liveMovePending: false,
+        lastSolvedLive: false
       };
       this.pausePlayback();
       return true;
     },
 
-    solveIkPoseCandidate(chainNames, targetWorld, settings, manualPoseBefore) {
+    requestIkLiveMove() {
+      const drag = this.ikDrag;
+      if (!drag) {
+        return false;
+      }
+      drag.liveMovePending = true;
+      if (drag.liveMoveFrameId !== null && drag.liveMoveFrameId !== undefined) {
+        return true;
+      }
+      const host = typeof window !== "undefined" ? window : null;
+      const schedule = typeof host?.requestAnimationFrame === "function"
+        ? host.requestAnimationFrame.bind(host)
+        : (callback) => setTimeout(callback, 0);
+      drag.liveMoveCancel = typeof host?.cancelAnimationFrame === "function"
+        ? host.cancelAnimationFrame.bind(host)
+        : (handle) => clearTimeout(handle);
+      drag.liveMoveFrameId = schedule(() => {
+        if (this.ikDrag !== drag) {
+          return;
+        }
+        drag.liveMoveFrameId = null;
+        drag.liveMoveCancel = null;
+        if (!drag.liveMovePending) {
+          return;
+        }
+        drag.liveMovePending = false;
+        this.applyIkMove({ live: true });
+      });
+      return true;
+    },
+
+    cancelPendingIkLiveMove() {
+      const drag = this.ikDrag;
+      if (!drag) {
+        return false;
+      }
+      if (drag.liveMoveFrameId !== null && drag.liveMoveFrameId !== undefined) {
+        drag.liveMoveCancel?.(drag.liveMoveFrameId);
+      }
+      drag.liveMoveFrameId = null;
+      drag.liveMoveCancel = null;
+      drag.liveMovePending = false;
+      return true;
+    },
+
+    solveIkPoseCandidate(chainNames, targetWorld, settings, manualPoseBefore, options = {}) {
       this.manualPose = cloneManualPoseMap(manualPoseBefore);
       this.applyPose(this.progress);
       this.model?.updateMatrixWorld(true);
       if (settings.solver === "smooth") {
-        this.solveIkSmoothChain(chainNames, targetWorld, settings);
+        this.solveIkSmoothChain(chainNames, targetWorld, settings, options);
       } else {
-        this.solveIkCcd(chainNames, targetWorld, settings);
+        this.solveIkCcd(chainNames, targetWorld, settings, options);
       }
 
       const solvedTransforms = this.captureIkSolvedTransforms(chainNames);
@@ -521,7 +576,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
         && candidate.endDistance > 0.015;
     },
 
-    applyIkMove() {
+    applyIkMove(options = {}) {
       const drag = this.ikDrag;
       if (!drag?.chainNames?.length || !this.ikTarget) {
         return false;
@@ -536,17 +591,38 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       const solveSettings = !this.ikHasExplicitChainSelection?.() && settings.solver === "ccd"
         ? { ...settings, counterRotation: Math.min(settings.counterRotation, -0.65) }
         : settings;
+      const live = options.live === true;
+      const targetUnchanged = drag.lastSolvedTargetWorld
+        && drag.lastSolvedTargetWorld.distanceToSquared(targetWorld) <= 0.00000001;
 
-      let candidate = this.solveIkPoseCandidate(chainNames, targetWorld, solveSettings, drag.manualPoseBefore);
+      if (targetUnchanged) {
+        if (!live) {
+          this.syncPoseControlsToCurrentBone?.();
+          this.refreshRigOverlays();
+          this.syncPatchJson();
+        }
+        return true;
+      }
+
+      let candidate = this.solveIkPoseCandidate(chainNames, targetWorld, solveSettings, drag.manualPoseBefore, { live });
       const expandedChainNames = (drag.expandedChainNames || []).filter((name) => this.bones.has(name));
-      if (!this.ikHasExplicitChainSelection?.() && this.ikShouldExpandFallbackSolve(candidate, expandedChainNames)) {
-        candidate = this.solveIkPoseCandidate(expandedChainNames, targetWorld, solveSettings, drag.manualPoseBefore);
+      if (!live && !this.ikHasExplicitChainSelection?.() && this.ikShouldExpandFallbackSolve(candidate, expandedChainNames)) {
+        candidate = this.solveIkPoseCandidate(expandedChainNames, targetWorld, solveSettings, drag.manualPoseBefore, { live });
       }
       drag.activeSolveChainNames = candidate.chainNames;
+      drag.lastSolvedTargetWorld = targetWorld.clone();
+      drag.lastSolvedLive = live;
 
-      this.applyPose(this.progress);
-      this.flushPoseUpdates?.();
+      if (live) {
+        this.model?.updateMatrixWorld(true);
+        for (const record of this.paintRecords || []) {
+          record.object?.skeleton?.update?.();
+        }
+        return true;
+      }
+
       this.syncPoseControlsToCurrentBone?.();
+      this.refreshRigOverlays();
       this.syncPatchJson();
       return true;
     },
@@ -556,13 +632,20 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
         this.updateIkMoveGizmo();
         return false;
       }
-      this.applyIkMove();
+      const hadPendingLiveMove = this.ikDrag.liveMovePending === true;
+      this.cancelPendingIkLiveMove?.();
+      if (hadPendingLiveMove) {
+        this.applyIkMove({ live: true });
+      }
+      this.applyIkMove({ live: false });
       const chainNames = this.ikDrag.activeSolveChainNames || this.ikDrag.chainNames;
       this.ikDrag = null;
+      this.ikTargetPreservePositionOnce = true;
       this.endPoseControlUndo();
       this.applyPose(this.progress);
       this.syncPoseControlsToCurrentBone?.();
       this.refreshRigOverlays();
+      this.refreshPoseDragDisplay?.();
       this.syncPatchJson();
       this.setStatus(`IK solved ${this.ikChainLabel(chainNames)}. Press Key to bake it`);
       return true;
@@ -572,7 +655,7 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       return this.ikSettingsForChain(chainNames).solver === "smooth";
     },
 
-    solveIkSmoothChain(chainNames, targetWorld, settings = this.ikSettingsForChain(chainNames)) {
+    solveIkSmoothChain(chainNames, targetWorld, settings = this.ikSettingsForChain(chainNames), options = {}) {
       const bones = chainNames.map((name) => this.bones.get(name)).filter(Boolean);
       if (bones.length < 2) {
         return false;
@@ -596,7 +679,8 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       desiredPositions[0].copy(basePositions[0]);
       desiredPositions[desiredPositions.length - 1].copy(targetWorld);
 
-      for (let pass = 0; pass < IK_SMOOTH_CHAIN_PASSES; pass += 1) {
+      const passCount = options.live === true ? IK_LIVE_SMOOTH_CHAIN_PASSES : IK_SMOOTH_CHAIN_PASSES;
+      for (let pass = 0; pass < passCount; pass += 1) {
         for (let index = 0; index < bones.length - 1; index += 1) {
           const joint = bones[index];
           const child = bones[index + 1];
@@ -666,14 +750,15 @@ export function installIkSolverMethods(BirdWeightEditor, deps) {
       return THREE.MathUtils.clamp(1 + value * (rootBias * 0.65 - tipBias * 0.35), 0.15, 1.75);
     },
 
-    solveIkCcd(chainNames, targetWorld, settings = this.ikSettingsForChain(chainNames)) {
+    solveIkCcd(chainNames, targetWorld, settings = this.ikSettingsForChain(chainNames), options = {}) {
       const endBone = this.bones.get(chainNames[chainNames.length - 1]);
       if (!endBone) {
         return false;
       }
       const counterRotation = settings?.solver === "ccd" ? settings.counterRotation : 0;
+      const iterationCount = options.live === true ? IK_LIVE_ITERATIONS : IK_ITERATIONS;
 
-      for (let iteration = 0; iteration < IK_ITERATIONS; iteration += 1) {
+      for (let iteration = 0; iteration < iterationCount; iteration += 1) {
         for (let index = chainNames.length - 2; index >= 0; index -= 1) {
           const joint = this.bones.get(chainNames[index]);
           if (!joint) {

@@ -11,6 +11,8 @@
     "dev": "node ./scripts/dev-server.mjs",
     "test": "node --test tests/*.test.mjs",
     "validate:airbrush": "node ./scripts/validate-airbrush-runtime.mjs",
+    "validate:airbrush-after-orbit-neighbor": "node ./scripts/validate-airbrush-runtime.mjs --after-orbit-neighbor --timeout 90000",
+    "validate:airbrush-after-orbit-macro": "node ./scripts/validate-airbrush-runtime.mjs --after-orbit-macro --timeout 90000",
     "validate:webgpu-airbrush": "node ./scripts/validate-webgpu-airbrush.mjs"
   },
   "dependencies": {

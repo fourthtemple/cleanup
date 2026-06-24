@@ -3,16 +3,19 @@ const TUTORIAL_MACRO_DRAFT_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-m
 const TUTORIAL_MACRO_DB_NAME = "fourth-temple-model-cleanup-tutorial-macros";
 const TUTORIAL_MACRO_DB_VERSION = 1;
 const TUTORIAL_MACRO_DB_STORE = "records";
-const TUTORIAL_MACRO_ASSET_URL = "./assets/tutorial-macros.json?v=20260609a";
+const TUTORIAL_MACRO_ASSET_URL = "./assets/tutorial-macros.json?v=visible-side-facing-20260623a";
 const DEFAULT_MACRO_NAME = "airbrush";
+const AFTER_ORBIT_PAINT_REPRO_MACRO_NAME = "after-orbit-paint";
 const MACRO_POINTER_ID = 92817;
+const TEXTURE_BRUSH_MACRO_TOOLS = new Set(["airbrush", "clone", "texture-eraser"]);
 
 function nowMs() {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
 function delay(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, Math.max(0, ms)));
+  const host = typeof window !== "undefined" ? window : globalThis;
+  return new Promise((resolve) => host.setTimeout(resolve, Math.max(0, ms)));
 }
 
 function rounded(value, digits = 5) {
@@ -53,21 +56,49 @@ function sanitizedMacroName(value, fallback = DEFAULT_MACRO_NAME) {
   return name || fallback;
 }
 
+function macroToolUsesTextureBrush(tool = "") {
+  return TEXTURE_BRUSH_MACRO_TOOLS.has(String(tool || ""));
+}
+
+function macroBrushSettingsWithReproDefaults(macroName = "", settings = null) {
+  if (!settings || typeof settings !== "object") {
+    return settings;
+  }
+  // Legacy compatibility only: older packaged after-orbit repro events did not
+  // save the Neighbor toggle. New macros must carry their own brush state.
+  if (macroName !== AFTER_ORBIT_PAINT_REPRO_MACRO_NAME || typeof settings.neighbor === "boolean") {
+    return settings;
+  }
+  return {
+    ...settings,
+    neighbor: true
+  };
+}
+
 function normalizedTutorialMacro(name, macro) {
   if (!macro || !Array.isArray(macro.events)) {
     return null;
   }
+  const macroName = sanitizedMacroName(macro.name || name);
   const events = macro.events
     .filter((event) => event && event.type !== "state" && Number.isFinite(Number(event.t)))
-    .map((event) => ({
-      ...event,
-      t: Number(event.t)
-    }))
+    .map((event) => {
+      const normalized = {
+        ...event,
+        t: Number(event.t)
+      };
+      if (normalized.type === "brush" && normalized.settings) {
+        normalized.settings = macroBrushSettingsWithReproDefaults(macroName, normalized.settings);
+      }
+      if (normalized.type === "pointer" && normalized.brush) {
+        normalized.brush = macroBrushSettingsWithReproDefaults(macroName, normalized.brush);
+      }
+      return normalized;
+    })
     .sort((left, right) => left.t - right.t);
   if (!events.length) {
     return null;
   }
-  const macroName = sanitizedMacroName(macro.name || name);
   return {
     version: Number.isFinite(Number(macro.version)) ? Number(macro.version) : 1,
     name: macroName,
@@ -79,6 +110,39 @@ function normalizedTutorialMacro(name, macro) {
     ),
     events
   };
+}
+
+function tutorialMacroNeighborPaintIntentFromEvents(macro = null) {
+  if (!Array.isArray(macro?.events)) {
+    return null;
+  }
+  let activeTool = "";
+  let sawNeighborOff = false;
+  for (const event of macro.events) {
+    if (event?.type === "tool") {
+      activeTool = String(event.tool || activeTool || "");
+      continue;
+    }
+    let settings = null;
+    let tool = activeTool;
+    if (event?.type === "brush") {
+      settings = event.settings;
+    } else if (event?.type === "pointer") {
+      settings = event.brush;
+      tool = String(event.tool || tool || "");
+    }
+    if (!settings || typeof settings.neighbor !== "boolean") {
+      continue;
+    }
+    if (tool && !macroToolUsesTextureBrush(tool)) {
+      continue;
+    }
+    if (settings.neighbor === true) {
+      return true;
+    }
+    sawNeighborOff = true;
+  }
+  return sawNeighborOff ? false : null;
 }
 
 function normalizedTutorialMacroMap(value) {
@@ -497,16 +561,37 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       return Boolean(this.tutorialMacro(name));
     },
 
+    tutorialMacroNeighborPaintIntent(name = DEFAULT_MACRO_NAME) {
+      return tutorialMacroNeighborPaintIntentFromEvents(this.tutorialMacro(name));
+    },
+
+    applyTutorialMacroNeighborPaintIntent(name = DEFAULT_MACRO_NAME) {
+      const intent = this.tutorialMacroNeighborPaintIntent?.(name);
+      if (typeof intent !== "boolean") {
+        return intent;
+      }
+      this.setTexturePaintNeighborMode?.(intent, { status: false });
+      return intent;
+    },
+
+    async prepareTutorialReproMacroBrushState(name = DEFAULT_MACRO_NAME) {
+      await this.loadPackagedTutorialMacros?.();
+      await this.loadTutorialMacrosFromIndexedDb?.();
+      return this.applyTutorialMacroNeighborPaintIntent?.(name);
+    },
+
     savedTutorialMacroNames() {
       return Object.keys(normalizedTutorialMacroMap(this.loadTutorialMacros()));
     },
 
     updateTutorialMacroControls() {
-      const enabled = Boolean(this.tutorialEditorEnabled && this.tutorialMacroModeActive?.());
+      const reproMacroName = this.tutorialReproMacroNameFromBrowser?.() || "";
+      const reproVisible = Boolean(reproMacroName || this.tutorialReproMacroActive || this.tutorialMacroRecording?.repro);
+      const enabled = Boolean((this.tutorialEditorEnabled || reproVisible) && this.tutorialMacroModeActive?.());
       const recording = Boolean(this.tutorialMacroRecording);
       const recordingName = this.tutorialMacroRecording?.name || "";
       const playing = Boolean(this.tutorialMacroPlaying);
-      const activeMacroName = this.tutorialActiveMacroName || this.tutorialMacroPlayingName || "";
+      const activeMacroName = this.tutorialActiveMacroName || this.tutorialMacroPlayingName || reproMacroName || "";
       const demoVisible = enabled && Boolean(activeMacroName);
       const hasMacro = activeMacroName ? this.hasTutorialMacro(activeMacroName) : false;
       const recordingActiveMacro = recording && activeMacroName === recordingName;
@@ -518,6 +603,31 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if (this.tutorialMacroStopButton) {
         this.tutorialMacroStopButton.hidden = !enabled || !recording;
         this.tutorialMacroStopButton.disabled = playing;
+      }
+      if (this.tutorialMacroRecordingBar) {
+        this.tutorialMacroRecordingBar.hidden = !reproVisible;
+        this.tutorialMacroRecordingBar.classList?.toggle("is-recording", recording);
+      }
+      if (this.tutorialMacroRecordingLabel) {
+        this.tutorialMacroRecordingLabel.textContent = recording
+          ? `Recording ${demoNameLabel(recordingName || activeMacroName)}`
+          : `Macro ${demoNameLabel(activeMacroName || reproMacroName || DEFAULT_MACRO_NAME)}`;
+      }
+      if (this.reproMacroRecordButton) {
+        this.reproMacroRecordButton.hidden = recording;
+        this.reproMacroRecordButton.disabled = playing || !activeMacroName;
+      }
+      if (this.reproMacroPlayButton) {
+        this.reproMacroPlayButton.hidden = recording;
+        this.reproMacroPlayButton.textContent = playing ? "Stop" : "Play";
+        this.reproMacroPlayButton.disabled = !activeMacroName || (!playing && !hasMacro);
+      }
+      if (this.tutorialMacroFloatingStopButton) {
+        this.tutorialMacroFloatingStopButton.hidden = !recording;
+        this.tutorialMacroFloatingStopButton.disabled = !recording || playing;
+      }
+      if (this.reproMacroExportButton) {
+        this.reproMacroExportButton.disabled = recording || playing || !hasMacro;
       }
       if (this.tutorialMacroExportButton) {
         this.tutorialMacroExportButton.hidden = !enabled;
@@ -557,12 +667,43 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       void (async () => {
         await this.loadPackagedTutorialMacros?.();
         await this.loadTutorialMacrosFromIndexedDb?.();
+        const macroName = this.tutorialReproMacroNameFromBrowser?.() || (this.tutorialReproMacroActive ? this.tutorialActiveMacroName : "");
+        if (macroName) {
+          await this.prepareTutorialReproMacroBrushState?.(macroName);
+        }
       })();
       this.tutorialMacroRecordButton?.addEventListener("click", () => {
         void this.startTutorialMacroRecording(this.tutorialActiveMacroName || DEFAULT_MACRO_NAME);
       });
+      this.reproMacroRecordButton?.addEventListener("click", () => {
+        const macroName = this.tutorialReproMacroNameFromBrowser?.() || this.tutorialActiveMacroName || DEFAULT_MACRO_NAME;
+        this.tutorialReproMacroActive = true;
+        this.tutorialActiveMacroName = macroName;
+        this.updateTutorialMacroControls?.();
+        void this.startTutorialMacroRecording(macroName);
+      });
+      this.reproMacroPlayButton?.addEventListener("click", () => {
+        const macroName = this.tutorialReproMacroNameFromBrowser?.() || this.tutorialActiveMacroName || DEFAULT_MACRO_NAME;
+        this.tutorialReproMacroActive = true;
+        this.tutorialActiveMacroName = macroName;
+        if (this.tutorialMacroPlaying) {
+          this.stopTutorialMacroPlayback();
+          return;
+        }
+        void this.playTutorialMacro(macroName, {
+          resetDemo: false,
+          preservePointerMoves: true,
+          requireCurrentScene: true
+        });
+      });
       this.tutorialMacroStopButton?.addEventListener("click", () => {
         void this.stopTutorialMacroRecording();
+      });
+      this.tutorialMacroFloatingStopButton?.addEventListener("click", () => {
+        void this.stopTutorialMacroRecording();
+      });
+      this.reproMacroExportButton?.addEventListener("click", () => {
+        void this.exportTutorialMacros();
       });
       this.tutorialMacroExportButton?.addEventListener("click", () => {
         void this.exportTutorialMacros();
@@ -776,6 +917,9 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
     },
 
     shouldSkipTutorialMacroEventForSpeed(event, nextEvent) {
+      if (this.tutorialMacroPreservePointerMoves === true) {
+        return false;
+      }
       const speed = this.tutorialMacroPlaybackSpeed();
       if (speed < 1.5 || event?.type !== "pointer" || event.kind !== "move") {
         return false;
@@ -791,11 +935,20 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
 
     async waitForTutorialMacroRestoreIdle({ timeoutMs = 3600 } = {}) {
       const startTime = nowMs();
-      while (this.historyRestoreBusy || this.pendingSerializedTexturePaintsApply) {
+      while (
+        this.historyRestoreBusy
+        || this.pendingSerializedTexturePaintsApply
+        || this.textureAirbrushScreenStrokeHasPendingWork?.()
+        || this.texturePaintPendingUndoFinalizationPromise?.()
+      ) {
         const pendingTextureApply = this.pendingSerializedTexturePaintsApply;
-        if (pendingTextureApply) {
+        const pendingPaintFinalization = this.texturePaintPendingUndoFinalizationPromise?.();
+        const pendingScreenFlush = this.finishTextureAirbrushScreenStrokeFlush?.();
+        if (pendingTextureApply || pendingPaintFinalization || pendingScreenFlush) {
           await Promise.race([
-            pendingTextureApply.catch(() => null),
+            pendingTextureApply?.catch?.(() => null) || delay(80),
+            pendingPaintFinalization?.catch?.(() => null) || delay(80),
+            pendingScreenFlush?.catch?.(() => null) || delay(80),
             delay(80)
           ]);
         } else {
@@ -845,6 +998,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       }
       this.tutorialMacroPlaying = false;
       this.tutorialMacroPlayingName = "";
+      this.tutorialMacroPreservePointerMoves = false;
       this.tutorialMacroPlaybackSeekRatio = null;
       this.tutorialMacroPlaybackToken = null;
       this.onPointerUp?.();
@@ -926,9 +1080,14 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         this.setStatus("Wait for tutorial macro playback to finish");
         return false;
       }
-      const ready = await this.ensureTutorialDemoModelLoaded?.("cat");
+      const isReproRecording = this.tutorialReproMacroActive === true;
+      const ready = isReproRecording
+        ? Boolean(this.model || this.activeClipEntry || this.paintRecords?.length)
+        : await this.ensureTutorialDemoModelLoaded?.("cat");
       if (!ready) {
-        this.setStatus("Load the cat demo before recording the tutorial macro");
+        this.setStatus(isReproRecording
+          ? "Load the model before recording the repro macro"
+          : "Load the cat demo before recording the tutorial macro");
         return false;
       }
       if (name === "fk-ik") {
@@ -944,6 +1103,8 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         wallStartTime: Date.now(),
         createdAt: new Date().toISOString(),
         restoreState,
+        repro: isReproRecording,
+        restoreAfterStop: !isReproRecording,
         events: [],
         lastDraftSaveTime: 0,
         lastCameraTime: 0,
@@ -958,6 +1119,9 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       this.storeTutorialMacroDraft?.(this.tutorialMacroRecording, { force: true });
       this.setStatus(`Recording ${demoNameLabel(name)} tutorial macro`);
       this.updateTutorialMacroControls?.();
+      if (isReproRecording && this.tutorialDrawerOpen) {
+        this.setTutorialDrawerOpen?.(false);
+      }
       return true;
     },
 
@@ -984,7 +1148,12 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if (discard) {
         this.clearTutorialMacroDraft?.(recording.name || DEFAULT_MACRO_NAME);
         this.setStatus("Tutorial macro recording discarded");
-        await this.restoreTutorialMacroRecordingBaseline(recording, { status: false });
+        if (recording.restoreAfterStop !== false) {
+          await this.restoreTutorialMacroRecordingBaseline(recording, { status: false });
+        }
+        if (recording.repro) {
+          this.tutorialReproMacroActive = false;
+        }
         this.updateTutorialMacroControls?.();
         return true;
       }
@@ -1006,7 +1175,12 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       if (stored) {
         this.clearTutorialMacroDraft?.(macro.name);
       }
-      const restored = await this.restoreTutorialMacroRecordingBaseline(recording, { status: false });
+      const restored = recording.restoreAfterStop === false
+        ? false
+        : await this.restoreTutorialMacroRecordingBaseline(recording, { status: false });
+      if (recording.repro) {
+        this.tutorialReproMacroActive = false;
+      }
       this.setStatus(stored
         ? `Saved ${storageResult.compacted ? "compact " : ""}${demoNameLabel(macro.name)} tutorial macro ${storageResult.disk ? "to disk" : "in browser"} (${storageResult.macro.events.length} events)${restored ? "; scene reset to the macro start" : ""}`
         : `Could not save ${demoNameLabel(macro.name)} tutorial macro; browser storage is full`);
@@ -1197,7 +1371,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         return false;
       }
       recording.lastPointerTime = time;
-      const brush = this.activeTool === "airbrush" || this.activeTool === "clone"
+      const brush = macroToolUsesTextureBrush(this.activeTool)
         ? this.tutorialMacroBrushSettingsSnapshot?.(event)
         : null;
       const recorded = this.recordTutorialMacroEvent("pointer", {
@@ -1232,7 +1406,8 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         scatter: rounded(this.textureBrushScatter?.value || 0.35, 5),
         pressure: rounded(pressure, 5),
         pressureRadius: pressureSettings.radius === true,
-        pressureOpacity: pressureSettings.opacity === true
+        pressureOpacity: pressureSettings.opacity === true,
+        neighbor: this.texturePaintNeighborModeEnabled?.() === true
       };
     },
 
@@ -1256,6 +1431,21 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         const nextValue = String(value);
         if (target.value !== nextValue) {
           target.value = nextValue;
+          changed = true;
+        }
+      }
+      if (typeof settings.neighbor === "boolean") {
+        const previousNeighbor = this.texturePaintNeighborModeEnabled?.() === true;
+        const nextNeighbor = settings.neighbor === true;
+        if (previousNeighbor !== nextNeighbor) {
+          if (typeof this.setTexturePaintNeighborMode === "function") {
+            this.setTexturePaintNeighborMode(nextNeighbor, { status: false });
+          } else if (this.texturePaintNeighborToggle) {
+            this.texturePaintNeighborToggle.checked = nextNeighbor;
+            this.texturePaintNeighborEnabled = nextNeighbor;
+          } else {
+            this.texturePaintNeighborEnabled = nextNeighbor;
+          }
           changed = true;
         }
       }
@@ -1285,7 +1475,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
 
     recordTutorialMacroPaintBrushState() {
       const recording = this.tutorialMacroRecording;
-      if (!recording || this.tutorialMacroPlaying || (this.activeTool !== "airbrush" && this.activeTool !== "clone")) {
+      if (!recording || this.tutorialMacroPlaying || !macroToolUsesTextureBrush(this.activeTool)) {
         return null;
       }
       const brush = this.tutorialMacroBrushSettingsSnapshot();
@@ -1783,6 +1973,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       this.camera.updateProjectionMatrix();
       this.controls.update();
       this.updateCameraRelativeLights?.();
+      this.textureAirbrushCameraChanged?.();
     },
 
     async animateTutorialMacroCameraTo(snapshot, duration = 90) {
@@ -1967,12 +2158,21 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         }
         return false;
       }
-      if (options.resetDemo !== false) {
+      const neighborIntent = tutorialMacroNeighborPaintIntentFromEvents(macro);
+      if (typeof neighborIntent === "boolean") {
+        this.setTexturePaintNeighborMode?.(neighborIntent, { status: false });
+      }
+      const useCurrentScene = options.requireCurrentScene === true || options.resetDemo === false;
+      if (!useCurrentScene && options.resetDemo !== false) {
         this.resetTutorialDemoSceneForImportStep?.("cat");
       }
-      const ready = await this.ensureTutorialDemoModelLoaded?.("cat");
+      const ready = useCurrentScene
+        ? Boolean(this.model && this.canvas)
+        : await this.ensureTutorialDemoModelLoaded?.("cat");
       if (!ready) {
-        this.setStatus("Load the cat demo before playing the tutorial macro");
+        this.setStatus(useCurrentScene
+          ? "Load a model before playing the repro macro"
+          : "Load the cat demo before playing the tutorial macro");
         return false;
       }
       if (macroName === "fk-ik") {
@@ -1981,6 +2181,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       this.clearTutorialMacroRecordingHighlights?.();
       this.tutorialMacroPlaying = true;
       this.tutorialMacroPlayingName = macroName;
+      this.tutorialMacroPreservePointerMoves = options.preservePointerMoves === true;
       this.updateTutorialMacroControls?.();
       const token = Symbol("tutorial-macro");
       this.tutorialMacroPlaybackToken = token;
@@ -2056,6 +2257,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         }
         this.tutorialMacroPlaying = false;
         this.tutorialMacroPlayingName = "";
+        this.tutorialMacroPreservePointerMoves = false;
         this.tutorialMacroPlaybackSeekRatio = null;
         this.stopTutorialMacroScenePlayback?.();
         this.hideTutorialMacroPointer();

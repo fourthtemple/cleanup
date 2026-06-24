@@ -1418,9 +1418,12 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
           startManualPose[channel] = finitePoseValue(manualPose[channel]);
         }
       }
-      this.beginPoseControlUndo(record
-        ? gizmoMode === "rotate" ? "Rotate rig bone" : "Move rig bone"
-        : gizmoMode === "rotate" ? "Rotate bone" : "Move bone");
+      this.beginPoseControlUndo(
+        record
+          ? gizmoMode === "rotate" ? "Rotate rig bone" : "Move rig bone"
+          : gizmoMode === "rotate" ? "Rotate bone" : "Move bone",
+        { fast: !record }
+      );
       this.boneMoveDrag = {
         mode: record ? "rig" : "pose",
         gizmoMode,
@@ -1430,16 +1433,64 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         startQuaternion: bone.quaternion.clone(),
         startManualPose: record ? null : startManualPose,
         startEditedChannels: record ? null : new Set(editedChannels),
-        startPose: record ? null : this.poseGizmoStartPose(bone.name)
+        startPose: record ? null : this.poseGizmoStartPose(bone.name),
+        liveMoveFrameId: null,
+        liveMoveCancel: null,
+        liveMovePending: false
       };
     },
 
-    applyBoneMove() {
+    requestBoneLiveMove() {
+      const drag = this.boneMoveDrag;
+      if (!drag || drag.mode !== "pose") {
+        return false;
+      }
+      drag.liveMovePending = true;
+      if (drag.liveMoveFrameId !== null && drag.liveMoveFrameId !== undefined) {
+        return true;
+      }
+      const host = typeof window !== "undefined" ? window : null;
+      const schedule = typeof host?.requestAnimationFrame === "function"
+        ? host.requestAnimationFrame.bind(host)
+        : (callback) => setTimeout(callback, 0);
+      drag.liveMoveCancel = typeof host?.cancelAnimationFrame === "function"
+        ? host.cancelAnimationFrame.bind(host)
+        : (handle) => clearTimeout(handle);
+      drag.liveMoveFrameId = schedule(() => {
+        if (this.boneMoveDrag !== drag) {
+          return;
+        }
+        drag.liveMoveFrameId = null;
+        drag.liveMoveCancel = null;
+        if (!drag.liveMovePending) {
+          return;
+        }
+        drag.liveMovePending = false;
+        this.applyBoneMove({ live: true });
+      });
+      return true;
+    },
+
+    cancelPendingBoneLiveMove() {
+      const drag = this.boneMoveDrag;
+      if (!drag) {
+        return false;
+      }
+      if (drag.liveMoveFrameId !== null && drag.liveMoveFrameId !== undefined) {
+        drag.liveMoveCancel?.(drag.liveMoveFrameId);
+      }
+      drag.liveMoveFrameId = null;
+      drag.liveMoveCancel = null;
+      drag.liveMovePending = false;
+      return true;
+    },
+
+    applyBoneMove(options = {}) {
       if (!this.boneMoveDrag) {
         return;
       }
       if (this.boneMoveDrag.mode === "pose") {
-        this.applyPoseBoneMove();
+        this.applyPoseBoneMove(options);
         return;
       }
       const { bone } = this.boneMoveDrag;
@@ -1459,12 +1510,18 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       const { bone, name } = this.boneMoveDrag;
       if (this.boneMoveDrag.mode === "pose") {
         const actionLabel = this.boneMoveDrag.gizmoMode === "rotate" ? "Rotated" : "Moved";
-        this.applyPoseBoneMove();
+        const hadPendingLiveMove = this.boneMoveDrag.liveMovePending === true;
+        this.cancelPendingBoneLiveMove?.();
+        if (hadPendingLiveMove) {
+          this.applyBoneMove({ live: true });
+        }
+        this.applyBoneMove({ live: false });
         this.boneMoveDrag = null;
         this.endPoseControlUndo();
         this.applyPose(this.progress);
         this.syncPoseControlsToCurrentBone();
         this.refreshRigOverlays();
+        this.refreshPoseDragDisplay?.();
         this.syncPatchJson();
         this.setStatus(`${actionLabel} ${this.boneDisplayName(bone.name || name)} pose`);
         return;
@@ -1526,11 +1583,12 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
       return Object.fromEntries(channels.map((channel) => [channel, finitePoseValue(additivePose[channel])]));
     },
 
-    applyPoseBoneMove() {
+    applyPoseBoneMove(options = {}) {
       const drag = this.boneMoveDrag;
       if (!drag?.bone || drag.mode !== "pose") {
         return;
       }
+      const live = options.live === true;
       const relativePose = drag.gizmoMode === "rotate"
         ? this.getBoneRelativePose?.(drag.name) || {}
         : null;
@@ -1548,7 +1606,7 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
           pz: finitePoseValue((drag.startManualPose?.pz || 0) + drag.bone.position.z - drag.startPosition.z)
         };
       const constrainedPose = this.clampPoseWithJointConstraint?.(drag.name, nextPose) || nextPose;
-      if (drag.gizmoMode === "rotate") {
+      if (!live && drag.gizmoMode === "rotate") {
         for (const channel of ["x", "y", "z"]) {
           if (Math.abs(finitePoseValue(constrainedPose[channel]) - finitePoseValue(drag.startPose?.[channel])) > 0.00001) {
             this.markJointConstraintPoseChannelEdited?.(channel, drag.name);
@@ -1577,13 +1635,16 @@ export function installRigEditorMethods(BirdWeightEditor, deps) {
         }
         this.manualPoseEditedChannels?.set?.(name, new Set(Object.keys(constrainedPose)));
       }
-      if (this.poseBoneSelect?.value === drag.name) {
+      if (!live && this.poseBoneSelect?.value === drag.name) {
         this.setPoseControlsFromPose(constrainedPose, drag.name);
       }
       this.applyPose(this.progress);
       this.model?.updateMatrixWorld(true);
       for (const record of this.paintRecords) {
         record.object.skeleton?.update?.();
+      }
+      if (live) {
+        return;
       }
       this.updateSelectedBoneHighlight();
       this.updateBonePickerOverlay();

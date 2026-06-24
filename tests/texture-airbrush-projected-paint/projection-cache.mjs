@@ -89,6 +89,7 @@ test("broad layer projection frame seeds non-active material proxies before firs
   let raycasts = 0;
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.texturePaintActiveMaterial = materials[0];
   editor.renderer = {
     autoClear: true,
@@ -253,6 +254,7 @@ test("lightweight layer projection frame defers broad proxy seeding until paint 
   let proxyRequests = 0;
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.texturePaintActiveMaterial = materials[0];
   editor.canvas = {
     getBoundingClientRect() {
@@ -328,6 +330,7 @@ test("minimal layer projection frame defers broad paint pass seeding until reque
   let proxyRequests = 0;
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.texturePaintActiveMaterial = materials[0];
   editor.canvas = {
     getBoundingClientRect() {
@@ -433,6 +436,7 @@ test("minimal layer projection frame keeps probing after caching one hit pass", 
   let raycasts = 0;
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.texturePaintActiveMaterial = materials[0];
   editor.renderer = {
     autoClear: true,
@@ -601,6 +605,7 @@ test("layer airbrush projection does not seed stale background targets without a
   };
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.canvas = {
     getBoundingClientRect() {
       return { left: 0, top: 0, width: 220, height: 160 };

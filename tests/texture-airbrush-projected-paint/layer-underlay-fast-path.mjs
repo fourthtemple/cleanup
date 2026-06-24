@@ -589,7 +589,7 @@ test("lower layer projection paints the live underlay instead of queuing a full 
     probePaintPassCache: new Map(),
     proxySceneCache: new Map([[pass.key, { scene: {}, proxy: { skeleton: { update() {} } } }]])
   };
-  const renderTargets = [];
+  const renderEntries = [];
   let currentTarget = null;
   let refreshedUnderlay = 0;
   editor.activeTool = "airbrush";
@@ -617,14 +617,22 @@ test("lower layer projection paints the live underlay instead of queuing a full 
       currentTarget = target;
     },
     render() {
-      renderTargets.push(currentTarget);
+      renderEntries.push({
+        target: currentTarget,
+        useStrokeSourceTexture: brushShader.uniforms.useStrokeSourceTexture.value,
+        useCurrentTargetTexture: brushShader.uniforms.useCurrentTargetTexture.value,
+        strokeSourceClear: brushShader.uniforms.strokeSourceClear.value,
+        blending: brushShader.blending,
+        transparent: brushShader.transparent
+      });
     }
   };
   editor.pointer = { x: 0, y: 0 };
   editor.paintRecords = [record];
   editor.refreshSkinnedRaycastBounds = () => {};
   editor.textureAirbrushRenderDepthTarget = () => ({ depthTexture: {} });
-  editor.textureAirbrushBrushShaderMaterial = () => brushShaderMaterial();
+  const brushShader = brushShaderMaterial();
+  editor.textureAirbrushBrushShaderMaterial = () => brushShader;
   editor.textureAirbrushShaderColor = () => ({ r: 1, g: 1, b: 0 });
   editor.textureBrushRadiusValue = () => 0.04;
   editor.textureAirbrushGpuUvBleedOffsets = () => [vector()];
@@ -681,7 +689,12 @@ test("lower layer projection paints the live underlay instead of queuing a full 
   });
 
   assert.equal(changed > 0, true);
-  assert.deepEqual(renderTargets, [lowerTarget.target, underlayTarget]);
+  assert.deepEqual(renderEntries.map((entry) => entry.target), [lowerTarget.target, underlayTarget]);
+  assert.deepEqual(renderEntries.map((entry) => entry.useStrokeSourceTexture), [true, false]);
+  assert.deepEqual(renderEntries.map((entry) => entry.useCurrentTargetTexture), [false, false]);
+  assert.deepEqual(renderEntries.map((entry) => entry.strokeSourceClear), [true, false]);
+  assert.deepEqual(renderEntries.map((entry) => entry.blending), ["no-blending", "normal-blending"]);
+  assert.deepEqual(renderEntries.map((entry) => entry.transparent), [false, true]);
   assert.equal(refreshedUnderlay, 1);
   assert.equal(lowerTarget.paintRevision, 1);
 });

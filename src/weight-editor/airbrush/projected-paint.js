@@ -57,27 +57,46 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
         return 0;
       }
       options = this.textureAirbrushOptionsWithPressure?.(event, options) || options;
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // USER-APPROVED FIX, DO NOT SIMPLIFY:
+      // live airbrush is allowed to paint only through a shader path that owns
+      // the current camera-facing normal gate and current frontmost-depth gate.
+      // If that path misses, the correct result is "paint nothing", not "paint
+      // through texture space until coverage looks better".
+      //
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // Live airbrush painting must use a camera-visible/frontmost-depth mask.
+      // CPU/WebGPU texture-space brushing does not currently have that mask,
+      // so it must not be used as a live paint fallback.
+      const requireVisibleSurfaceShader = options.allowUnsafeCpuAirbrush !== true
+        && options.fullRegion !== true
+        && options.meshFallback !== true;
       const resolvedBackend = options.resolvedBackend && typeof options.resolvedBackend.backend === "string"
         ? options.resolvedBackend
         : null;
       const backend = resolvedBackend || this.textureAirbrushResolveBackend?.(options) || {
-        backend: options.gpu === true && !this.textureAirbrushGpuDisabled ? "webgl" : "cpu",
+        backend: !this.textureAirbrushGpuDisabled ? "webgl" : "cpu",
         webGpuStatus: "not-installed"
       };
       if (backend.backend === "webgpu") {
-        try {
-          const webGpuChanged = this.textureAirbrushWebGpuPaintFromEvent?.(event, options) || 0;
-          if (webGpuChanged > 0) {
-            return webGpuChanged;
-          }
-        } catch (error) {
-          this.textureAirbrushWebGpuDisabled = true;
-          console.warn("Texture airbrush WebGPU path failed; trying WebGL shader brush", error);
-        }
-      } else {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // The WebGPU texture brush is disabled for live airbrush until it has
+        // the same camera-visible/frontmost-depth mask as the WebGL shader.
+        // Do not re-enable this as a workaround for post-orbit holes; that
+        // would bypass the approved visible-side-only shader contract.
+        this.textureAirbrushWebGpuDisabled = true;
+        this.setStatus?.("Airbrush WebGPU path disabled: visible-surface depth mask required.");
+      }
+      if (backend.backend !== "webgpu") {
         this.textureAirbrushReportWebGpuFallback?.(backend);
       }
-      if (backend.backend === "webgl" && !this.textureAirbrushGpuDisabled) {
+      if (!this.textureAirbrushGpuDisabled) {
         try {
           const gpuChanged = this.textureAirbrushGpuProjectFromEvent?.(event, options) || 0;
           if (gpuChanged > 0) {
@@ -88,7 +107,21 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
           console.warn("Texture airbrush shader path failed; live airbrush paint was not applied", error);
         }
       }
-      if (options.gpu === true) {
+      if (requireVisibleSurfaceShader) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // This return is intentional. It prevents the CPU raycast/UV fallback
+        // from painting texture islands that are not currently camera-facing.
+        // Do not replace it with the old fallback unless that fallback gets the
+        // same current visible-depth and camera-facing normal mask.
+        //
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // If the visible-depth shader misses or is unavailable, do not fall
+        // through to CPU texture painting. Returning 0 is safer than painting
+        // hidden/back-side texture pixels.
         if (this.textureAirbrushGpuDisabled) {
           this.setStatus?.("Airbrush GPU path failed; reload the model or page before painting again.");
         }
