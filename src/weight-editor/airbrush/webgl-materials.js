@@ -443,10 +443,10 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               visibleNormalMatchThreshold
             );
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // Center-visible fragments are already proven visible and should
-            // keep full paint opacity. Only fragments rescued by nearby visible
-            // samples get the Gaussian edge feather; otherwise internal seams
-            // and folds can become dark bands inside a solid stroke.
+            // Center-visible fragments are already proven visible. Near the
+            // 90-degree normal cutoff they still need a continuous airbrush
+            // fade; otherwise a fully matched triangle can paint at full alpha
+            // until it suddenly discards and leaves a hard angular cutoff.
             float visibleSurfaceCoverage = 1.0;
             if (visibleSurfaceMatched && useVisibleNormalTexture) {
               float boundaryCoverage = visibleSurfaceGaussianCoverage(
@@ -456,26 +456,29 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
                 visibleNormalMatchThreshold
               );
               float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintViewNormal);
-              if (boundaryCoverage < 0.999 && grazingEdgeAmount > 0.0) {
-                float wideBoundaryCoverage = visibleSurfaceWideGaussianCoverage(
-                  depthUv,
-                  fragmentDepth,
-                  paintViewNormal,
-                  visibleNormalMatchThreshold
-                );
+              if (grazingEdgeAmount > 0.0) {
                 float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage(paintViewNormal);
-                // DO NOT PAINT ON NON CAMERA FACING SIDES.
-                // Near the 90-degree cutoff, the continuous angle falloff owns
-                // the opacity so a high neighboring sample cannot draw a comb
-                // of solid teeth. As the fragment turns more camera-facing, the
-                // visible-only sampled Gaussian is allowed to fill small raster
-                // gaps without authorizing any hidden/back fragments.
-                float sampledBoundaryCoverage = max(wideBoundaryCoverage, grazingAngleCoverage);
-                float softBoundaryCoverage = mix(
-                  grazingAngleCoverage,
-                  sampledBoundaryCoverage,
-                  grazingAngleCoverage
-                );
+                float softBoundaryCoverage = grazingAngleCoverage;
+                if (boundaryCoverage < 0.999) {
+                  float wideBoundaryCoverage = visibleSurfaceWideGaussianCoverage(
+                    depthUv,
+                    fragmentDepth,
+                    paintViewNormal,
+                    visibleNormalMatchThreshold
+                  );
+                  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+                  // Near the 90-degree cutoff, the continuous angle falloff owns
+                  // the opacity so a high neighboring sample cannot draw a comb
+                  // of solid teeth. As the fragment turns more camera-facing, the
+                  // visible-only sampled Gaussian is allowed to fill small raster
+                  // gaps without authorizing any hidden/back fragments.
+                  float sampledBoundaryCoverage = max(wideBoundaryCoverage, grazingAngleCoverage);
+                  softBoundaryCoverage = mix(
+                    grazingAngleCoverage,
+                    sampledBoundaryCoverage,
+                    grazingAngleCoverage
+                  );
+                }
                 visibleSurfaceCoverage = mix(1.0, softBoundaryCoverage, grazingEdgeAmount);
               }
             }
