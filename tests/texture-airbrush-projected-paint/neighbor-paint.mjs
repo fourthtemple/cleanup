@@ -101,6 +101,42 @@ function screenEditorForNeighborStroke(activeTool = "airbrush") {
   return editor;
 }
 
+test("texture paint Neighbor mode defaults on during control sync", () => {
+  class NeighborEditor {}
+  installTextureAirbrushNeighborPaintMethods(NeighborEditor);
+  const editor = new NeighborEditor();
+  const toggledClasses = [];
+  editor.texturePaintNeighborToggle = {
+    checked: false,
+    classList: {
+      toggle(name, enabled) {
+        toggledClasses.push([name, enabled]);
+      }
+    }
+  };
+  editor.syncTexturePaintNeighborMode();
+
+  assert.equal(editor.texturePaintNeighborEnabled, true);
+  assert.equal(editor.texturePaintNeighborToggle.checked, true);
+  assert.deepEqual(toggledClasses, [["is-active", true]]);
+});
+
+test("texture paint Neighbor sync preserves an explicit off state", () => {
+  class NeighborEditor {}
+  installTextureAirbrushNeighborPaintMethods(NeighborEditor);
+  const editor = new NeighborEditor();
+  editor.texturePaintNeighborEnabled = false;
+  editor.texturePaintNeighborToggle = {
+    checked: true,
+    classList: { toggle() {} }
+  };
+
+  editor.syncTexturePaintNeighborMode();
+
+  assert.equal(editor.texturePaintNeighborEnabled, false);
+  assert.equal(editor.texturePaintNeighborToggle.checked, false);
+});
+
 test("texture paint neighbor seed constrains hits to the starting connected surface", () => {
   class NeighborEditor {}
   installTextureAirbrushNeighborPaintMethods(NeighborEditor);

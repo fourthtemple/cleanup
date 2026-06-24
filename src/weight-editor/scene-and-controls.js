@@ -1466,7 +1466,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     tutorialReproMacroNameFromBrowser() {
       const params = new URLSearchParams(window.location.search || "");
       const requested = params.get("reproMacro") || params.get("repro-macro") || params.get("tutorialMacro") || params.get("tutorial-macro");
-      if (!requested && params.has("afterOrbitPaint")) {
+      if (!requested && (params.has("afterOrbitPaint") || params.has("neighborSeedRecover"))) {
         return "after-orbit-paint";
       }
       const clean = String(requested || "")

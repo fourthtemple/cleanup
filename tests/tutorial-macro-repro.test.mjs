@@ -110,6 +110,39 @@ test("afterOrbitPaint URL opens the existing after-orbit paint repro macro", (t)
   assert.equal(editor.tutorialEditorEnabledForBrowser(), true);
 });
 
+test("neighborSeedRecover URL opens the after-orbit recorder lane", (t) => {
+  withWindowSearch(t, "?library=server&neighborSeedRecover=20260623b&debugRun=1");
+  const editor = new TestEditor();
+  const recordingBar = {
+    hidden: true,
+    classList: classListMock()
+  };
+  const recordButton = buttonMock();
+  const playButton = buttonMock();
+  const exportButton = buttonMock();
+  const stopButton = buttonMock();
+  editor.tutorialMacroRecordingBar = recordingBar;
+  editor.reproMacroRecordButton = recordButton;
+  editor.reproMacroPlayButton = playButton;
+  editor.reproMacroExportButton = exportButton;
+  editor.tutorialMacroFloatingStopButton = stopButton;
+  editor.tutorialMacroModeActive = () => true;
+  editor.hasTutorialMacro = (name) => name === "after-orbit-paint";
+  editor.savedTutorialMacroNames = () => ["after-orbit-paint"];
+
+  editor.updateTutorialMacroControls();
+
+  assert.equal(editor.tutorialReproMacroNameFromBrowser(), "after-orbit-paint");
+  assert.equal(editor.tutorialEditorEnabledForBrowser(), true);
+  assert.equal(recordingBar.hidden, false);
+  assert.equal(recordButton.hidden, false);
+  assert.equal(recordButton.disabled, false);
+  assert.equal(playButton.hidden, false);
+  assert.equal(playButton.disabled, false);
+  assert.equal(exportButton.disabled, false);
+  assert.equal(stopButton.hidden, true);
+});
+
 test("activateTutorialReproMacro selects the viewport macro recorder lane", (t) => {
   withWindowSearch(t, "?reproMacro=after-orbit-paint");
   const editor = new TestEditor();

@@ -428,6 +428,7 @@ class ModelCleanupEditor {
     this.cloneSpotlightOverlays = [];
     this.cloneSpotlightActive = false;
     this.texturePaintLayersEnabled = true;
+    this.texturePaintNeighborEnabled = true;
     this.texturePaintLayerSerial = 0;
     this.texturePaintActiveMaterial = null;
     this.lassoStroke = null;

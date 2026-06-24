@@ -140,7 +140,10 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
     },
 
     syncTexturePaintNeighborMode() {
-      this.setTexturePaintNeighborMode?.(this.texturePaintNeighborEnabled === true, { status: false });
+      const nextEnabled = typeof this.texturePaintNeighborEnabled === "boolean"
+        ? this.texturePaintNeighborEnabled
+        : true;
+      this.setTexturePaintNeighborMode?.(nextEnabled, { status: false });
     },
 
     textureAirbrushEnsureNeighborTopology(record = null) {
