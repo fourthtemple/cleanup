@@ -25,13 +25,12 @@ import {
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-// This shader intentionally uses BOTH visibility gates:
-// 1. camera-facing geometric normal gate, so back-facing triangles are never eligible;
+// This shader intentionally uses front-visible gates:
+// 1. a front-side visible-normal buffer for the current camera/screen pixel;
 // 2. frontmost depth-buffer match, so hidden/behind fragments are never eligible.
 // Removing either gate can make the brush look more filled, but that is the
 // forbidden failure mode: painting through the model or onto the back side.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.0008;
-const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = 0.0;
 const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.12;
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {
@@ -97,9 +96,6 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           // visible-depth match. Never raise this to paint through, behind, or
           // around the visible side of the model.
           visibleOnlyDepthEpsilon: { value: TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON },
-          // DO NOT PAINT ON NON CAMERA FACING SIDES. Depth alone is not enough:
-          // the painted surface normal must also face the paint camera.
-          visibleFacingNormalThreshold: { value: TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD },
           // DO NOT PAINT ON NON CAMERA FACING SIDES. The visible-normal buffer
           // is the front-surface authority at the current screen pixel; this
           // threshold prevents a nearly matching depth value from authorizing a
@@ -170,7 +166,6 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           uniform float brushHardness;
           uniform float scatterAmount;
           uniform float visibleOnlyDepthEpsilon;
-          uniform float visibleFacingNormalThreshold;
           uniform float visibleNormalMatchThreshold;
           uniform sampler2D strokeSourceTexture;
           uniform bool useStrokeSourceTexture;
@@ -246,14 +241,12 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This is global airbrush behavior, not a Neighbor-only rule:
-            // fragments whose paint normal faces away from the paint camera
-            // are not eligible for paint. This is not permission to paint
-            // through or behind the model; the visible-normal and depth gates
-            // below must still agree with the current frontmost screen surface.
+            // Do not use smoothed normal.z as the hard silhouette cutoff here:
+            // near the visible wrap, interpolated normals can cross zero inside
+            // otherwise visible front-side triangles and create triangle-ridge
+            // holes. The front-side visible-normal buffer and depth gate below
+            // define the hard visible boundary without authorizing hidden paint.
             vec3 paintViewNormal = paintFragmentViewNormal();
-            if (paintViewNormal.z <= visibleFacingNormalThreshold) {
-              discard;
-            }
             if (
               useNeighborMask
               && useNeighborNormalMask
@@ -285,8 +278,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // pixel; if the paint fragment normal does not agree with it, the
               // fragment is a hidden/wrapped/back-side candidate and must die.
               if (
-                visibleNormal.z <= visibleFacingNormalThreshold
-                || dot(visibleNormal, paintViewNormal) < visibleNormalMatchThreshold
+                dot(visibleNormal, paintViewNormal) < visibleNormalMatchThreshold
               ) {
                 discard;
               }
@@ -295,9 +287,9 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // KEEP THIS GATE. It is the other half of the approved visible-only
-            // fix. The normal gate rejects back-facing triangles; this depth
-            // gate rejects fragments that are not the current rendered front
-            // surface at this screen pixel.
+            // fix. The visible-normal buffer rejects hidden wrap candidates;
+            // this depth gate rejects fragments that are not the current
+            // rendered front surface at this screen pixel.
             //
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
@@ -451,11 +443,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           void main() {
             vec3 visibleNormal = normalize(vAirbrushVisibleNormal);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // The normal buffer stores only camera-facing front surfaces. It is
-            // not a fill/bleed pass and it must not authorize back-side paint.
-            if (visibleNormal.z <= ${TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD.toFixed(1)}) {
-              discard;
-            }
+            // The normal buffer stores only front-side rasterized surfaces
+            // because this material renders with THREE.FrontSide. Do not add a
+            // smoothed-normal z cutoff here; that is what creates triangle-ridge
+            // holes at the visible wrap. FrontSide plus depth is the camera
+            // visibility rule, not a per-vertex-normal sign test.
             gl_FragColor = vec4(visibleNormal * 0.5 + 0.5, 1.0);
           }
         `
