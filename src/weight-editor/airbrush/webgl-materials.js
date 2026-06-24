@@ -288,6 +288,17 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return clamp(coverage / 16.0, 0.0, 1.0);
           }
 
+          float visibleSurfaceGrazingEdgeAmount(vec3 paintViewNormal) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This angle test only decides whether an already-visible local
+            // boundary should ease out like an airbrush. It is paired with the
+            // 3x3 visible-depth kernel, so folds/interior seams keep full paint
+            // unless they also look like the current camera-visible wrap edge.
+            float grazingStart = visibleFacingNormalThreshold + 0.06;
+            float grazingEnd = visibleFacingNormalThreshold + 0.42;
+            return 1.0 - smoothstep(grazingStart, grazingEnd, paintViewNormal.z);
+          }
+
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
             if (erasing) {
               return clamp((sourceColor.a - color.a) / max(0.0001, sourceColor.a), 0.0, 1.0);
@@ -404,6 +415,18 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // samples get the Gaussian edge feather; otherwise internal seams
             // and folds can become dark bands inside a solid stroke.
             float visibleSurfaceCoverage = 1.0;
+            if (visibleSurfaceMatched && useVisibleNormalTexture) {
+              float boundaryCoverage = visibleSurfaceGaussianCoverage(
+                depthUv,
+                fragmentDepth,
+                paintViewNormal,
+                visibleNormalMatchThreshold
+              );
+              float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintViewNormal);
+              if (boundaryCoverage < 0.999 && grazingEdgeAmount > 0.0) {
+                visibleSurfaceCoverage = mix(1.0, boundaryCoverage, grazingEdgeAmount);
+              }
+            }
             if (!visibleSurfaceMatched && useVisibleNormalTexture) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
               // This is an edge rasterization repair only. At grazing visible
