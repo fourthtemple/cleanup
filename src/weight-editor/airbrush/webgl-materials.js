@@ -46,6 +46,12 @@ const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.0008;
 // the strict depth gate and visible-normal agreement gate below still decide
 // whether the fragment belongs to the current camera-visible surface.
 const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = -0.12;
+// DO NOT PAINT ON NON CAMERA FACING SIDES.
+// Accepted grazing fragments should ease out like an airbrush instead of
+// snapping to a jagged binary edge. This feather only scales alpha for fragments
+// that already passed the visible-facing threshold and later pass depth/normal
+// visibility; it must never be used to revive discarded back-side fragments.
+const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_FEATHER = 0.22;
 const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.12;
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {
@@ -119,6 +125,10 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           // DO NOT PAINT ON NON CAMERA FACING SIDES. Depth alone is not enough:
           // the painted surface normal must also face the paint camera.
           visibleFacingNormalThreshold: { value: TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD },
+          // DO NOT PAINT ON NON CAMERA FACING SIDES. This softens only the
+          // accepted visible edge. It is not hidden-side permission; fragments
+          // behind the facing threshold are still discarded before depth checks.
+          visibleFacingNormalFeather: { value: TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_FEATHER },
           // DO NOT PAINT ON NON CAMERA FACING SIDES. The visible-normal buffer
           // is the front-surface authority at the current screen pixel; this
           // threshold prevents a nearly matching depth value from authorizing a
@@ -191,6 +201,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           uniform float visibleOnlyDepthEpsilon;
           uniform float visibleOnlyFrontDepthEpsilon;
           uniform float visibleFacingNormalThreshold;
+          uniform float visibleFacingNormalFeather;
           uniform float visibleNormalMatchThreshold;
           uniform sampler2D strokeSourceTexture;
           uniform bool useStrokeSourceTexture;
@@ -316,6 +327,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             if (paintViewNormal.z <= visibleFacingNormalThreshold) {
               discard;
             }
+            float visibleFacingCoverage = smoothstep(
+              visibleFacingNormalThreshold,
+              visibleFacingNormalThreshold + max(0.0001, visibleFacingNormalFeather),
+              paintViewNormal.z
+            );
             if (
               useNeighborMask
               && useNeighborNormalMask
@@ -384,8 +400,9 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // This is an edge rasterization repair only. At grazing visible
               // silhouettes, the UV-space fragment can land between depth
               // pixels even though the surface is visibly frontmost. Check the
-              // immediate screen neighbors, but require a much stronger visible
-              // normal match and keep the same strict depth windows.
+              // immediate 8-connected screen neighbors so diagonal visible
+              // edges do not become a staircase, but require a much stronger
+              // visible normal match and keep the same strict depth windows.
               vec2 screenPixel = 1.0 / max(viewportSize, vec2(1.0));
               float edgeNormalMatchThreshold = max(0.55, visibleNormalMatchThreshold);
               visibleSurfaceMatched = visibleSurfaceDepthNormalMatch(
@@ -405,6 +422,26 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
                 edgeNormalMatchThreshold
               ) || visibleSurfaceDepthNormalMatch(
                 depthUv - vec2(0.0, screenPixel.y),
+                fragmentDepth,
+                paintViewNormal,
+                edgeNormalMatchThreshold
+              ) || visibleSurfaceDepthNormalMatch(
+                depthUv + screenPixel,
+                fragmentDepth,
+                paintViewNormal,
+                edgeNormalMatchThreshold
+              ) || visibleSurfaceDepthNormalMatch(
+                depthUv + vec2(screenPixel.x, -screenPixel.y),
+                fragmentDepth,
+                paintViewNormal,
+                edgeNormalMatchThreshold
+              ) || visibleSurfaceDepthNormalMatch(
+                depthUv + vec2(-screenPixel.x, screenPixel.y),
+                fragmentDepth,
+                paintViewNormal,
+                edgeNormalMatchThreshold
+              ) || visibleSurfaceDepthNormalMatch(
+                depthUv - screenPixel,
                 fragmentDepth,
                 paintViewNormal,
                 edgeNormalMatchThreshold
@@ -451,6 +488,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               discard;
             }
             float alpha = min(1.0, brushOpacity * strength * coverage);
+            alpha *= visibleFacingCoverage;
             if (alpha <= ${TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD}) {
               discard;
             }

@@ -1261,6 +1261,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.equal(material.uniforms.visibleOnlyDepthEpsilon.value, 0.00018);
   assert.equal(material.uniforms.visibleOnlyFrontDepthEpsilon.value, 0.0008);
   assert.equal(material.uniforms.visibleFacingNormalThreshold.value, -0.12);
+  assert.equal(material.uniforms.visibleFacingNormalFeather.value, 0.22);
   assert.equal(material.uniforms.useVisibleNormalTexture.value, false);
   assert.equal(material.uniforms.visibleNormalTexture.value, null);
   assert.equal(material.uniforms.visibleNormalMatchThreshold.value, 0.12);
@@ -1280,6 +1281,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /uniform float visibleOnlyDepthEpsilon/);
   assert.match(material.fragmentShader, /uniform float visibleOnlyFrontDepthEpsilon/);
   assert.match(material.fragmentShader, /uniform float visibleFacingNormalThreshold/);
+  assert.match(material.fragmentShader, /uniform float visibleFacingNormalFeather/);
   assert.match(material.fragmentShader, /uniform sampler2D visibleNormalTexture/);
   assert.match(material.fragmentShader, /uniform bool useVisibleNormalTexture/);
   assert.match(material.fragmentShader, /uniform float visibleNormalMatchThreshold/);
@@ -1292,12 +1294,19 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /if \(useNeighborMask && vNeighborMask < 0\.5\)/);
   assert.match(material.fragmentShader, /vec3 paintViewNormal = paintFragmentViewNormal\(\)/);
   assert.match(material.fragmentShader, /paintViewNormal\.z <= visibleFacingNormalThreshold/);
+  assert.match(material.fragmentShader, /float visibleFacingCoverage = smoothstep/);
+  assert.match(material.fragmentShader, /visibleFacingNormalThreshold \+ max\(0\.0001, visibleFacingNormalFeather\)/);
   assert.match(material.fragmentShader, /visibleNormal = texture2D\(visibleNormalTexture, sampleUv\)\.rgb \* 2\.0 - 1\.0/);
   assert.match(material.fragmentShader, /dot\(visibleNormal, paintViewNormal\) < normalMatchThreshold/);
   assert.match(material.fragmentShader, /bool visibleSurfaceMatched = visibleSurfaceDepthNormalMatch/);
   assert.match(material.fragmentShader, /if \(!visibleSurfaceMatched && useVisibleNormalTexture\)/);
   assert.match(material.fragmentShader, /vec2 screenPixel = 1\.0 \/ max\(viewportSize, vec2\(1\.0\)\)/);
   assert.match(material.fragmentShader, /float edgeNormalMatchThreshold = max\(0\.55, visibleNormalMatchThreshold\)/);
+  assert.match(material.fragmentShader, /8-connected screen neighbors/);
+  assert.match(material.fragmentShader, /depthUv \+ screenPixel/);
+  assert.match(material.fragmentShader, /depthUv - screenPixel/);
+  assert.match(material.fragmentShader, /depthUv \+ vec2\(screenPixel\.x, -screenPixel\.y\)/);
+  assert.match(material.fragmentShader, /depthUv \+ vec2\(-screenPixel\.x, screenPixel\.y\)/);
   assert.match(material.fragmentShader, /dot\(normalize\(vPaintObjectNormal\), normalize\(neighborSeedNormal\)\) < neighborNormalThreshold/);
   assert.match(material.fragmentShader, /DO NOT PAINT ON NON CAMERA FACING SIDES/);
   assert.match(material.fragmentShader, /visible-normal buffer/);
@@ -1307,6 +1316,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /float deltaFromVisibleSurface = fragmentDepth - sceneDepth/);
   assert.match(material.fragmentShader, /deltaFromVisibleSurface > visibleOnlyDepthEpsilon/);
   assert.match(material.fragmentShader, /deltaFromVisibleSurface < -visibleOnlyFrontDepthEpsilon/);
+  assert.match(material.fragmentShader, /alpha \*= visibleFacingCoverage/);
   assert.match(material.fragmentShader, /old unbounded "closer than depth is okay" shortcut/);
   assert.doesNotMatch(material.fragmentShader, /abs\(fragmentDepth - sceneDepth\) > visibleOnlyDepthEpsilon/);
   assert.doesNotMatch(material.fragmentShader, /fragmentDepth > sceneDepth \+ visibleOnlyDepthEpsilon/);
