@@ -32,6 +32,14 @@ import {
 // forbidden failure mode: painting through the model or onto the back side.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.00018;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
+// The back/behind tolerance above stays strict. This separate front tolerance
+// only absorbs sub-pixel depth disagreement where the UV paint fragment projects
+// a hair in front of the sampled visible depth while its normal still matches
+// the current frontmost visible surface. It is capped; do not turn it into the
+// old unbounded "closer than depth is okay" shortcut, because that paints around
+// the back at wraps.
+const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.0008;
+// DO NOT PAINT ON NON CAMERA FACING SIDES.
 // This small negative value is only a visible-silhouette tolerance for meshes
 // whose smoothed/vertex normals tip just past 90 degrees while the triangle is
 // still the frontmost rendered surface. It is not a hidden-side allowance:
@@ -103,6 +111,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           // visible-depth match. Never raise this to paint through, behind, or
           // around the visible side of the model.
           visibleOnlyDepthEpsilon: { value: TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON },
+          // DO NOT PAINT ON NON CAMERA FACING SIDES. This is not hidden-side
+          // permission; it only handles visible-edge depth quantization after
+          // the visible-normal buffer proves the fragment is the same front
+          // surface.
+          visibleOnlyFrontDepthEpsilon: { value: TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON },
           // DO NOT PAINT ON NON CAMERA FACING SIDES. Depth alone is not enough:
           // the painted surface normal must also face the paint camera.
           visibleFacingNormalThreshold: { value: TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD },
@@ -176,6 +189,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           uniform float brushHardness;
           uniform float scatterAmount;
           uniform float visibleOnlyDepthEpsilon;
+          uniform float visibleOnlyFrontDepthEpsilon;
           uniform float visibleFacingNormalThreshold;
           uniform float visibleNormalMatchThreshold;
           uniform sampler2D strokeSourceTexture;
@@ -300,8 +314,9 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // KEEP THIS GATE. It is the other half of the approved visible-only
             // fix. The normal gate rejects back-facing triangles; this depth
             // gate rejects fragments that are not the current rendered front
-            // surface at this screen pixel. It is intentionally two-sided:
-            // "closer than depth" is not visible-surface proof at a wrap.
+            // surface at this screen pixel. The behind/back-side side remains
+            // intentionally strict: "closer than depth" is not visible-surface
+            // proof at a wrap.
             //
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
@@ -329,12 +344,16 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // This is global, not a Neighbor special case: no airbrush mode is
             // allowed to paint non-visible, back-side, hidden, or through-object
             // fragments. A painted texture fragment must depth-match the
-            // frontmost visible scene surface at the same screen pixel from both
-            // sides. Depth is a secondary guard; it must not be used alone to
-            // paint around the back of a wrap.
+            // frontmost visible scene surface at the same screen pixel. A small,
+            // bounded front-side epsilon is allowed only after the visible-normal
+            // check above agrees with the current front surface; behind/back-side
+            // fragments still use the strict epsilon and must be rejected.
+            // Do not restore the old unbounded "closer than depth is okay" shortcut.
+            float depthDelta = fragmentDepth - sceneDepth;
             if (
               sceneDepth >= 0.9999
-              || abs(fragmentDepth - sceneDepth) > visibleOnlyDepthEpsilon
+              || depthDelta > visibleOnlyDepthEpsilon
+              || depthDelta < -visibleOnlyFrontDepthEpsilon
             ) {
               discard;
             }

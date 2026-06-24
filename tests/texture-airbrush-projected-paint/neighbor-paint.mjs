@@ -1216,12 +1216,14 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   // This test is intentionally noisy: the shader must keep the visible-only
   // gates. The paint normal gate rejects non-camera-facing fragments, the
   // visible-normal buffer rejects depth-close wrap/back fragments, and the
-  // strict two-sided depth gate blocks hidden/behind/ahead fragments.
+  // strict behind-depth gate blocks hidden/behind fragments, while only a
+  // bounded front-side tolerance can smooth visible-edge quantization.
   assert.deepEqual(material.extensions, { derivatives: true });
   assert.equal(material.uniforms.useNeighborMask.value, false);
   assert.equal(material.uniforms.useNeighborNormalMask.value, false);
   assert.equal(material.uniforms.neighborNormalThreshold.value, 0);
   assert.equal(material.uniforms.visibleOnlyDepthEpsilon.value, 0.00018);
+  assert.equal(material.uniforms.visibleOnlyFrontDepthEpsilon.value, 0.0008);
   assert.equal(material.uniforms.visibleFacingNormalThreshold.value, -0.12);
   assert.equal(material.uniforms.useVisibleNormalTexture.value, false);
   assert.equal(material.uniforms.visibleNormalTexture.value, null);
@@ -1240,6 +1242,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /uniform vec3 neighborSeedNormal/);
   assert.match(material.fragmentShader, /uniform float neighborNormalThreshold/);
   assert.match(material.fragmentShader, /uniform float visibleOnlyDepthEpsilon/);
+  assert.match(material.fragmentShader, /uniform float visibleOnlyFrontDepthEpsilon/);
   assert.match(material.fragmentShader, /uniform float visibleFacingNormalThreshold/);
   assert.match(material.fragmentShader, /uniform sampler2D visibleNormalTexture/);
   assert.match(material.fragmentShader, /uniform bool useVisibleNormalTexture/);
@@ -1260,7 +1263,11 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /The airbrush paints only the visible field/);
   assert.match(material.fragmentShader, /Neighbor mode is also visible-field-only/);
   assert.match(material.fragmentShader, /non-visible side, the back of the leg/);
-  assert.match(material.fragmentShader, /abs\(fragmentDepth - sceneDepth\) > visibleOnlyDepthEpsilon/);
+  assert.match(material.fragmentShader, /float depthDelta = fragmentDepth - sceneDepth/);
+  assert.match(material.fragmentShader, /depthDelta > visibleOnlyDepthEpsilon/);
+  assert.match(material.fragmentShader, /depthDelta < -visibleOnlyFrontDepthEpsilon/);
+  assert.match(material.fragmentShader, /old unbounded "closer than depth is okay" shortcut/);
+  assert.doesNotMatch(material.fragmentShader, /abs\(fragmentDepth - sceneDepth\) > visibleOnlyDepthEpsilon/);
   assert.doesNotMatch(material.fragmentShader, /fragmentDepth > sceneDepth \+ visibleOnlyDepthEpsilon/);
   assert.doesNotMatch(material.fragmentShader, /visibleNormal\.z <= visibleFacingNormalThreshold/);
   const normalMaterial = editor.textureAirbrushVisibleSurfaceNormalMaterial();

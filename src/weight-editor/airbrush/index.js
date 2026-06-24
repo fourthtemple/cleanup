@@ -21,8 +21,8 @@ export { installTextureAirbrushNearBrushMethods } from "./uv-near.js?v=visible-s
 export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=visible-side-facing-20260623a";
 export { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 export { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-strict-depth-20260624c";
-export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=neighbor-boundary-mask-20260624a";
+export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-front-depth-20260624a";
+export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=visible-front-depth-20260624a";
 export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=neighbor-boundary-mask-20260624a";
 export {
   textureAirbrushCreateWebGpuPaintResources,
