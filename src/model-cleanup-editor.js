@@ -22,7 +22,7 @@ import { installCurveHandleMethods } from "./weight-editor/curve-handles.js?v=ad
 import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js?v=adaptive-delta-cache-20260609a";
 import { installJointConstraintMethods } from "./weight-editor/joint-constraints.js?v=joint-limit-capture-20260604a";
 import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=layer-camera-stable-frame-prewarm-20260620a";
-import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=selection-pen-perf-20260621a";
+import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=post-orbit-solid-20260624a";
 import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-replay-state-20260606a";
 import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=adaptive-context-key-20260609a";
 import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=responsive-drawer-polish-20260612a";
@@ -34,15 +34,15 @@ import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
 import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=responsive-drawer-polish-20260612a";
 import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js?v=macro-live-follow-20260608a";
 import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=layer-rename-20260621a";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=post-camera-settle-guard-20260624a";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
 import { installTexturePaintLayerMethods } from "./weight-editor/texture-layers.js?v=layer-rename-20260621a";
 import {
   installTextureAirbrushMethods,
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
-} from "./weight-editor/airbrush/index.js?v=layer-undo-fix-20260621a";
-import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=airbrush-spacing-20260618a";
+} from "./weight-editor/airbrush/index.js?v=visible-normal-20260624a";
+import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-await-airbrush-idle-20260624a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=layer-stroke-fix-20260619a";
 import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
 
@@ -354,6 +354,12 @@ class ModelCleanupEditor {
     this.tutorialMacroPlayButton = document.getElementById("tutorial-macro-play");
     this.tutorialMacroSpeedSelect = document.getElementById("tutorial-macro-speed");
     this.tutorialMacroScrubInput = document.getElementById("tutorial-macro-scrub");
+    this.tutorialMacroRecordingBar = document.getElementById("tutorial-macro-recording-bar");
+    this.tutorialMacroRecordingLabel = document.getElementById("tutorial-macro-recording-label");
+    this.tutorialMacroFloatingStopButton = document.getElementById("tutorial-macro-floating-stop");
+    this.reproMacroRecordButton = document.getElementById("repro-macro-record");
+    this.reproMacroPlayButton = document.getElementById("repro-macro-play");
+    this.reproMacroExportButton = document.getElementById("repro-macro-export");
     this.tutorialCloseButton = document.getElementById("tutorial-close");
     this.timelineCompactToggle = document.getElementById("timeline-compact-toggle");
     this.timelineHideToggle = document.getElementById("timeline-hide-toggle");

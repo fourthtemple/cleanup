@@ -7,7 +7,29 @@ import {
 } from "./projection.js";
 
 const TEXTURE_AIRBRUSH_NEIGHBOR_MASK_ATTRIBUTE = "textureAirbrushNeighborMask";
-const TEXTURE_AIRBRUSH_NEIGHBOR_VIEW_NORMAL_THRESHOLD = 0.18;
+// AIRBRUSH VISIBILITY INVARIANT:
+// DO NOT PAINT ON NON CAMERA FACING SIDES.
+// DO NOT PAINT ON NON CAMERA FACING SIDES in normal airbrush mode.
+// DO NOT PAINT ON NON CAMERA FACING SIDES in Neighbor airbrush mode.
+// DO NOT PAINT ON NON CAMERA FACING SIDES in layer airbrush mode.
+// DO NOT PAINT ON NON CAMERA FACING SIDES to fix coverage holes.
+// DO NOT PAINT ON NON CAMERA FACING SIDES after orbit/camera changes.
+// DO NOT PAINT ON NON CAMERA FACING SIDES through UV bleed offsets.
+// DO NOT PAINT ON NON CAMERA FACING SIDES through hidden/back fragments.
+// DO NOT PAINT ON NON CAMERA FACING SIDES by loosening depth checks.
+// Airbrushing must remain visible-surface only. Paint is allowed only on the
+// current rendered frontmost visible field. This applies with and without
+// Neighbor mode.
+//
+// USER-APPROVED FIX, DO NOT SIMPLIFY:
+// DO NOT PAINT ON NON CAMERA FACING SIDES.
+// DO NOT PAINT ON NON CAMERA FACING SIDES.
+// DO NOT PAINT ON NON CAMERA FACING SIDES.
+// The post-orbit coverage fix must refresh/warm projection state while keeping
+// visible-only culling intact. Do not solve coverage by painting occluded UVs,
+// by re-enabling UV bleed passes, or by adding a Neighbor-only back-side bypass.
+const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.0008;
+const TEXTURE_AIRBRUSH_NEIGHBOR_MASK_VERSION = "neighbor-mask-v2";
 
 function projectionProbeKey(point = null) {
   return `${Math.round(point?.x || 0)}:${Math.round(point?.y || 0)}`;
@@ -58,12 +80,19 @@ function projectionLayerEffectivelyEmpty(layer = null) {
   return layer.gpuTarget?.emptyTransparent === true && layer.isEmpty !== false;
 }
 
+function projectionActiveLayerPaintMode(editor = null) {
+  return editor?.activeTool === "airbrush"
+    && editor?.texturePaintLayerModeActive?.() === true
+    && editor?.texturePaintHasActivePaintLayer?.() === true;
+}
+
 function projectionStaticUniformsCurrent(projectionFrame = null, shaderMaterial = null, depthTarget = null, rect = null) {
   const state = projectionFrame?.shaderStaticUniforms;
   return Boolean(
     state
     && state.shaderMaterial === shaderMaterial
     && state.depthTexture === depthTarget?.depthTexture
+    && state.frameKey === (projectionFrame?.frameKey || "")
     && state.width === rect?.width
     && state.height === rect?.height
   );
@@ -76,9 +105,49 @@ function markProjectionStaticUniformsCurrent(projectionFrame = null, shaderMater
   projectionFrame.shaderStaticUniforms = {
     shaderMaterial,
     depthTexture: depthTarget?.depthTexture || null,
+    frameKey: projectionFrame.frameKey || "",
     width: rect?.width || 0,
     height: rect?.height || 0
   };
+}
+
+function projectionFrameUsableForCurrentPaint(editor = null, projectionFrame = null) {
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // This stale-frame guard is part of the post-orbit fix. If the camera moved,
+  // the projection/depth state must be refreshed. Do not compensate for a stale
+  // frame by letting Neighbor, layer, or normal airbrush paint behind the model.
+  if (!editor || !projectionFrame || !editor.canvas) {
+    return false;
+  }
+  const rect = editor.canvas.getBoundingClientRect?.() || null;
+  if (
+    !rect
+    || projectionFrame.rect?.width !== rect.width
+    || projectionFrame.rect?.height !== rect.height
+    || projectionFrame.rect?.left !== rect.left
+    || projectionFrame.rect?.top !== rect.top
+  ) {
+    return false;
+  }
+  if (
+    projectionActiveLayerPaintMode(editor)
+    && projectionFrame.layerMutationSerial != null
+    && projectionFrame.layerMutationSerial !== (editor.texturePaintLayerMutationSerialValue?.() ?? 0)
+  ) {
+    return false;
+  }
+  const frameKey = projectionFrame.frameKey || "";
+  if (!frameKey || typeof editor.textureAirbrushDepthCacheKey !== "function") {
+    return true;
+  }
+  const currentFrameKey = editor.textureAirbrushDepthCacheKey(rect);
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // A mismatched frame key means the current camera/depth buffer changed. The
+  // safe response is to rebuild/warm the visible-depth frame, not to reuse old
+  // visibility data and not to paint hidden-side texture fragments.
+  return !currentFrameKey || frameKey === currentFrameKey;
 }
 
 function cachedPassProbePointsFromStroke(stroke = null, options = {}) {
@@ -154,10 +223,173 @@ function cachedPassProbePointsFromStroke(stroke = null, options = {}) {
   return probes;
 }
 
+function partialLayerPassProbePointsFromStroke(stroke = null, options = {}) {
+  if (!stroke?.center) {
+    return [];
+  }
+  const radiusPixels = Math.max(1, Number(options.radiusPixels) || 1);
+  const maxCenters = radiusPixels <= 16 ? 8 : 6;
+  const maxProbes = radiusPixels <= 16 ? 18 : 26;
+  const centers = [];
+  const centerKeys = new Set();
+  const addCenter = (point) => {
+    if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y) || centers.length >= maxCenters) {
+      return;
+    }
+    const key = projectionProbeKey(point);
+    if (centerKeys.has(key)) {
+      return;
+    }
+    centerKeys.add(key);
+    centers.push({ x: point.x, y: point.y });
+  };
+  addCenter(stroke.start);
+  addCenter(stroke.center);
+  for (const segment of stroke.strokeSegments || []) {
+    addCenter(segment.start);
+    const distance = projectionPointDistance(segment.start, segment.end);
+    const step = Math.max(28, Math.min(64, radiusPixels * 3));
+    const sampleCount = Math.min(3, Math.floor(distance / step));
+    for (let index = 1; index <= sampleCount; index += 1) {
+      const ratio = index / (sampleCount + 1);
+      addCenter({
+        x: segment.start.x + (segment.end.x - segment.start.x) * ratio,
+        y: segment.start.y + (segment.end.y - segment.start.y) * ratio
+      });
+    }
+    addCenter(segment.end);
+  }
+  const probes = [];
+  const probeKeys = new Set();
+  const addProbe = (point) => {
+    if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y) || probes.length >= maxProbes) {
+      return;
+    }
+    const key = projectionProbeKey(point);
+    if (probeKeys.has(key)) {
+      return;
+    }
+    probeKeys.add(key);
+    probes.push({ x: point.x, y: point.y });
+  };
+  const offset = radiusPixels > 10
+    ? Math.min(24, Math.max(4, radiusPixels * 0.55))
+    : 0;
+  for (const center of centers) {
+    addProbe(center);
+    if (!offset) {
+      continue;
+    }
+    addProbe({ x: center.x - offset, y: center.y });
+    addProbe({ x: center.x + offset, y: center.y });
+    addProbe({ x: center.x, y: center.y - offset });
+    addProbe({ x: center.x, y: center.y + offset });
+  }
+  return probes;
+}
+
 function materialsForProjectionRecord(record = null) {
   return Array.isArray(record?.object?.material)
     ? record.object.material
     : [record?.object?.material].filter(Boolean);
+}
+
+function componentMaterialIndexesForProjectionRecord(record = null, component = null) {
+  if (!record?.geometry || !component?.size) {
+    return [];
+  }
+  const geometry = record.geometry;
+  const positionCount = Math.max(0, Math.floor(Number(geometry.attributes?.position?.count) || 0));
+  const indexArray = geometry.index?.array || null;
+  const elementCount = indexArray?.length || positionCount;
+  if (elementCount < 3) {
+    return [];
+  }
+  const groups = Array.isArray(geometry.groups) && geometry.groups.length
+    ? geometry.groups
+    : [{ start: 0, count: elementCount, materialIndex: 0 }];
+  const indexes = new Set();
+  const vertexAt = (elementIndex) => {
+    const vertexIndex = indexArray ? Number(indexArray[elementIndex]) : elementIndex;
+    return Number.isInteger(vertexIndex) ? vertexIndex : -1;
+  };
+  for (const group of groups) {
+    const start = Math.max(0, Math.floor(Number(group?.start) || 0));
+    const count = Math.max(0, Math.floor(Number(group?.count) || 0));
+    const end = Math.min(elementCount, start + count);
+    const materialIndex = Math.max(0, Math.floor(Number(group?.materialIndex) || 0));
+    for (let elementIndex = start; elementIndex + 2 < end; elementIndex += 3) {
+      if (
+        component.has(vertexAt(elementIndex))
+        || component.has(vertexAt(elementIndex + 1))
+        || component.has(vertexAt(elementIndex + 2))
+      ) {
+        indexes.add(materialIndex);
+        break;
+      }
+    }
+  }
+  return [...indexes].sort((left, right) => left - right);
+}
+
+function validGeometryVertexIndex(vertexIndex = null, vertexCount = 0) {
+  return Number.isInteger(vertexIndex) && vertexIndex >= 0 && vertexIndex < vertexCount;
+}
+
+function markNeighborMaskVertex(editor = null, seed = null, record = null, values = null, vertexIndex = null, vertexCount = 0) {
+  if (!values || !validGeometryVertexIndex(vertexIndex, vertexCount)) {
+    return;
+  }
+  values[vertexIndex] = 1;
+  for (const linkedIndex of editor?.textureAirbrushNeighborLinkedVertices?.(record, vertexIndex) || []) {
+    if (validGeometryVertexIndex(linkedIndex, vertexCount)) {
+      values[linkedIndex] = 1;
+    }
+  }
+}
+
+function geometryVertexAtElement(geometry = null, elementIndex = 0) {
+  const indexArray = geometry?.index?.array || null;
+  const vertexIndex = indexArray ? Number(indexArray[elementIndex]) : elementIndex;
+  return Number.isInteger(vertexIndex) ? vertexIndex : -1;
+}
+
+function completeNeighborMaskEdgeLinkedFaces(editor = null, seed = null, record = null, values = null, vertexCount = 0) {
+  const geometry = record?.geometry || null;
+  const elementCount = geometry?.index?.array?.length || vertexCount;
+  if (!geometry || !seed?.component?.size || !values || elementCount < 3) {
+    return false;
+  }
+  const groups = Array.isArray(geometry.groups) && geometry.groups.length
+    ? geometry.groups
+    : [{ start: 0, count: elementCount, materialIndex: 0 }];
+  let changed = false;
+  for (const group of groups) {
+    const start = Math.max(0, Math.floor(Number(group?.start) || 0));
+    const count = Math.max(0, Math.floor(Number(group?.count) || 0));
+    const end = Math.min(elementCount, start + count);
+    for (let elementIndex = start; elementIndex + 2 < end; elementIndex += 3) {
+      const vertices = [
+        geometryVertexAtElement(geometry, elementIndex),
+        geometryVertexAtElement(geometry, elementIndex + 1),
+        geometryVertexAtElement(geometry, elementIndex + 2)
+      ].filter((vertexIndex) => validGeometryVertexIndex(vertexIndex, vertexCount));
+      if (vertices.length !== 3) {
+        continue;
+      }
+      const markedCount = vertices.reduce((countMarked, vertexIndex) => countMarked + (values[vertexIndex] >= 0.5 ? 1 : 0), 0);
+      if (markedCount < 2 || markedCount === 3) {
+        continue;
+      }
+      for (const vertexIndex of vertices) {
+        if (values[vertexIndex] < 0.5) {
+          changed = true;
+        }
+        markNeighborMaskVertex(editor, seed, record, values, vertexIndex, vertexCount);
+      }
+    }
+  }
+  return changed;
 }
 
 function projectionPaintPassKey(recordIndices = null, paintRecords = [], record = null, materialIndex = 0, material = null) {
@@ -184,8 +416,7 @@ function activeLayerGpuTargetForProjection(editor = null, material = null) {
   if (
     !editor
     || !material
-    || editor.activeTool !== "airbrush"
-    || editor.texturePaintLayerModeActive?.() !== true
+    || !projectionActiveLayerPaintMode(editor)
   ) {
     return null;
   }
@@ -213,7 +444,7 @@ function activeLayerGpuTargetForProjection(editor = null, material = null) {
 }
 
 function projectionSeedTargetEntryForMaterial(editor = null, material = null) {
-  if (editor?.activeTool === "airbrush" && editor.texturePaintLayerModeActive?.() === true) {
+  if (projectionActiveLayerPaintMode(editor)) {
     return activeLayerGpuTargetForProjection(editor, material);
   }
   return material?.userData?.textureAirbrushGpuTarget || null;
@@ -225,8 +456,7 @@ function shouldSeedProjectionProxyForPaintPass(editor = null, targetEntry = null
     && targetEntry?.layerMode === true
     && targetEntry?.target?.texture
     && material
-    && editor.activeTool === "airbrush"
-    && editor.texturePaintLayerModeActive?.() === true
+    && projectionActiveLayerPaintMode(editor)
   );
 }
 
@@ -250,6 +480,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       }
       geometry.userData ||= {};
       const cacheKey = [
+        TEXTURE_AIRBRUSH_NEIGHBOR_MASK_VERSION,
         seed.key || this.textureAirbrushNeighborSeedKey?.(seed) || "neighbor",
         geometry.uuid || geometry.id || "geometry",
         vertexCount
@@ -268,14 +499,11 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         : new Float32Array(vertexCount);
       values.fill(0);
       for (const vertexIndex of seed.component) {
-        if (Number.isInteger(vertexIndex) && vertexIndex >= 0 && vertexIndex < vertexCount) {
-          values[vertexIndex] = 1;
-        }
-        for (const linkedIndex of this.textureAirbrushNeighborLinkedVertices?.(record, vertexIndex) || []) {
-          if (Number.isInteger(linkedIndex) && linkedIndex >= 0 && linkedIndex < vertexCount) {
-            values[linkedIndex] = 1;
-          }
-        }
+        markNeighborMaskVertex(this, seed, record, values, vertexIndex, vertexCount);
+      }
+      let guard = 0;
+      while (guard < 8 && completeNeighborMaskEdgeLinkedFaces(this, seed, record, values, vertexCount)) {
+        guard += 1;
       }
 
       const attribute = cached?.attribute?.array === values
@@ -308,7 +536,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         model: this.model,
         rect,
         frameKey,
-        layerMutationSerial: this.texturePaintLayerModeActive?.() === true
+        layerMutationSerial: projectionActiveLayerPaintMode(this)
           ? this.texturePaintLayerMutationSerialValue?.() ?? 0
           : null,
         paintRecords,
@@ -479,7 +707,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         return false;
       }
       if (
-        this.texturePaintLayerModeActive?.() === true
+        projectionActiveLayerPaintMode(this)
         && projectionFrame.layerMutationSerial !== (this.texturePaintLayerMutationSerialValue?.() ?? 0)
       ) {
         return false;
@@ -532,10 +760,23 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       if (!this.renderer || !event || !this.canvas || !this.camera || !this.model) {
         return 0;
       }
-      const projectionFrame = options.projectionFrame?.canvas === this.canvas
+      const suppliedProjectionFrame = options.projectionFrame?.canvas === this.canvas
         && options.projectionFrame?.camera === this.camera
         && options.projectionFrame?.model === this.model
         ? options.projectionFrame
+        : null;
+      const warmedLiveProjectionFrame = !suppliedProjectionFrame
+        && (
+          options.neighborProjectionRewarmed === true
+          || options.postCameraProjectionRewarmed === true
+        )
+        && this.textureAirbrushLiveProjectionFrameCurrent?.(this.textureAirbrushLiveProjectionFrameState) === true
+        ? this.textureAirbrushLiveProjectionFrameState
+        : null;
+      const candidateProjectionFrame = suppliedProjectionFrame || warmedLiveProjectionFrame;
+      const projectionFrame = candidateProjectionFrame
+        && projectionFrameUsableForCurrentPaint(this, candidateProjectionFrame)
+        ? candidateProjectionFrame
         : null;
       const rect = projectionFrame?.rect || this.canvas.getBoundingClientRect();
       const paintRecords = projectionFrame?.paintRecords || (this.textureAirbrushRecords?.() || this.paintRecords || []).filter((record) => record?.object);
@@ -551,6 +792,12 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       const recordIndices = projectionFrame?.recordIndices || null;
       const probePaintPassCache = projectionFrame?.probePaintPassCache || null;
       const neighborPaintSeed = options.neighborPaintSeed || null;
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // Airbrush visibility rule: every hit/pass discovered below still has to
+      // pass the shader's camera-facing visible-depth match. Discovery must
+      // never become permission to paint non-visible or back-side fragments.
       const neighborAllowsHit = (record, hit, material = null, materialIndex = null) => (
         this.textureAirbrushNeighborHitAllowed?.(
           neighborPaintSeed,
@@ -590,6 +837,11 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         this.pointer.y = -(point.y / rect.height) * 2 + 1;
         this.raycaster.setFromCamera(this.pointer, this.camera);
         const intersections = this.raycaster.intersectObjects(paintObjects, false);
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Raycasts choose candidate front hits only. They do not override the
+        // global airbrush rule: only camera-visible, frontmost-depth-matching
+        // fragments may receive paint.
         for (const hit of textureAirbrushFrontIntersections(intersections)) {
           const record = recordByObject.get(hit.object);
           const materialIndex = hit.face?.materialIndex ?? 0;
@@ -678,7 +930,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         if (paintPasses.has(key)) {
           return paintPasses.get(key);
         }
-        const layerMode = this.activeTool === "airbrush" && this.texturePaintLayerModeActive?.() === true;
+        const layerMode = projectionActiveLayerPaintMode(this);
         const targetEntry = layerMode
           ? projectionSeedTargetEntryForMaterial(this, material)
             || this.textureAirbrushGpuTargetForMaterial(material)
@@ -705,15 +957,34 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         return pass;
       };
       if (neighborPaintSeed?.enabled && neighborPaintSeed.component?.size) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Neighbor mode may add the connected material passes for the seeded
+        // surface island, but those passes still go through the same visible
+        // depth buffer gate. Do not use this broad pass list to paint hidden
+        // or back-side fragments.
+        // Neighbor mode is not permission to paint the non-camera-facing side.
         const seedMaterialIndex = Number.isInteger(neighborPaintSeed.materialIndex)
           ? neighborPaintSeed.materialIndex
           : 0;
-        const seedMaterial = neighborPaintSeed.material
-          || materialsForProjectionRecord(neighborPaintSeed.record)[seedMaterialIndex]
-          || null;
-        const seedPass = addPaintPass(neighborPaintSeed.record, seedMaterialIndex, seedMaterial);
-        if (seedPass && neighborAllowsPass(seedPass)) {
-          paintPasses.set(seedPass.key, seedPass);
+        const materials = materialsForProjectionRecord(neighborPaintSeed.record);
+        const componentMaterialIndexes = componentMaterialIndexesForProjectionRecord(
+          neighborPaintSeed.record,
+          neighborPaintSeed.component
+        );
+        const seedIndexes = [
+          seedMaterialIndex,
+          ...componentMaterialIndexes
+        ].filter((materialIndex, index, list) => Number.isInteger(materialIndex) && list.indexOf(materialIndex) === index);
+        for (const materialIndex of seedIndexes) {
+          const material = materialIndex === seedMaterialIndex && neighborPaintSeed.material
+            ? neighborPaintSeed.material
+            : materials[materialIndex] || null;
+          const seedPass = addPaintPass(neighborPaintSeed.record, materialIndex, material);
+          if (seedPass && neighborAllowsPass(seedPass)) {
+            paintPasses.set(seedPass.key, seedPass);
+          }
         }
       }
       const cachedPasses = projectionFrame?.paintPassCache
@@ -729,12 +1000,25 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       const cachedPassCount = (paintPassCacheComplete || canReusePartialLayerPasses)
         ? cachedPasses.length
         : 0;
+      const partialLayerPassDiscovery = options.discoverPartialLayerPasses === true
+        && canReusePartialLayerPasses
+        && !paintPassCacheComplete;
+      const cachedProbeStopCount = paintPassCacheComplete ? cachedPasses.length : 0;
       const spacingPercent = Number(options.spacing);
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // After orbit, the first Neighbor batch may need extra visible raycast
+      // pass discovery so every current-camera material pass is warm. These
+      // probes only find candidate visible hits; the shader below still rejects
+      // hidden, back-side, through-object, and non-front-depth fragments.
+      const postCameraNeighborPassDiscovery = neighborPaintSeed?.enabled === true
+        && options.neighborProjectionRewarmed === true;
+      const canReusePostCameraNeighborCachedPasses = postCameraNeighborPassDiscovery
+        && paintPassCacheComplete;
       const shouldRenderCachedContinuousPasses = Number.isFinite(spacingPercent)
         && spacingPercent <= 10
         && cachedPassCount
         && options.reusePaintPasses !== false
-        && canReuseNeighborCachedPasses
+        && (canReuseNeighborCachedPasses || canReusePostCameraNeighborCachedPasses)
         && (
           cachedPassCount <= 1
           || hasLayerCachedPasses !== true
@@ -745,15 +1029,23 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           paintPasses.set(pass.key, pass);
         }
       }
-      const probes = paintPasses.size
+      const shouldProbeForPaintPasses = !paintPasses.size
+        || partialLayerPassDiscovery
+        || postCameraNeighborPassDiscovery;
+      const probes = !shouldProbeForPaintPasses
         ? []
-        : cachedPassCount && options.reusePaintPasses !== false
-        ? cachedPassProbePointsFromStroke(stroke, { radiusPixels: brushRadius, cachedPassCount })
-        : textureAirbrushProbePointsFromStroke(stroke, brushRadius);
+        : postCameraNeighborPassDiscovery
+          ? textureAirbrushProbePointsFromStroke(stroke, brushRadius)
+          : partialLayerPassDiscovery
+          ? partialLayerPassProbePointsFromStroke(stroke, { radiusPixels: brushRadius })
+          : cachedPassCount && options.reusePaintPasses !== false
+            ? cachedPassProbePointsFromStroke(stroke, { radiusPixels: brushRadius, cachedPassCount })
+            : textureAirbrushProbePointsFromStroke(stroke, brushRadius);
       const visitedProbeKeys = new Set();
+      const forceFreshPostCameraNeighborProbes = postCameraNeighborPassDiscovery;
       const projectProbePoints = (candidateProbes = []) => {
         for (const probe of candidateProbes) {
-          if (cachedPassCount && paintPasses.size >= cachedPassCount) {
+          if (cachedProbeStopCount && paintPasses.size >= cachedProbeStopCount) {
             break;
           }
           if (!textureAirbrushPointInRect(probe, rect)) {
@@ -770,9 +1062,16 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
                 paintPasses.set(pass.key, pass);
               }
             }
-            continue;
+            if (!forceFreshPostCameraNeighborProbes) {
+              continue;
+            }
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // After orbit/camera movement this cache entry can be incomplete for
+            // the current visible surface. Keep any cached visible pass, but do
+            // a fresh frontmost raycast below; never fill the gap by painting
+            // hidden, behind, or non-camera-facing fragments.
           }
-          const cachedLayerHitPasses = canReuseNeighborCachedPasses
+          const cachedLayerHitPasses = canReuseNeighborCachedPasses && !forceFreshPostCameraNeighborProbes
             ? this.textureAirbrushCachedLayerHitPassesForProbe?.(
                 projectionFrame,
                 probe,
@@ -793,6 +1092,12 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           this.pointer.y = -(probe.y / rect.height) * 2 + 1;
           this.raycaster.setFromCamera(this.pointer, this.camera);
           const intersections = this.raycaster.intersectObjects(paintObjects, false);
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // Probes may find candidate materials only. The render shader below
+          // remains the final visible-surface authority; no probe may authorize
+          // painting hidden, through-object, or non-camera-facing fragments.
           for (const hit of textureAirbrushFrontIntersections(intersections)) {
             const record = recordByObject.get(hit.object);
             const materialIndex = hit.face?.materialIndex ?? 0;
@@ -807,7 +1112,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
             }
           }
           probePaintPassCache?.set(probeKey, probePasses);
-          if (cachedPassCount && paintPasses.size >= cachedPassCount) {
+          if (cachedProbeStopCount && paintPasses.size >= cachedProbeStopCount) {
             break;
           }
         }
@@ -827,9 +1132,19 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
 
       const shaderMaterial = this.textureAirbrushBrushShaderMaterial();
       if (!projectionStaticUniformsCurrent(projectionFrame, shaderMaterial, depthTarget, rect)) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // These static uniforms bind the paint camera and depth buffer used by
+        // the shader's visible-only gates. After orbit/camera movement they must
+        // describe the current view, not an old view and not a hidden-side pass.
         shaderMaterial.uniforms.paintViewMatrix.value.copy(this.camera.matrixWorldInverse);
         shaderMaterial.uniforms.paintProjectionMatrix.value.copy(this.camera.projectionMatrix);
         shaderMaterial.uniforms.depthTexture.value = depthTarget.depthTexture;
+        if (shaderMaterial.uniforms.visibleNormalTexture) {
+          shaderMaterial.uniforms.visibleNormalTexture.value = depthTarget.texture || null;
+        }
+        if (shaderMaterial.uniforms.useVisibleNormalTexture) {
+          shaderMaterial.uniforms.useVisibleNormalTexture.value = Boolean(depthTarget.texture);
+        }
         shaderMaterial.uniforms.viewportSize.value.set(rect.width, rect.height);
         markProjectionStaticUniformsCurrent(projectionFrame, shaderMaterial, depthTarget, rect);
       }
@@ -853,8 +1168,25 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       shaderMaterial.uniforms.brushOpacity.value = options.opacity ?? this.textureAirbrushOpacity?.() ?? 0.42;
       shaderMaterial.uniforms.brushHardness.value = options.hardness ?? this.textureAirbrushHardness?.() ?? 0.35;
       shaderMaterial.uniforms.scatterAmount.value = options.scatter ?? this.textureAirbrushScatter?.() ?? 0.35;
-      shaderMaterial.uniforms.depthEpsilon.value = options.depthEpsilon
-        ?? Math.max(0.01, Math.min(0.035, this.textureBrushRadiusValue() * 0.55));
+      if (shaderMaterial.uniforms.visibleOnlyDepthEpsilon) {
+        const visibleOnlyDepthEpsilon = Number(options.visibleOnlyDepthEpsilon);
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // KEEP THIS STRICT. It is paired with the shader's camera-facing normal
+        // gate. If the brush leaves holes after orbit, warm/refresh the frame;
+        // do not enlarge this to paint the back of the mesh.
+        //
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // All airbrush modes are visible-surface-only. Never raise this to
+        // cover holes by painting the non-visible side, back side, or any
+        // surface that is not camera-facing/frontmost in the depth buffer.
+        shaderMaterial.uniforms.visibleOnlyDepthEpsilon.value = Number.isFinite(visibleOnlyDepthEpsilon)
+          ? Math.max(0.0001, Math.min(0.002, visibleOnlyDepthEpsilon))
+          : TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON;
+      }
       shaderMaterial.needsUpdate = false;
 
       const previousTarget = this.renderer.getRenderTarget();
@@ -914,7 +1246,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           uniforms.useNeighborMask.value = useNeighborMask;
         }
         if (uniforms.useNeighborNormalMask) {
-          uniforms.useNeighborNormalMask.value = Boolean(neighborSeedNormal);
+          uniforms.useNeighborNormalMask.value = Boolean(neighborSeedNormal && !neighborPaintSeed?.component?.size);
         }
         if (uniforms.neighborSeedNormal && neighborSeedNormal) {
           uniforms.neighborSeedNormal.value.set(
@@ -926,15 +1258,15 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         if (uniforms.neighborNormalThreshold) {
           uniforms.neighborNormalThreshold.value = 0;
         }
-        if (uniforms.neighborViewNormalThreshold) {
-          const viewThreshold = Number(options.neighborViewNormalThreshold);
-          uniforms.neighborViewNormalThreshold.value = Number.isFinite(viewThreshold)
-            ? Math.max(0, Math.min(1, viewThreshold))
-            : TEXTURE_AIRBRUSH_NEIGHBOR_VIEW_NORMAL_THRESHOLD;
-        }
-        if (uniforms.paintOccludedNeighborFragments) {
-          uniforms.paintOccludedNeighborFragments.value = useNeighborMask;
-        }
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Neighbor mode may expand the connected paint island, but it must
+        // stay visible-surface only. There is intentionally no shader uniform
+        // that allows Neighbor to paint occluded, hidden, through-object, or
+        // back-side fragments.
+        // Normal airbrush is also visible-surface only; do not add a bypass
+        // here for either Neighbor or non-Neighbor painting.
         shaderMaterial.blending = useStrokeSource
           ? THREE.NoBlending
           : THREE.NormalBlending;
@@ -953,7 +1285,28 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           ? this.texturePaintLiveCompositeTargetForLayerGpuPaint?.(pass.material, pass.targetEntry)
             || this.texturePaintLiveUnderlayTargetForLayerGpuPaint?.(pass.material, pass.targetEntry)
           : null;
-        const bleedOffsets = this.textureAirbrushGpuUvBleedOffsets?.(pass.targetEntry, brushRadius) || [new THREE.Vector2()];
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // This is the exact place previous "coverage" fixes went wrong:
+        // allowing extra UV offsets makes paint appear smoother by touching UVs
+        // that were not the rendered visible surface. That is forbidden.
+        //
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Do not call textureAirbrushGpuUvBleedOffsets() here for live paint
+        // unless every offset is proven by the same current camera-facing normal
+        // and frontmost-depth checks. Today, the safe approved behavior is one
+        // exact UV pass only.
+        //
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // Airbrush paint must not bleed into UV texels for a non-visible or
+        // non-camera-facing side. Render only the exact UV pass; do not use
+        // offset UV bleed as a shortcut for coverage.
+        const bleedOffsets = [new THREE.Vector2()];
         for (const offset of bleedOffsets) {
           shaderMaterial.uniforms.uvOffset.value.copy(offset);
           this.renderer.setRenderTarget(pass.targetEntry.target);
@@ -964,7 +1317,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
             && liveCompositeTarget.skipLiveBrushRender !== true
           ) {
             const layerOpacity = Number(liveCompositeTarget.activeLayerOpacity);
-            const shouldVisualBlendLivePatch = Number.isFinite(layerOpacity) && layerOpacity >= 0 && layerOpacity < 0.9999;
+            const shouldVisualBlendLivePatch = options.erase !== true;
             const previousBrushOpacity = shaderMaterial.uniforms.brushOpacity.value;
             const previousUseStrokeSourceTexture = shaderMaterial.uniforms.useStrokeSourceTexture?.value;
             const previousUseCurrentTargetTexture = shaderMaterial.uniforms.useCurrentTargetTexture?.value;
@@ -1023,9 +1376,13 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           : false;
         this.markTexturePaintGpuTargetMutated?.(pass.targetEntry);
         if (pass.targetEntry?.layerMode === true) {
+          const forceLayerDisplayComposite = options.forceLayerDisplayComposite === true;
           const forceDisplayCompositeRequested = pass.targetEntry.forceDisplayCompositeOnce === true;
-          const forceDisplayComposite = forceDisplayCompositeRequested
-            && liveCompositeTarget?.shaderComposite !== true;
+          const forceDisplayComposite = forceLayerDisplayComposite
+            || (
+              forceDisplayCompositeRequested
+              && liveCompositeTarget?.shaderComposite !== true
+            );
           if (forceDisplayCompositeRequested) {
             pass.targetEntry.forceDisplayCompositeOnce = false;
           }
@@ -1045,14 +1402,20 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           if (firstPaintDisplayComposite) {
             firstPaintDisplayMaterials.add(pass.material);
           }
-          const liveBakedLayerDisplayRefreshed = !firstPaintDisplayComposite
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // A forced display composite is only a viewport/display catch-up for
+          // already visible-surface-gated paint. It must not change hit/pass
+          // discovery or the shader's visible-depth/facing discard tests.
+          const liveBakedLayerDisplayRefreshed = !forceDisplayComposite
+            && !firstPaintDisplayComposite
             && liveCompositeTarget?.shaderComposite === true
             && this.texturePaintRefreshLiveBakedCompositeForLayerGpuPaint?.(
               pass.material,
               pass.targetEntry,
               liveCompositeTarget
             ) === true;
-          const fastLayerDisplayRefreshed = !liveBakedLayerDisplayRefreshed
+          const fastLayerDisplayRefreshed = !forceDisplayComposite
+            && !liveBakedLayerDisplayRefreshed
             && !firstPaintDisplayComposite
             && this.texturePaintFastMaterialLayerDisplay?.(pass.material, {
             changedLayer: pass.targetEntry.layer || null
@@ -1126,9 +1489,6 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       }
       if (shaderMaterial.uniforms.useNeighborNormalMask) {
         shaderMaterial.uniforms.useNeighborNormalMask.value = false;
-      }
-      if (shaderMaterial.uniforms.paintOccludedNeighborFragments) {
-        shaderMaterial.uniforms.paintOccludedNeighborFragments.value = false;
       }
       shaderMaterial.blending = previousShaderBlending;
       shaderMaterial.transparent = previousShaderTransparent;

@@ -1,5 +1,5 @@
-import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=layer-undo-fix-20260621a";
-import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=layer-undo-fix-20260621a";
+import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-normal-20260624a";
+import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=visible-normal-20260624a";
 
 const TEXTURE_AIRBRUSH_LAYER_HIT_SEED_MAX_AGE_MS = 10000;
 
@@ -41,9 +41,25 @@ function texturePaintLayerContributesVisiblePaint(layer = null) {
   );
 }
 
+function textureAirbrushActiveLayerPaintMode(editor = null) {
+  return editor?.activeTool === "airbrush"
+    && editor?.texturePaintLayerModeActive?.() === true
+    && editor?.texturePaintHasActivePaintLayer?.() === true;
+}
+
 function texturePaintLayerTextureIdentity(layer = null) {
   const texture = layer?.gpuTarget?.target?.texture || layer?.gpuLayerTexture || null;
   return texture?.uuid || texture?.name || "";
+}
+
+function stableDepthCacheNumber(value = 0, decimals = 7) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return Number(0).toFixed(decimals);
+  }
+  const scale = 10 ** decimals;
+  const rounded = Math.round(number * scale) / scale;
+  return (Object.is(rounded, -0) ? 0 : rounded).toFixed(decimals);
 }
 
 function texturePaintVisibleLowerLayers(targetEntry = null) {
@@ -1527,8 +1543,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
 
     textureAirbrushRememberLayerHitSeed(event = null, hit = null, material = null) {
       if (
-        this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        !textureAirbrushActiveLayerPaintMode(this)
         || !event
         || !hit?.record
         || !material
@@ -1574,8 +1589,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       const fallback = this.texturePaintActiveMaterial || this.textureAirbrushFirstPaintableMaterial?.()?.material || null;
       const seed = this.textureAirbrushCachedLayerHitSeed || null;
       if (
-        this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        !textureAirbrushActiveLayerPaintMode(this)
         || !seed?.material
         || seed.layerMutationSerial !== (this.texturePaintLayerMutationSerialValue?.() ?? 0)
         || seed.cameraSerial !== (this.textureAirbrushCameraPrewarmSerial || 0)
@@ -1595,8 +1609,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       const seed = this.textureAirbrushCachedLayerHitSeed || null;
       if (
         !seed
-        || this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        || !textureAirbrushActiveLayerPaintMode(this)
         || seed.layerMutationSerial !== (this.texturePaintLayerMutationSerialValue?.() ?? 0)
         || seed.cameraSerial !== (this.textureAirbrushCameraPrewarmSerial || 0)
         || !this.canvas?.getBoundingClientRect
@@ -1629,8 +1642,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       const seed = this.textureAirbrushCachedLayerHitSeed || null;
       if (
         !seed
-        || this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        || !textureAirbrushActiveLayerPaintMode(this)
         || !projectionFrame?.paintPassCache
         || !projectionFrame?.probePaintPassCache
         || !Number.isFinite(probe?.x)
@@ -1686,7 +1698,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
         return false;
       }
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-      const layerMode = this.activeTool === "airbrush" && this.texturePaintLayerModeActive?.() === true;
+      const layerMode = textureAirbrushActiveLayerPaintMode(this);
       const layerHitMaterial = layerMode && hit?.record
         ? this.clonePaintMaterialForHit?.(hit.record, hit.hit) || null
         : null;
@@ -1772,8 +1784,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
 
     textureAirbrushActiveLayerProjectionFrameNeedsSeed(material = null) {
       if (
-        this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        !textureAirbrushActiveLayerPaintMode(this)
       ) {
         return false;
       }
@@ -1803,8 +1814,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
 
     textureAirbrushLayerProjectionFrameNeedsSeed(event = null, hit = null, material = null) {
       if (
-        this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        !textureAirbrushActiveLayerPaintMode(this)
         || !event
         || !hit?.record
         || !material
@@ -1839,7 +1849,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
     },
 
     textureAirbrushLayerPrewarmNeeded(material = null, options = {}) {
-      if (this.activeTool !== "airbrush" || this.texturePaintLayerModeActive?.() !== true) {
+      if (!textureAirbrushActiveLayerPaintMode(this)) {
         return false;
       }
       const paintables = this.textureAirbrushPaintableMaterials?.() || [];
@@ -1917,7 +1927,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
     },
 
     textureAirbrushLayerTargetReadyForLiveReset(material = null) {
-      if (this.activeTool !== "airbrush" || this.texturePaintLayerModeActive?.() !== true) {
+      if (!textureAirbrushActiveLayerPaintMode(this)) {
         return false;
       }
       const activeMaterial = this.textureAirbrushPreferredLayerMaterial?.(material)
@@ -1958,7 +1968,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
     },
 
     textureAirbrushLayerPaintTargetReadyForLiveReset(material = null) {
-      if (this.activeTool !== "airbrush" || this.texturePaintLayerModeActive?.() !== true) {
+      if (!textureAirbrushActiveLayerPaintMode(this)) {
         return false;
       }
       const activeMaterial = this.textureAirbrushPreferredLayerMaterial?.(material)
@@ -2060,7 +2070,16 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
 
     textureAirbrushPrewarmAllWebGlMaterials(options = {}) {
       const paintables = this.textureAirbrushPaintableMaterials?.() || [];
-      const limit = Math.max(1, Number(options.limit) || 12);
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // Broad post-camera/Neighbor rewarm must make every material slot ready
+      // before the first stroke, but this is only shader/proxy warming. It must
+      // never broaden paint beyond the current visible-depth/camera-facing
+      // gates in the airbrush shader.
+      const limit = options.limit !== undefined
+        ? Math.max(1, Number(options.limit) || 1)
+        : options.all === true
+          ? Math.max(1, paintables.length)
+          : 12;
       let warmed = 0;
       for (const paintable of paintables.slice(0, limit)) {
         if (this.textureAirbrushPrewarmWebGlMaterial?.(
@@ -2149,7 +2168,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       }
       const paintable = (this.textureAirbrushPaintableMaterials?.() || [])
         .find((candidate) => candidate.material === activeMaterial);
-      if (options.all !== false && this.activeTool === "airbrush" && this.texturePaintLayerModeActive?.()) {
+      if (options.all !== false && textureAirbrushActiveLayerPaintMode(this)) {
         const prewarmOptions = {
           material: activeMaterial,
           activeOnly: options.all !== true,
@@ -2200,8 +2219,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       if (
         !activeMaterial
         || !this.renderer
-        || this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        || !textureAirbrushActiveLayerPaintMode(this)
       ) {
         return false;
       }
@@ -2238,8 +2256,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
         || !this.canvas
         || !this.camera
         || !this.model
-        || this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        || !textureAirbrushActiveLayerPaintMode(this)
       ) {
         return false;
       }
@@ -2270,8 +2287,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
 
     prewarmTextureAirbrushLayerResetStroke(payloadOrMaterial = null, materialOverride = null) {
       if (
-        this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        !textureAirbrushActiveLayerPaintMode(this)
         || !this.renderer
         || !this.model
       ) {
@@ -2354,8 +2370,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       if (
         !activeMaterial
         || !this.renderer
-        || this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        || !textureAirbrushActiveLayerPaintMode(this)
         || this.texturePaintStrokeUndo
       ) {
         return false;
@@ -2373,8 +2388,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
     scheduleTextureAirbrushPostStrokePrewarm() {
       if (
         this.textureAirbrushPostStrokePrewarmPending
-        || this.activeTool !== "airbrush"
-        || this.texturePaintLayerModeActive?.() !== true
+        || !textureAirbrushActiveLayerPaintMode(this)
         || !this.renderer
       ) {
         return false;
@@ -2401,8 +2415,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
           return;
         }
         if (
-          this.activeTool !== "airbrush"
-          || this.texturePaintLayerModeActive?.() !== true
+          !textureAirbrushActiveLayerPaintMode(this)
         ) {
           return;
         }
@@ -2417,23 +2430,32 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       }
       this.textureAirbrushBrushShaderMaterial?.();
       this.textureAirbrushEnsureCopyScene?.();
-      const paintHit = hit || (event ? this.texturePaintHitForEvent?.(event, "airbrush") : null);
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // Post-orbit recovery is a warming problem, not permission to paint
+      // through the model. When a caller asks for all:true, keep the prewarm
+      // broad even if there is a cursor hit; otherwise a rotated Neighbor reset
+      // can warm only the first-hit material and leave the next visible surface
+      // spotty/cold.
+      const broadPrewarm = options.all === true;
+      const paintHit = broadPrewarm
+        ? null
+        : hit || (event ? this.texturePaintHitForEvent?.(event, "airbrush") : null);
       const record = paintHit?.record;
       const materialIndex = paintHit?.hit?.face?.materialIndex ?? 0;
       const material = record ? this.clonePaintMaterialForHit?.(record, paintHit.hit) : null;
       let warmed = false;
-      const layerMode = this.texturePaintLayerModeActive?.() === true;
+      const layerMode = textureAirbrushActiveLayerPaintMode(this);
       if (!layerMode) {
         this.textureAirbrushRenderDepthTarget?.();
       }
       if (layerMode) {
-        warmed = record && material
+        warmed = !broadPrewarm && record && material
           ? this.textureAirbrushPrewarmLayerMaterial?.(record, materialIndex, material, options) || false
           : (this.textureAirbrushPrewarmAllLayerMaterials?.({
               ...options,
-              activeOnly: options.all !== true
+              activeOnly: !broadPrewarm
             }) || 0) > 0;
-      } else if (record && material) {
+      } else if (!broadPrewarm && record && material) {
         this.textureAirbrushPrewarmWebGlMaterial?.(record, materialIndex, material);
         this.textureAirbrushPrewarmWebGpuFromHit?.(paintHit);
         warmed = true;
@@ -2509,7 +2531,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
         depthBuffer: true,
         stencilBuffer: false
       });
-      target.texture.name = "texture airbrush screen color";
+      target.texture.name = "texture airbrush visible surface normals";
       target.depthTexture = new THREE.DepthTexture(width, height);
       target.depthTexture.name = "texture airbrush screen depth";
       target.depthTexture.format = THREE.DepthFormat;
@@ -2522,6 +2544,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       if (!rect || !this.camera || !this.renderer) {
         return "";
       }
+      this.camera.updateMatrixWorld?.(true);
       const inverseElements = this.camera.matrixWorldInverse?.elements;
       const projectionElements = this.camera.projectionMatrix?.elements;
       if (
@@ -2536,11 +2559,11 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       const matrixKey = [
         ...inverseElements,
         ...projectionElements
-      ].map((value) => Number(value).toFixed(4)).join(",");
+      ].map((value) => stableDepthCacheNumber(value, 7)).join(",");
       return [
         Math.round(rect.width * pixelRatio),
         Math.round(rect.height * pixelRatio),
-        Number(this.progress || 0).toFixed(5),
+        stableDepthCacheNumber(this.progress || 0, 5),
         matrixKey
       ].join(":");
     },
@@ -2550,18 +2573,42 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       if (!depthTarget || !this.renderer || !this.scene || !this.camera) {
         return null;
       }
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // The depth buffer is the visible-surface authority for every airbrush
+      // mode. Before reusing or refreshing it after an orbit/camera change,
+      // force the scene/model/camera matrices current; stale depth is a
+      // coverage bug, and the fix is fresh visible depth, never hidden-side
+      // paint.
+      this.model?.updateMatrixWorld?.(true);
+      this.scene?.updateMatrixWorld?.(true);
+      this.camera?.updateMatrixWorld?.(true);
+      this.refreshSkinnedRaycastBounds?.();
       const key = this.textureAirbrushDepthCacheKey();
       if (options.reuse !== false && key && this.textureAirbrushDepthTargetKey === key) {
         return depthTarget;
       }
       const previousTarget = this.renderer.getRenderTarget();
       const previousAutoClear = this.renderer.autoClear;
+      const previousOverrideMaterial = this.scene.overrideMaterial || null;
+      const normalMaterial = this.textureAirbrushVisibleSurfaceNormalMaterial?.() || null;
       this.renderer.setRenderTarget(depthTarget);
       this.renderer.autoClear = true;
       this.renderer.clear(true, true, true);
-      this.renderer.render(this.scene, this.camera);
-      this.renderer.setRenderTarget(previousTarget);
-      this.renderer.autoClear = previousAutoClear;
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // The color attachment stores front-visible camera-facing normals, while
+      // the depth attachment stores the matching front-visible depth. The paint
+      // shader uses both so a depth-close side/back fragment cannot masquerade
+      // as the visible surface.
+      if (normalMaterial) {
+        this.scene.overrideMaterial = normalMaterial;
+      }
+      try {
+        this.renderer.render(this.scene, this.camera);
+      } finally {
+        this.scene.overrideMaterial = previousOverrideMaterial;
+        this.renderer.setRenderTarget(previousTarget);
+        this.renderer.autoClear = previousAutoClear;
+      }
       this.textureAirbrushDepthTargetKey = key;
       return depthTarget;
     },
@@ -2570,7 +2617,7 @@ vec3 texturePaintLiveBlendColor(vec3 base, vec3 source, int mode) {
       if (!material) {
         return null;
       }
-      if (this.texturePaintLayerModeActive?.() && this.activeTool === "airbrush") {
+      if (textureAirbrushActiveLayerPaintMode(this)) {
         const layerTarget = this.textureAirbrushGpuLayerTargetForMaterial?.(material);
         if (layerTarget) {
           return layerTarget;

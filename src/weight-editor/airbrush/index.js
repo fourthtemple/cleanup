@@ -1,8 +1,8 @@
-export { installTextureAirbrushMethods } from "./install.js?v=layer-undo-fix-20260621a";
+export { installTextureAirbrushMethods } from "./install.js?v=visible-normal-20260624a";
 export { installTextureAirbrushBrushSettingsMethods } from "./brush-settings.js";
 export { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
-export { installTextureAirbrushNeighborPaintMethods } from "./neighbor.js?v=layer-undo-fix-20260621a";
-export { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js";
+export { installTextureAirbrushNeighborPaintMethods } from "./neighbor.js?v=visible-side-facing-20260623a";
+export { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js?v=solid-preview-20260622a";
 export { installTextureAirbrushTexturePickingMethods } from "./texture-picking.js";
 export {
   TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,
@@ -14,16 +14,16 @@ export {
   airbrushCoverageForDistance,
   airbrushHaloRadius
 } from "./math.js";
-export { installTextureAirbrushPointerMethods } from "./pointer.js?v=layer-hover-preserve-display-20260621a";
-export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=layer-undo-fix-20260621a";
+export { installTextureAirbrushPointerMethods } from "./pointer.js?v=clean-preview-cursor-20260622a";
+export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=post-orbit-solid-20260624a";
 export { installTextureAirbrushProjectedRegionMethods } from "./projected-region.js";
-export { installTextureAirbrushNearBrushMethods } from "./uv-near.js";
-export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=stroke-opacity-cap-20260620c";
+export { installTextureAirbrushNearBrushMethods } from "./uv-near.js?v=visible-side-facing-20260623a";
+export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=visible-side-facing-20260623a";
 export { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 export { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=layer-undo-fix-20260621a";
-export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=layer-undo-fix-20260621a";
-export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=layer-undo-fix-20260621a";
+export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-normal-20260624a";
+export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=visible-normal-20260624a";
+export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=visible-normal-20260624a";
 export {
   textureAirbrushCreateWebGpuPaintResources,
   textureAirbrushDispatchWebGpuPaint,

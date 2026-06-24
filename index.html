@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Fourth Temple Cleanup</title>
     <link rel="icon" href="./assets/fourth-temple-logo.svg?v=logo-leaf-ft-20260606c" type="image/svg+xml" />
-    <link rel="stylesheet" href="./src/animation-viewer.css?v=layer-panel-compact-20260621a" />
+    <link rel="stylesheet" href="./src/animation-viewer.css?v=repro-macro-play-20260623a" />
     <script type="importmap">
       {
         "imports": {
@@ -737,6 +737,13 @@
           <path id="lasso-overlay-path" class="lasso-overlay-path"></path>
         </svg>
         <div id="texture-brush-cursor" class="texture-brush-cursor" aria-hidden="true" hidden></div>
+        <div id="tutorial-macro-recording-bar" class="repro-macro-panel" hidden>
+        <span id="tutorial-macro-recording-label">Macro recorder</span>
+        <button id="repro-macro-record" type="button">Record</button>
+        <button id="repro-macro-play" type="button">Play</button>
+        <button id="tutorial-macro-floating-stop" type="button" hidden>Stop</button>
+        <button id="repro-macro-export" type="button">Export</button>
+      </div>
       </section>
     </main>
     <div id="tutorial-backdrop" class="tutorial-backdrop" hidden></div>
@@ -859,6 +866,6 @@
         </section>
       </div>
     </aside>
-  <script type="module" src="./src/model-cleanup-editor.js?v=selection-pen-perf-20260621a"></script>
-</body>
+    <script type="module" src="./src/model-cleanup-editor.js?v=visible-normal-20260624a"></script>
+  </body>
 </html>
