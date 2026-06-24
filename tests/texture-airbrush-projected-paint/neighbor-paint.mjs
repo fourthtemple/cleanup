@@ -1298,9 +1298,15 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /Gaussian-style visibility feather/);
   assert.match(material.fragmentShader, /coverage \+= visibleSurfaceDepthNormalMatch\(sampleUv, fragmentDepth, paintViewNormal, normalMatchThreshold\) \? 4\.0 : 0\.0/);
   assert.match(material.fragmentShader, /return clamp\(coverage \/ 16\.0, 0\.0, 1\.0\)/);
+  assert.match(material.fragmentShader, /float visibleSurfaceWideGaussianCoverage/);
+  assert.match(material.fragmentShader, /already center-visible fragments/);
+  assert.match(material.fragmentShader, /return clamp\(coverage \/ 36\.0, 0\.0, 1\.0\)/);
   assert.match(material.fragmentShader, /float visibleSurfaceGrazingEdgeAmount/);
   assert.match(material.fragmentShader, /float grazingStart = visibleFacingNormalThreshold \+ 0\.06/);
   assert.match(material.fragmentShader, /float grazingEnd = visibleFacingNormalThreshold \+ 0\.42/);
+  assert.match(material.fragmentShader, /float visibleSurfaceGrazingAngleCoverage/);
+  assert.match(material.fragmentShader, /center visible-surface gates/);
+  assert.match(material.fragmentShader, /float grazingFeatherEnd = visibleFacingNormalThreshold \+ 0\.28/);
   assert.match(material.fragmentShader, /bool visibleSurfaceMatched = visibleSurfaceDepthNormalMatch/);
   assert.match(material.fragmentShader, /Center-visible fragments are already proven visible/);
   assert.match(material.fragmentShader, /Only fragments rescued by nearby visible/);
@@ -1308,7 +1314,10 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /if \(visibleSurfaceMatched && useVisibleNormalTexture\)/);
   assert.match(material.fragmentShader, /float boundaryCoverage = visibleSurfaceGaussianCoverage/);
   assert.match(material.fragmentShader, /float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintViewNormal\)/);
-  assert.match(material.fragmentShader, /visibleSurfaceCoverage = mix\(1\.0, boundaryCoverage, grazingEdgeAmount\)/);
+  assert.match(material.fragmentShader, /float wideBoundaryCoverage = visibleSurfaceWideGaussianCoverage/);
+  assert.match(material.fragmentShader, /float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage\(paintViewNormal\)/);
+  assert.match(material.fragmentShader, /float softBoundaryCoverage = max\(wideBoundaryCoverage, grazingAngleCoverage\)/);
+  assert.match(material.fragmentShader, /visibleSurfaceCoverage = mix\(1\.0, softBoundaryCoverage, grazingEdgeAmount\)/);
   assert.match(material.fragmentShader, /if \(!visibleSurfaceMatched && useVisibleNormalTexture\)/);
   assert.match(material.fragmentShader, /vec2 screenPixel = 1\.0 \/ max\(viewportSize, vec2\(1\.0\)\)/);
   assert.match(material.fragmentShader, /float edgeNormalMatchThreshold = max\(0\.55, visibleNormalMatchThreshold\)/);

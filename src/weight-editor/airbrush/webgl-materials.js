@@ -288,6 +288,29 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return clamp(coverage / 16.0, 0.0, 1.0);
           }
 
+          float visibleSurfaceWideGaussianCoverage(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
+            vec2 screenPixel = 1.0 / max(viewportSize, vec2(1.0));
+            float coverage = 0.0;
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This wider kernel is only for already center-visible fragments at
+            // grazing local boundaries. It smooths the visual falloff; it must
+            // never authorize a hidden/back fragment by itself.
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 8.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(screenPixel.x, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + screenPixel, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, -screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(-screenPixel.x, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv - screenPixel, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x * 2.0, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(screenPixel.x * 2.0, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, screenPixel.y * 2.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, screenPixel.y * 2.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
+            return clamp(coverage / 36.0, 0.0, 1.0);
+          }
+
           float visibleSurfaceGrazingEdgeAmount(vec3 paintViewNormal) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This angle test only decides whether an already-visible local
@@ -297,6 +320,16 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             float grazingStart = visibleFacingNormalThreshold + 0.06;
             float grazingEnd = visibleFacingNormalThreshold + 0.42;
             return 1.0 - smoothstep(grazingStart, grazingEnd, paintViewNormal.z);
+          }
+
+          float visibleSurfaceGrazingAngleCoverage(vec3 paintViewNormal) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This is only an alpha floor for fragments that already passed the
+            // center visible-surface gates. It smooths the 90-degree falloff by
+            // angle so the screen-sample Gaussian cannot leave a comb of hard
+            // triangle-sized notches along an otherwise visible side edge.
+            float grazingFeatherEnd = visibleFacingNormalThreshold + 0.28;
+            return smoothstep(visibleFacingNormalThreshold, grazingFeatherEnd, paintViewNormal.z);
           }
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
@@ -424,7 +457,15 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               );
               float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintViewNormal);
               if (boundaryCoverage < 0.999 && grazingEdgeAmount > 0.0) {
-                visibleSurfaceCoverage = mix(1.0, boundaryCoverage, grazingEdgeAmount);
+                float wideBoundaryCoverage = visibleSurfaceWideGaussianCoverage(
+                  depthUv,
+                  fragmentDepth,
+                  paintViewNormal,
+                  visibleNormalMatchThreshold
+                );
+                float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage(paintViewNormal);
+                float softBoundaryCoverage = max(wideBoundaryCoverage, grazingAngleCoverage);
+                visibleSurfaceCoverage = mix(1.0, softBoundaryCoverage, grazingEdgeAmount);
               }
             }
             if (!visibleSurfaceMatched && useVisibleNormalTexture) {
