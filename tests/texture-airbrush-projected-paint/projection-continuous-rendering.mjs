@@ -90,6 +90,7 @@ test("layer low spacing can render all cached paint passes without raycasts", ()
   let activeTarget = null;
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.texturePaintLayerMutationSerialValue = () => 0;
   editor.renderer = {
     autoClear: true,

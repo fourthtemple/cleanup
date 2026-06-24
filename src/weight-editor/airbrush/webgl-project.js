@@ -29,7 +29,7 @@ const TEXTURE_AIRBRUSH_NEIGHBOR_MASK_ATTRIBUTE = "textureAirbrushNeighborMask";
 // visible-only culling intact. Do not solve coverage by painting occluded UVs,
 // by re-enabling UV bleed passes, or by adding a Neighbor-only back-side bypass.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.00018;
-const TEXTURE_AIRBRUSH_NEIGHBOR_MASK_VERSION = "neighbor-mask-v2";
+const TEXTURE_AIRBRUSH_NEIGHBOR_MASK_VERSION = "neighbor-mask-v3";
 
 function projectionProbeKey(point = null) {
   return `${Math.round(point?.x || 0)}:${Math.round(point?.y || 0)}`;
@@ -392,6 +392,41 @@ function completeNeighborMaskEdgeLinkedFaces(editor = null, seed = null, record 
   return changed;
 }
 
+function completeNeighborMaskBoundaryFaces(editor = null, seed = null, record = null, values = null, vertexCount = 0) {
+  const geometry = record?.geometry || null;
+  const elementCount = geometry?.index?.array?.length || vertexCount;
+  if (!geometry || !seed?.component?.size || !values || elementCount < 3) {
+    return false;
+  }
+  const groups = Array.isArray(geometry.groups) && geometry.groups.length
+    ? geometry.groups
+    : [{ start: 0, count: elementCount, materialIndex: 0 }];
+  const seedValues = values.slice();
+  let changed = false;
+  for (const group of groups) {
+    const start = Math.max(0, Math.floor(Number(group?.start) || 0));
+    const count = Math.max(0, Math.floor(Number(group?.count) || 0));
+    const end = Math.min(elementCount, start + count);
+    for (let elementIndex = start; elementIndex + 2 < end; elementIndex += 3) {
+      const vertices = [
+        geometryVertexAtElement(geometry, elementIndex),
+        geometryVertexAtElement(geometry, elementIndex + 1),
+        geometryVertexAtElement(geometry, elementIndex + 2)
+      ].filter((vertexIndex) => validGeometryVertexIndex(vertexIndex, vertexCount));
+      if (vertices.length !== 3 || !vertices.some((vertexIndex) => seedValues[vertexIndex] >= 0.5)) {
+        continue;
+      }
+      for (const vertexIndex of vertices) {
+        if (values[vertexIndex] < 0.5) {
+          changed = true;
+        }
+        markNeighborMaskVertex(editor, seed, record, values, vertexIndex, vertexCount);
+      }
+    }
+  }
+  return changed;
+}
+
 function projectionPaintPassKey(recordIndices = null, paintRecords = [], record = null, materialIndex = 0, material = null) {
   const recordIndex = recordIndices?.get(record) ?? paintRecords.indexOf(record);
   return [
@@ -505,6 +540,12 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       while (guard < 8 && completeNeighborMaskEdgeLinkedFaces(this, seed, record, values, vertexCount)) {
         guard += 1;
       }
+      // DO NOT PAINT ON NON CAMERA FACING SIDES.
+      // This only removes interpolated per-vertex mask slivers on faces already
+      // touched by the Neighbor seed/linked seam. The paint shader still must
+      // pass current visible-depth and camera-facing normal checks before any
+      // texel changes.
+      completeNeighborMaskBoundaryFaces(this, seed, record, values, vertexCount);
 
       const attribute = cached?.attribute?.array === values
         ? cached.attribute

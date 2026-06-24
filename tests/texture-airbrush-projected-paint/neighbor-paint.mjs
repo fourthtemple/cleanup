@@ -244,7 +244,7 @@ test("texture paint neighbor bridges duplicated hard-edge vertices by position",
   ), true);
 });
 
-test("airbrush WebGL neighbor mask keeps linked seams strict without filling whole faces", () => {
+test("airbrush WebGL neighbor mask fills linked boundary faces without spreading to untouched faces", () => {
   class WebGlNeighborEditor {}
   installTextureAirbrushWebGlProjectMethods(WebGlNeighborEditor, {
     THREE: {
@@ -300,9 +300,13 @@ test("airbrush WebGL neighbor mask keeps linked seams strict without filling who
 
   const attribute = editor.textureAirbrushNeighborGpuMaskAttribute(seed, record);
 
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // Filling the boundary face removes interpolated triangle slivers in Neighbor
+  // mode. It does not authorize hidden/back-side paint; the WebGL projection
+  // shader still rejects anything that is not the current visible surface.
   assert.deepEqual([...attribute.array], [
-    1, 0, 0,
-    1, 0, 0,
+    1, 1, 1,
+    1, 1, 1,
     0, 0, 0
   ]);
 });
