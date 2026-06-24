@@ -1318,7 +1318,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /float grazingEnd = visibleFacingNormalThreshold \+ 0\.74/);
   assert.match(material.fragmentShader, /float visibleSurfaceGrazingAngleCoverage/);
   assert.match(material.fragmentShader, /center visible-surface gates/);
-  assert.match(material.fragmentShader, /float grazingFeatherStart = visibleFacingNormalThreshold - 0\.32/);
+  assert.match(material.fragmentShader, /float grazingFeatherStart = visibleFacingNormalThreshold/);
   assert.match(material.fragmentShader, /float grazingFeatherEnd = visibleFacingNormalThreshold \+ 0\.72/);
   assert.match(material.fragmentShader, /smoothstep\(grazingFeatherStart, grazingFeatherEnd, paintViewNormal\.z\)/);
   assert.match(material.fragmentShader, /bool visibleSurfaceMatched = visibleSurfaceDepthNormalMatch/);

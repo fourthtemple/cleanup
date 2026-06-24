@@ -313,7 +313,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // angle only; screen-sample coverage is intentionally not used here
             // because it can draw a comb of triangle-sized teeth along the
             // otherwise continuous visible wrap.
-            float grazingFeatherStart = visibleFacingNormalThreshold - 0.32;
+            float grazingFeatherStart = visibleFacingNormalThreshold;
             float grazingFeatherEnd = visibleFacingNormalThreshold + 0.72;
             return smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
           }
