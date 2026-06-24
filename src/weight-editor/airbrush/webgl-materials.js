@@ -370,6 +370,12 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             if (paintGateViewNormal.z <= visibleFacingNormalThreshold) {
               discard;
             }
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Fade by whichever normal is more grazing. The geometric normal
+            // catches the real silhouette; the smoothed normal catches wrapped
+            // vertex normals. Neither one can bypass the visible-depth gate.
+            vec3 paintFadeViewNormal = paintViewNormal;
+            paintFadeViewNormal.z = min(paintViewNormal.z, paintGateViewNormal.z);
             if (
               useNeighborMask
               && useNeighborNormalMask
@@ -441,9 +447,9 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // until it suddenly discards and leaves a hard angular cutoff.
             float visibleSurfaceCoverage = 1.0;
             if (visibleSurfaceMatched && useVisibleNormalTexture) {
-              float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintViewNormal) * edgeSoftness;
+              float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal) * edgeSoftness;
               if (grazingEdgeAmount > 0.0) {
-                float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage(paintViewNormal);
+                float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
                 float rawCenterEdgeCoverage = visibleSurfaceGaussianCoverage(
                   depthUv,
                   fragmentDepth,
@@ -486,7 +492,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // fade used for center-matched soft edges.
               float clusteredEdgeCoverage = smoothstep(0.18, 0.72, rawEdgeCoverage);
               visibleSurfaceCoverage = clusteredEdgeCoverage
-                * visibleSurfaceGrazingAngleCoverage(paintViewNormal)
+                * visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal)
                 * edgeSoftness;
               visibleSurfaceMatched = visibleSurfaceCoverage > 0.0;
             }

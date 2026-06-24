@@ -1301,6 +1301,8 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /vec3 paintViewNormal = paintFragmentViewNormal\(\)/);
   assert.match(material.fragmentShader, /vec3 paintGateViewNormal = paintFragmentGeometricViewNormal\(\)/);
   assert.match(material.fragmentShader, /paintGateViewNormal\.z <= visibleFacingNormalThreshold/);
+  assert.match(material.fragmentShader, /vec3 paintFadeViewNormal = paintViewNormal/);
+  assert.match(material.fragmentShader, /paintFadeViewNormal\.z = min\(paintViewNormal\.z, paintGateViewNormal\.z\)/);
   assert.match(material.fragmentShader, /smoothed\/vertex normal below only shapes the soft airbrush fade/);
   assert.match(material.fragmentShader, /visibleNormal = texture2D\(visibleNormalTexture, sampleUv\)\.rgb \* 2\.0 - 1\.0/);
   assert.match(material.fragmentShader, /dot\(visibleNormal, paintViewNormal\) < normalMatchThreshold/);
@@ -1325,10 +1327,10 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /float visibleSurfaceCoverage = 1\.0/);
   assert.match(material.fragmentShader, /float edgeSoftness = clamp\(visibleEdgeSoftness, 0\.0, 1\.0\)/);
   assert.match(material.fragmentShader, /if \(visibleSurfaceMatched && useVisibleNormalTexture\)/);
-  assert.match(material.fragmentShader, /float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintViewNormal\)/);
+  assert.match(material.fragmentShader, /float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintFadeViewNormal\)/);
   assert.match(material.fragmentShader, /\* edgeSoftness/);
   assert.match(material.fragmentShader, /if \(grazingEdgeAmount > 0\.0\)/);
-  assert.match(material.fragmentShader, /float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage\(paintViewNormal\)/);
+  assert.match(material.fragmentShader, /float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage\(paintFadeViewNormal\)/);
   assert.match(material.fragmentShader, /float rawCenterEdgeCoverage = visibleSurfaceGaussianCoverage/);
   assert.match(material.fragmentShader, /visibleNormalMatchThreshold/);
   assert.match(material.fragmentShader, /float clusteredCenterEdgeCoverage = smoothstep\(0\.22, 0\.88, rawCenterEdgeCoverage\)/);
@@ -1349,7 +1351,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /float rawEdgeCoverage = visibleSurfaceGaussianCoverage/);
   assert.match(material.fragmentShader, /float clusteredEdgeCoverage = smoothstep\(0\.18, 0\.72, rawEdgeCoverage\)/);
   assert.match(material.fragmentShader, /visibleSurfaceCoverage = clusteredEdgeCoverage/);
-  assert.match(material.fragmentShader, /visibleSurfaceGrazingAngleCoverage\(paintViewNormal\)/);
+  assert.match(material.fragmentShader, /visibleSurfaceGrazingAngleCoverage\(paintFadeViewNormal\)/);
   assert.match(material.fragmentShader, /sampleUv \+ screenPixel/);
   assert.match(material.fragmentShader, /sampleUv - screenPixel/);
   assert.match(material.fragmentShader, /sampleUv \+ vec2\(screenPixel\.x, -screenPixel\.y\)/);
