@@ -1309,6 +1309,9 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /Gaussian-style visibility feather/);
   assert.match(material.fragmentShader, /coverage \+= visibleSurfaceDepthNormalMatch\(sampleUv, fragmentDepth, paintViewNormal, normalMatchThreshold\) \? 4\.0 : 0\.0/);
   assert.match(material.fragmentShader, /return clamp\(coverage \/ 16\.0, 0\.0, 1\.0\)/);
+  assert.match(material.fragmentShader, /float visibleSurfaceCenterBoundaryCoverage/);
+  assert.match(material.fragmentShader, /intentionally a soft floor/);
+  assert.match(material.fragmentShader, /return clamp\(0\.32 \+ rawCoverage \* 0\.68, 0\.0, 1\.0\)/);
   assert.match(material.fragmentShader, /bool visibleSurfaceStrictCenterMatch/);
   assert.match(material.fragmentShader, /exact frontmost visible pixel/);
   assert.match(material.fragmentShader, /abs\(fragmentDepth - sceneDepth\) > visibleOnlyDepthEpsilon/);
@@ -1344,9 +1347,11 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintViewNormal\)/);
   assert.match(material.fragmentShader, /\* edgeSoftness/);
   assert.match(material.fragmentShader, /if \(grazingEdgeAmount > 0\.0\)/);
-  assert.match(material.fragmentShader, /float softVisibleEdgeCoverage = visibleSurfaceGrazingAngleCoverage\(paintViewNormal\)/);
-  assert.match(material.fragmentShader, /Do not mix local depth-sample Gaussian/);
-  assert.match(material.fragmentShader, /triangle\/comb-shaped edge teeth/);
+  assert.match(material.fragmentShader, /float angleCoverage = visibleSurfaceGrazingAngleCoverage\(paintViewNormal\)/);
+  assert.match(material.fragmentShader, /float boundaryCoverage = visibleSurfaceCenterBoundaryCoverage/);
+  assert.match(material.fragmentShader, /float softVisibleEdgeCoverage = min\(angleCoverage, boundaryCoverage\)/);
+  assert.match(material.fragmentShader, /floored local visibility-neighborhood attenuation/);
+  assert.match(material.fragmentShader, /Gaussian\/airbrushed/);
   assert.doesNotMatch(material.fragmentShader, /float rawCenterEdgeCoverage = visibleSurfaceGaussianCoverage/);
   assert.doesNotMatch(material.fragmentShader, /float clusteredCenterEdgeCoverage/);
   assert.doesNotMatch(material.fragmentShader, /softVisibleEdgeCoverage = min\(grazingAngleCoverage, clusteredCenterEdgeCoverage\)/);

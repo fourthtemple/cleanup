@@ -324,6 +324,21 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return clamp(coverage / 16.0, 0.0, 1.0);
           }
 
+          float visibleSurfaceCenterBoundaryCoverage(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This only attenuates fragments that already matched the exact
+            // center visible surface. It is intentionally a soft floor, not a
+            // hard min, so the visible side eases out like an airbrush instead
+            // of inheriting every triangle-shaped visibility-mask tooth.
+            float rawCoverage = visibleSurfaceGaussianCoverage(
+              sampleUv,
+              fragmentDepth,
+              paintViewNormal,
+              normalMatchThreshold
+            );
+            return clamp(0.32 + rawCoverage * 0.68, 0.0, 1.0);
+          }
+
           float visibleSurfaceGrazingEdgeAmount(vec3 paintViewNormal) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This angle test only decides whether an already-visible local
@@ -499,15 +514,21 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             if (visibleSurfaceMatched && useVisibleNormalTexture) {
               float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintViewNormal) * edgeSoftness;
               if (grazingEdgeAmount > 0.0) {
-                float softVisibleEdgeCoverage = visibleSurfaceGrazingAngleCoverage(paintViewNormal);
+                float angleCoverage = visibleSurfaceGrazingAngleCoverage(paintViewNormal);
+                float boundaryCoverage = visibleSurfaceCenterBoundaryCoverage(
+                  depthUv,
+                  fragmentDepth,
+                  paintViewNormal,
+                  visibleNormalMatchThreshold
+                );
+                float softVisibleEdgeCoverage = min(angleCoverage, boundaryCoverage);
                 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-                // Soft visible-edge mode uses continuous angle falloff after
-                // the center fragment has already matched the frontmost
-                // depth/normal buffers. Do not mix local depth-sample Gaussian
-                // coverage into this center-visible path: that reintroduces
-                // triangle/comb-shaped edge teeth even though the fragment is
-                // already proven visible. The separate repair path below owns
-                // the tiny visibility-neighborhood check for real misses.
+                // Soft visible-edge mode uses continuous angle falloff plus a
+                // floored local visibility-neighborhood attenuation after the
+                // center fragment has already matched the frontmost depth/normal
+                // buffers. The floor is important: it makes the edge feel
+                // Gaussian/airbrushed without converting every depth-mask tooth
+                // into a hard triangular alpha cutoff.
                 // Hard mode sets softness to zero, keeping a crisp cutoff.
                 visibleSurfaceCoverage = mix(1.0, softVisibleEdgeCoverage, grazingEdgeAmount);
               }
