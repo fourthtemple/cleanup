@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -113,6 +113,8 @@ try {
       result
     };
     console.log(JSON.stringify(summary, null, 2));
+    await captureValidationLayerImage(cdp);
+    await captureValidationScreenshot(cdp);
 
     if (!summary.ok) {
       const failed = Object.entries(checks)
@@ -133,6 +135,8 @@ try {
       result
     };
     console.log(JSON.stringify(summary, null, 2));
+    await captureValidationLayerImage(cdp);
+    await captureValidationScreenshot(cdp);
 
     if (!summary.ok) {
       const failed = Object.entries(checks)
@@ -200,6 +204,8 @@ try {
   };
 
   console.log(JSON.stringify(summary, null, 2));
+  await captureValidationLayerImage(cdp);
+  await captureValidationScreenshot(cdp);
 
   if (!summary.ok) {
     const failed = Object.entries(checks)
@@ -237,6 +243,12 @@ function parseArgs(argv) {
       parsed.afterOrbitMacro = true;
     } else if (value === "--url") {
       parsed.url = argv[++index] || "";
+    } else if (value === "--screenshot") {
+      parsed.screenshot = argv[++index] || "";
+    } else if (value === "--screenshot-zoom") {
+      parsed.screenshotZoom = argv[++index] || "";
+    } else if (value === "--layer-image") {
+      parsed.layerImage = argv[++index] || "";
     } else if (value === "--browser") {
       parsed.browser = argv[++index] || "";
     } else if (value === "--timeout") {
@@ -254,6 +266,9 @@ function printHelp() {
 
 Options:
   --url <url>       Validate an already running Cleanup app.
+  --screenshot <path> Save a final page screenshot for visual inspection.
+  --screenshot-zoom <n> Temporarily zoom the final camera before screenshot.
+  --layer-image <path> Save the active paint layer canvas after validation.
   --browser <path>  Chrome/Chromium executable path.
   --timeout <ms>    Timeout for server/browser readiness.
   --headed          Launch Chrome visibly instead of headless.
@@ -263,6 +278,70 @@ Options:
   --after-orbit-neighbor  Validate Neighbor paint, orbit, then Neighbor paint again.
   --after-orbit-macro  Validate the packaged after-orbit Neighbor paint repro macro.
 `);
+}
+
+async function captureValidationLayerImage(cdp) {
+  if (!args.layerImage) {
+    return;
+  }
+  const dataUrl = await evaluateRuntime(cdp, `(() => {
+    const editor = window.modelCleanupEditor;
+    editor?.flushTexturePaintLayerGpuTargetsToCanvases?.({ composite: true });
+    const materials = editor?.textureAirbrushPaintableMaterials?.() || [];
+    let bestCanvas = null;
+    let bestAlpha = -1;
+    for (const entry of materials) {
+      const material = entry?.material || entry || null;
+      const stack = material?.userData?.texturePaintLayerStack || null;
+      const layer = (stack?.layers || []).find((item) => item.id === stack?.activeLayerId) || null;
+      const canvas = layer?.canvas || null;
+      if (canvas?.width && canvas?.height && typeof canvas.toDataURL === "function") {
+        const context = canvas.getContext?.("2d", { willReadFrequently: true }) || null;
+        const image = context?.getImageData?.(0, 0, canvas.width, canvas.height) || null;
+        let alpha = 0;
+        if (image?.data) {
+          for (let index = 3; index < image.data.length; index += 4) {
+            alpha += image.data[index] || 0;
+          }
+        }
+        if (alpha > bestAlpha) {
+          bestAlpha = alpha;
+          bestCanvas = canvas;
+        }
+      }
+    }
+    return bestCanvas?.toDataURL("image/png") || "";
+  })()`);
+  const match = String(dataUrl || "").match(/^data:image\/png;base64,(.+)$/);
+  if (!match) {
+    throw new Error("Validation layer image capture returned no PNG data.");
+  }
+  await writeFile(args.layerImage, Buffer.from(match[1], "base64"));
+}
+
+async function captureValidationScreenshot(cdp) {
+  if (!args.screenshot) {
+    return;
+  }
+  const screenshotZoom = Number(args.screenshotZoom);
+  if (Number.isFinite(screenshotZoom) && screenshotZoom > 0) {
+    await evaluateRuntime(cdp, `(() => {
+      const editor = window.modelCleanupEditor;
+      if (!editor?.camera) return false;
+      editor.camera.zoom = ${JSON.stringify(screenshotZoom)};
+      editor.camera.updateProjectionMatrix?.();
+      editor.render?.();
+      return true;
+    })()`);
+  }
+  const result = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    captureBeyondViewport: false
+  });
+  if (!result?.data) {
+    throw new Error("Validation screenshot capture returned no data.");
+  }
+  await writeFile(args.screenshot, Buffer.from(result.data, "base64"));
 }
 
 function positiveInteger(value, fallback) {

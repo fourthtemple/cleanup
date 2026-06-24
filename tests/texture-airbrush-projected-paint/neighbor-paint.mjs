@@ -1212,7 +1212,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   // This test is intentionally noisy: the shader must keep the visible-only
   // gates. The paint normal gate rejects non-camera-facing fragments, the
   // visible-normal buffer rejects depth-close wrap/back fragments, and the
-  // strict one-sided depth gate blocks hidden/behind fragments.
+  // strict two-sided depth gate blocks hidden/behind/ahead fragments.
   assert.deepEqual(material.extensions, { derivatives: true });
   assert.equal(material.uniforms.useNeighborMask.value, false);
   assert.equal(material.uniforms.useNeighborNormalMask.value, false);
@@ -1256,8 +1256,8 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /The airbrush paints only the visible field/);
   assert.match(material.fragmentShader, /Neighbor mode is also visible-field-only/);
   assert.match(material.fragmentShader, /non-visible side, the back of the leg/);
-  assert.match(material.fragmentShader, /fragmentDepth > sceneDepth \+ visibleOnlyDepthEpsilon/);
-  assert.doesNotMatch(material.fragmentShader, /abs\(fragmentDepth - sceneDepth\)/);
+  assert.match(material.fragmentShader, /abs\(fragmentDepth - sceneDepth\) > visibleOnlyDepthEpsilon/);
+  assert.doesNotMatch(material.fragmentShader, /fragmentDepth > sceneDepth \+ visibleOnlyDepthEpsilon/);
   assert.doesNotMatch(material.fragmentShader, /visibleNormal\.z <= visibleFacingNormalThreshold/);
   const normalMaterial = editor.textureAirbrushVisibleSurfaceNormalMaterial();
   assert.equal(normalMaterial.side, 0);

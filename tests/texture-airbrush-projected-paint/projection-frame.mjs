@@ -666,6 +666,7 @@ test("airbrush live projection frame invalidates after layer mutations", () => {
   editor.texturePaintLayersEnabled = true;
   editor.texturePaintLayerMutationSerial = 2;
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.texturePaintLayerMutationSerialValue = () => editor.texturePaintLayerMutationSerial;
   editor.canvas = {
     getBoundingClientRect() {
@@ -1056,6 +1057,7 @@ test("layer airbrush projection seeds prewarmed active layer passes like backgro
   let activeTarget = null;
   editor.activeTool = "airbrush";
   editor.texturePaintLayerModeActive = () => true;
+  editor.texturePaintHasActivePaintLayer = () => true;
   editor.texturePaintActiveMaterial = material;
   editor.renderer = {
     autoClear: true,

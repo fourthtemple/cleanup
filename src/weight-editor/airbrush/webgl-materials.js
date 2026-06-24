@@ -27,7 +27,7 @@ import {
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // This shader intentionally uses BOTH visibility gates:
 // 1. camera-facing geometric normal gate, so back-facing triangles are never eligible;
-// 2. frontmost depth-buffer match, so hidden/behind fragments are never eligible.
+// 2. exact frontmost depth-buffer match, so hidden/behind/ahead fragments are never eligible.
 // Removing either gate can make the brush look more filled, but that is the
 // forbidden failure mode: painting through the model or onto the back side.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.0008;
@@ -294,15 +294,16 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // KEEP THIS GATE. It is the other half of the approved visible-only
             // fix. The normal gate rejects back-facing triangles; this depth
             // gate rejects fragments that are not the current rendered front
-            // surface at this screen pixel.
+            // surface at this screen pixel. It is intentionally two-sided:
+            // "closer than depth" is not visible-surface proof at a wrap.
             //
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Do not widen this into "paint anything close enough behind the
-            // surface" and do not add a Neighbor exception. Coverage holes must
-            // be fixed by warming/refreshing projection state, not by painting
-            // through the model.
+            // surface" or "anything closer than depth," and do not add a
+            // Neighbor exception. Coverage holes must be fixed by warming/
+            // refreshing projection state, not by painting through the model.
             //
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
@@ -322,12 +323,12 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // This is global, not a Neighbor special case: no airbrush mode is
             // allowed to paint non-visible, back-side, hidden, or through-object
             // fragments. A painted texture fragment must depth-match the
-            // frontmost visible scene surface at the same screen pixel. Depth is
-            // a secondary guard; it must not be used alone to paint around the
-            // back of a wrap.
+            // frontmost visible scene surface at the same screen pixel from both
+            // sides. Depth is a secondary guard; it must not be used alone to
+            // paint around the back of a wrap.
             if (
               sceneDepth >= 0.9999
-              || fragmentDepth > sceneDepth + visibleOnlyDepthEpsilon
+              || abs(fragmentDepth - sceneDepth) > visibleOnlyDepthEpsilon
             ) {
               discard;
             }
