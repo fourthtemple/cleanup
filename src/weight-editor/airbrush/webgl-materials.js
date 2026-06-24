@@ -423,6 +423,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               paintViewNormal,
               visibleNormalMatchThreshold
             );
+            float edgeSoftness = clamp(visibleEdgeSoftness, 0.0, 1.0);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Center-visible fragments are already proven visible. Near the
             // 90-degree normal cutoff they still need a continuous airbrush
@@ -430,19 +431,28 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // until it suddenly discards and leaves a hard angular cutoff.
             float visibleSurfaceCoverage = 1.0;
             if (visibleSurfaceMatched && useVisibleNormalTexture) {
-              float edgeSoftness = clamp(visibleEdgeSoftness, 0.0, 1.0);
               float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintViewNormal) * edgeSoftness;
               if (grazingEdgeAmount > 0.0) {
                 float grazingAngleCoverage = visibleSurfaceGrazingAngleCoverage(paintViewNormal);
+                float rawCenterEdgeCoverage = visibleSurfaceGaussianCoverage(
+                  depthUv,
+                  fragmentDepth,
+                  paintViewNormal,
+                  visibleNormalMatchThreshold
+                );
+                float clusteredCenterEdgeCoverage = smoothstep(0.22, 0.88, rawCenterEdgeCoverage);
+                float softVisibleEdgeCoverage = min(grazingAngleCoverage, clusteredCenterEdgeCoverage);
                 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-                // Soft visible-edge mode uses only the continuous normal-angle
-                // falloff after the center fragment has already matched the
-                // frontmost depth/normal buffers. Hard mode sets softness to
-                // zero, keeping a crisp cutoff without sampled triangle teeth.
-                visibleSurfaceCoverage = mix(1.0, grazingAngleCoverage, grazingEdgeAmount);
+                // Soft visible-edge mode combines the continuous normal-angle
+                // falloff with a tiny local visible-neighborhood Gaussian, but
+                // only after the center fragment has already matched the
+                // frontmost depth/normal buffers. This eases the wrap edge
+                // without giving hidden/back fragments permission to paint.
+                // Hard mode sets softness to zero, keeping a crisp cutoff.
+                visibleSurfaceCoverage = mix(1.0, softVisibleEdgeCoverage, grazingEdgeAmount);
               }
             }
-            if (!visibleSurfaceMatched && useVisibleNormalTexture) {
+            if (!visibleSurfaceMatched && useVisibleNormalTexture && edgeSoftness > 0.0) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
               // This is an edge rasterization repair only. At grazing visible
               // silhouettes, the UV-space fragment can land between depth
@@ -450,13 +460,24 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // immediate 8-connected screen neighbors so diagonal visible
               // edges do not become a staircase, but require a much stronger
               // visible normal match and keep the same strict depth windows.
+              // Hard visible-edge mode deliberately skips this repair so a hard
+              // cutoff stays hard instead of gaining screen-pixel teeth.
               float edgeNormalMatchThreshold = max(0.55, visibleNormalMatchThreshold);
-              visibleSurfaceCoverage = visibleSurfaceGaussianCoverage(
+              float rawEdgeCoverage = visibleSurfaceGaussianCoverage(
                 depthUv,
                 fragmentDepth,
                 paintViewNormal,
                 edgeNormalMatchThreshold
               );
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // A single matching neighbor is not enough to draw a tooth that
+              // stretches through a grazing UV island. Keep only clustered
+              // Gaussian coverage, then cap it by the same front-facing angle
+              // fade used for center-matched soft edges.
+              float clusteredEdgeCoverage = smoothstep(0.18, 0.72, rawEdgeCoverage);
+              visibleSurfaceCoverage = clusteredEdgeCoverage
+                * visibleSurfaceGrazingAngleCoverage(paintViewNormal)
+                * edgeSoftness;
               visibleSurfaceMatched = visibleSurfaceCoverage > 0.0;
             }
             if (!visibleSurfaceMatched) {
