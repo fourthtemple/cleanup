@@ -4,7 +4,7 @@ import {
   textureAirbrushProbePointsFromStroke,
   textureAirbrushScreenStrokeFromEvent
 } from "./projection.js";
-import { textureAirbrushWebGpuStrokeCandidateFromHit } from "./webgpu-stroke.js?v=layer-undo-fix-20260621a";
+import { textureAirbrushWebGpuStrokeCandidateFromHit } from "./webgpu-stroke.js";
 
 export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
   Object.assign(BirdWeightEditor.prototype, {

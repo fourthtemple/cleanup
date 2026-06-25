@@ -65,6 +65,14 @@ export function installTextureAirbrushWebGpuDiagnosticMethods(BirdWeightEditor) 
         webGpuDisabled: this.textureAirbrushWebGpuDisabled === true,
         webGlDisabled: this.textureAirbrushGpuDisabled === true
       });
+      const liveProjectedBackend = resolveTextureAirbrushBackend({
+        preferWebGpu: airbrushRequested,
+        webGpuAvailable: nativeWebGpuAvailable,
+        renderer: this.renderer,
+        webGpuDisabled: this.textureAirbrushWebGpuDisabled === true,
+        webGlDisabled: this.textureAirbrushGpuDisabled === true,
+        visibleSurfaceMaskRequired: true
+      });
       const device = this.textureAirbrushWebGpuDevice?.() || null;
       const lastDispatchResult = this.textureAirbrushLastWebGpuDispatch?.result || null;
       const status = {
@@ -78,8 +86,10 @@ export function installTextureAirbrushWebGpuDiagnosticMethods(BirdWeightEditor) 
         rendererRuntime: this.textureAirbrushRendererMode || (rendererState.isWebGpuRenderer ? "webgpu" : "webgl"),
         rendererReady: this.textureAirbrushWebGpuRendererReady === true || rendererState.isNativeWebGpuBackend,
         backend,
+        liveProjectedBackend,
         deviceReady: Boolean(device),
         airbrushReady: backend.backend === "webgpu" && Boolean(device),
+        liveProjectedAirbrushReady: liveProjectedBackend.backend === "webgpu" && Boolean(device),
         lastPaintStats: this.textureAirbrushLastWebGpuPaintStats || null,
         lastPrewarmStats: this.textureAirbrushLastWebGpuPrewarmStats || null,
         lastSelfTest: this.textureAirbrushLastWebGpuSelfTest || null,

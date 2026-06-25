@@ -356,8 +356,10 @@ test("installed airbrush WebGPU methods expose a runtime diagnostic snapshot", (
   assert.equal(status.rendererRuntime, "webgpu");
   assert.equal(status.rendererReady, true);
   assert.deepEqual(status.backend, { backend: "webgpu", webGpuStatus: "ready" });
+  assert.deepEqual(status.liveProjectedBackend, { backend: "none", webGpuStatus: "visible-surface-mask-unavailable" });
   assert.equal(status.deviceReady, true);
   assert.equal(status.airbrushReady, true);
+  assert.equal(status.liveProjectedAirbrushReady, false);
   assert.deepEqual(status.lastPaintStats, { appliedBytes: 16 });
   assert.deepEqual(status.lastDispatch, {
     dispatch: { x: 2, y: 3, workgroupSize: 8 },
@@ -455,7 +457,8 @@ test("installed airbrush WebGPU methods prepare a kernel payload", () => {
   assert.equal(payload.params.strokeSegmentCount, 2);
   assert.deepEqual(payload.params.color, { r: 64 / 255, g: 128 / 255, b: 1 });
   assert.match(payload.source, /textureAirbrushPaint/);
-  assert.equal(payload.plan.buffers.uniform.data.byteLength, 64);
+  assert.match(payload.source, /visibilityMaskTexture/);
+  assert.equal(payload.plan.buffers.uniform.data.byteLength, 80);
   assert.equal(payload.plan.buffers.strokes.data.length, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS * 4);
 
   editor.textureAirbrushWebGpuProjectFromEvent(null, { radiusPixels: 12 });

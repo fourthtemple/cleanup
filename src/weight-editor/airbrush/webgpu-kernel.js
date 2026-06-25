@@ -34,7 +34,16 @@ export function textureAirbrushWebGpuKernelParams(options = {}, defaults = {}) {
       g: clampByte(color.g) / 255,
       b: clampByte(color.b) / 255
     },
-    strokeSegmentCount: Math.max(1, Math.min(TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS, strokeSegments.length || 1))
+    strokeSegmentCount: Math.max(1, Math.min(TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS, strokeSegments.length || 1)),
+    useVisibilityMask: options.useVisibilityMask === true || Boolean(options.visibilityMaskPixels) ? 1 : 0,
+    visibilityFeatherRadius: Math.max(0, finiteNumber(
+      options.visibilityFeatherRadius,
+      finiteNumber(defaults.visibilityFeatherRadius, 0)
+    )),
+    visibilityMaskThreshold: clamp01(finiteNumber(
+      options.visibilityMaskThreshold,
+      finiteNumber(defaults.visibilityMaskThreshold, 0.5)
+    ))
   };
 }
 
@@ -69,6 +78,10 @@ struct BrushParams {
   color: vec3<f32>,
   paintOrigin: vec2<u32>,
   paintSize: vec2<u32>,
+  useVisibilityMask: u32,
+  visibilityFeatherRadius: f32,
+  visibilityMaskThreshold: f32,
+  visibilityReserved: f32,
 };
 
 struct StrokeSegment {
@@ -81,6 +94,7 @@ struct StrokeSegment {
 @group(0) @binding(2) var<uniform> brush: BrushParams;
 @group(0) @binding(3) var<storage, read> strokeSegments: array<StrokeSegment, ${maxSegments}>;
 @group(0) @binding(4) var strokeSourceTexture: texture_2d<f32>;
+@group(0) @binding(5) var visibilityMaskTexture: texture_2d<f32>;
 
 fn distanceToSegment(point: vec2<f32>, start: vec2<f32>, end: vec2<f32>) -> f32 {
   let segment = end - start;
@@ -131,6 +145,64 @@ fn paintProgress(color: vec4<f32>, strokeSource: vec4<f32>) -> f32 {
   );
 }
 
+fn visibleMaskAt(pixel: vec2<u32>) -> f32 {
+  let mask = textureLoad(visibilityMaskTexture, vec2<i32>(pixel), 0);
+  return max(max(mask.r, mask.g), max(mask.b, mask.a));
+}
+
+fn visibleMaskAtOffset(pixel: vec2<u32>, offset: vec2<i32>) -> f32 {
+  let x = clamp(i32(pixel.x) + offset.x, 0, i32(brush.textureSize.x) - 1);
+  let y = clamp(i32(pixel.y) + offset.y, 0, i32(brush.textureSize.y) - 1);
+  return visibleMaskAt(vec2<u32>(u32(x), u32(y)));
+}
+
+fn visibleMaskFeatherCoverage(pixel: vec2<u32>) -> f32 {
+  if (brush.useVisibilityMask == 0u) {
+    return 1.0;
+  }
+
+  // The visibility mask is a permission mask. Hidden/non-camera-facing texels are never painted.
+  let center = visibleMaskAt(pixel);
+  let threshold = clamp(brush.visibilityMaskThreshold, 0.0, 1.0);
+  if (center <= threshold) {
+    return 0.0;
+  }
+
+  let feather = max(0.0, brush.visibilityFeatherRadius);
+  if (feather <= 0.5) {
+    return 1.0;
+  }
+
+  let nearStep = i32(max(1.0, floor(feather * 0.5 + 0.5)));
+  let farStep = i32(max(f32(nearStep + 1), floor(feather + 0.5)));
+  var weighted = center * 0.227027;
+  var weight = 0.227027;
+
+  let nearWeight = 0.097603;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(nearStep, 0)) * nearWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(-nearStep, 0)) * nearWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(0, nearStep)) * nearWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(0, -nearStep)) * nearWeight;
+  weight = weight + nearWeight * 4.0;
+
+  let diagonalWeight = 0.059634;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(nearStep, nearStep)) * diagonalWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(nearStep, -nearStep)) * diagonalWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(-nearStep, nearStep)) * diagonalWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(-nearStep, -nearStep)) * diagonalWeight;
+  weight = weight + diagonalWeight * 4.0;
+
+  let farWeight = 0.027027;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(farStep, 0)) * farWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(-farStep, 0)) * farWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(0, farStep)) * farWeight;
+  weighted = weighted + visibleMaskAtOffset(pixel, vec2<i32>(0, -farStep)) * farWeight;
+  weight = weight + farWeight * 4.0;
+
+  let blurredVisibility = clamp(weighted / max(weight, 0.0001), 0.0, 1.0);
+  return smoothstep(threshold, 1.0, blurredVisibility);
+}
+
 @compute @workgroup_size(${groupSize}, ${groupSize}, 1)
 fn textureAirbrushPaint(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= brush.paintSize.x || id.y >= brush.paintSize.y) {
@@ -138,6 +210,13 @@ fn textureAirbrushPaint(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let pixel = brush.paintOrigin + id.xy;
   if (pixel.x >= brush.textureSize.x || pixel.y >= brush.textureSize.y) {
+    return;
+  }
+  let current = textureLoad(sourceTexture, vec2<i32>(pixel), 0);
+  let strokeSource = textureLoad(strokeSourceTexture, vec2<i32>(pixel), 0);
+  let visibilityCoverage = visibleMaskFeatherCoverage(pixel);
+  if (visibilityCoverage <= 0.0) {
+    textureStore(outputTexture, vec2<i32>(pixel), current);
     return;
   }
   let point = vec2<f32>(f32(pixel.x), f32(pixel.y));
@@ -148,9 +227,7 @@ fn textureAirbrushPaint(@builtin(global_invocation_id) id: vec3<u32>) {
     distancePixels = min(distancePixels, distanceToSegment(point, segment.start, segment.end));
   }
   let coverage = airbrushCoverage(distancePixels);
-  let alpha = clamp(brush.opacity * brush.strength * coverage, 0.0, 1.0);
-  let current = textureLoad(sourceTexture, vec2<i32>(pixel), 0);
-  let strokeSource = textureLoad(strokeSourceTexture, vec2<i32>(pixel), 0);
+  let alpha = clamp(brush.opacity * brush.strength * coverage * visibilityCoverage, 0.0, 1.0);
   let nextAlpha = alpha + strokeSource.a * (1.0 - alpha);
   let nextRgb = select(
     vec3<f32>(0.0),

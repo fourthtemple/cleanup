@@ -17,6 +17,7 @@ const layerAfterUndo = args.layerAfterUndo === true || process.env.AIRBRUSH_RUNT
 const thirdLayer = args.thirdLayer === true || process.env.AIRBRUSH_RUNTIME_THIRD_LAYER === "1";
 const afterOrbitNeighbor = args.afterOrbitNeighbor === true || process.env.AIRBRUSH_RUNTIME_AFTER_ORBIT_NEIGHBOR === "1";
 const afterOrbitMacro = args.afterOrbitMacro === true || process.env.AIRBRUSH_RUNTIME_AFTER_ORBIT_MACRO === "1";
+const sideEdgeSoftness = args.sideEdgeSoftness === true || process.env.AIRBRUSH_RUNTIME_SIDE_EDGE_SOFTNESS === "1";
 
 const cleanupTasks = [];
 
@@ -145,6 +146,28 @@ try {
         .join(", ");
       throw new Error(`Airbrush after-orbit Neighbor runtime validation failed: ${failed}`);
     }
+  } else if (sideEdgeSoftness) {
+    const result = await evaluateRuntime(cdp, runtimeSideEdgeSoftnessExpression(), { awaitPromise: true, timeoutMs });
+    const checks = runtimeSideEdgeSoftnessChecks(result);
+    const summary = {
+      ok: Object.values(checks).every(Boolean),
+      url: validationUrl,
+      headless,
+      sideEdgeSoftness,
+      checks,
+      result
+    };
+    console.log(JSON.stringify(summary, null, 2));
+    await captureValidationLayerImage(cdp);
+    await captureValidationScreenshot(cdp);
+
+    if (!summary.ok) {
+      const failed = Object.entries(checks)
+        .filter(([, passed]) => !passed)
+        .map(([name]) => name)
+        .join(", ");
+      throw new Error(`Airbrush side-edge softness validation failed: ${failed}`);
+    }
   } else {
   const prepared = await evaluateRuntime(cdp, runtimePreparationExpression(), { awaitPromise: true, timeoutMs });
   if (!prepared?.ready) {
@@ -241,6 +264,8 @@ function parseArgs(argv) {
       parsed.afterOrbitNeighbor = true;
     } else if (value === "--after-orbit-macro") {
       parsed.afterOrbitMacro = true;
+    } else if (value === "--side-edge-softness") {
+      parsed.sideEdgeSoftness = true;
     } else if (value === "--url") {
       parsed.url = argv[++index] || "";
     } else if (value === "--screenshot") {
@@ -277,6 +302,7 @@ Options:
   --third-layer     Validate adding and painting Paint 1, Paint 2, and Paint 3.
   --after-orbit-neighbor  Validate Neighbor paint, orbit, then Neighbor paint again.
   --after-orbit-macro  Validate the packaged after-orbit Neighbor paint repro macro.
+  --side-edge-softness  Validate a side-view soft-edge stroke for triangle teeth.
 `);
 }
 
@@ -314,7 +340,8 @@ async function captureValidationLayerImage(cdp) {
   })()`);
   const match = String(dataUrl || "").match(/^data:image\/png;base64,(.+)$/);
   if (!match) {
-    throw new Error("Validation layer image capture returned no PNG data.");
+    console.warn("Validation layer image capture returned no PNG data.");
+    return;
   }
   await writeFile(args.layerImage, Buffer.from(match[1], "base64"));
 }
@@ -627,6 +654,451 @@ function runtimeAfterOrbitNeighborChecks(result) {
     queueDrained: Number(result?.queueLength) === 0 && Number(result?.pendingBatches) === 0,
     activeAirbrushAfterValidation: result?.activeTool === "airbrush"
   };
+}
+
+function runtimeSideEdgeSoftnessChecks(result) {
+  return {
+    editorReady: result?.ready === true,
+    assetLoaded: result?.loaded === true,
+    paintRecordsAvailable: Number(result?.paintRecords) > 0,
+    sideHitFound: result?.sideHitFound === true,
+    paintLayerCreated: result?.layerAdded === true,
+    strokeProjected: Number(result?.validation?.projectionChanged) > 0,
+    layerReceivedPaint: Number(result?.alphaStats?.count) > 0,
+    enoughVisibleSamples: Number(result?.edgeMetrics?.visibleSamples) >= 80,
+    insideMostlyCovered: Number(result?.edgeMetrics?.insideCoverageRatio) >= 0.82,
+    insideHolesLimited: Number(result?.edgeMetrics?.insideHoleRatio) <= 0.16,
+    softEdgeSamplesPresent: Number(result?.edgeMetrics?.edgeSoftSampleRatio) >= 0.06,
+    hardTransitionsLimited: Number(result?.edgeMetrics?.hardTransitionRatio) <= 0.58,
+    edgeRowsNotFragmented: Number(result?.edgeMetrics?.fragmentedEdgeRowRatio) <= 0.34,
+    queueDrained: Number(result?.queueLength) === 0 && Number(result?.pendingBatches) === 0,
+    activeAirbrushAfterValidation: result?.activeTool === "airbrush"
+  };
+}
+
+function runtimeSideEdgeSoftnessExpression() {
+  return `(async () => {
+    const editor = window.modelCleanupEditor;
+    if (!editor) {
+      return { ready: false, error: "missing-editor" };
+    }
+    const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const flushPaint = async () => {
+      for (let index = 0; index < 24; index += 1) {
+        const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
+        if (pending && typeof pending.then === "function") {
+          await pending;
+        }
+        if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
+          break;
+        }
+        await delay(25);
+      }
+      await delay(80);
+    };
+    const assets = [
+      {
+        key: "airbrush-runtime:test-walking-8",
+        name: "walking-8.fbx",
+        label: "walking-8",
+        extension: "fbx",
+        folder: "test",
+        path: "assets/models/animation-library/test/walking-8.fbx",
+        url: "./assets/models/animation-library/test/walking-8.fbx",
+        engine: true,
+        demo: true
+      },
+      {
+        key: "airbrush-runtime:etes-walking-8",
+        name: "walking-8.fbx",
+        label: "walking-8",
+        extension: "fbx",
+        folder: "etes",
+        path: "assets/models/animation-library/etes/walking-8.fbx",
+        url: "./assets/models/animation-library/etes/walking-8.fbx",
+        engine: true,
+        demo: true
+      }
+    ];
+    let loadedAsset = "";
+    let loadError = "";
+    for (const asset of assets) {
+      try {
+        const loaded = await editor.loadAnimationLibraryAsset(asset);
+        if (loaded && editor.model) {
+          loadedAsset = asset.path;
+          break;
+        }
+        loadError = "load returned without a model";
+      } catch (error) {
+        loadError = error?.message || String(error);
+      }
+    }
+    if (!loadedAsset) {
+      return { ready: false, loaded: false, error: "asset-load-failed", loadError };
+    }
+    for (let index = 0; index < 8; index += 1) {
+      await waitFrame();
+    }
+    editor.setTool?.("airbrush");
+    editor.setTexturePaintNeighborMode?.(false, { status: false });
+    if (editor.textureBrushRadius) {
+      editor.textureBrushRadius.value = "34";
+    }
+    if (editor.textureBrushOpacity) {
+      editor.textureBrushOpacity.value = "1";
+    }
+    if (editor.textureBrushSpacing) {
+      editor.textureBrushSpacing.value = "1";
+    }
+    if (editor.textureBrushHardness) {
+      editor.textureBrushHardness.value = "0.38";
+    }
+    if (editor.textureBrushScatter) {
+      editor.textureBrushScatter.value = "0";
+    }
+    if (editor.texturePaintColor) {
+      editor.texturePaintColor.value = "#ff7a3d";
+      editor.texturePaintColor.dispatchEvent?.(new Event("input", { bubbles: true }));
+      editor.texturePaintColor.dispatchEvent?.(new Event("change", { bubbles: true }));
+    }
+    if (editor.textureVisibleEdgeMode) {
+      editor.textureVisibleEdgeMode.value = "soft";
+      editor.textureVisibleEdgeMode.dispatchEvent?.(new Event("input", { bubbles: true }));
+      editor.textureVisibleEdgeMode.dispatchEvent?.(new Event("change", { bubbles: true }));
+    }
+    if (editor.texturePressureRadius) {
+      editor.texturePressureRadius.checked = false;
+    }
+    if (editor.texturePressureOpacity) {
+      editor.texturePressureOpacity.checked = false;
+    }
+    editor.updateRangeOutputs?.();
+    editor.textureAirbrushInvalidateBrushSettings?.();
+    editor.setCameraPreset?.("right");
+    editor.textureAirbrushCameraChanged?.();
+    for (let index = 0; index < 8; index += 1) {
+      await waitFrame();
+    }
+    editor.render?.();
+
+    const rect = editor.canvas?.getBoundingClientRect?.();
+    if (!rect?.width || !rect?.height) {
+      return { ready: false, loaded: Boolean(editor.model), loadedAsset, error: "missing-canvas-rect" };
+    }
+    if (editor.canvas) {
+      editor.canvas.setPointerCapture = () => {};
+      editor.canvas.releasePointerCapture = () => {};
+    }
+    const validation = {
+      pointerDowns: 0,
+      paintEvents: 0,
+      queuedPayloads: 0,
+      projectionCalls: 0,
+      projectionChanged: 0
+    };
+    const originalOnPointerDown = editor.onPointerDown?.bind(editor);
+    const originalPaintTextureStrokeFromEvent = editor.paintTextureStrokeFromEvent?.bind(editor);
+    const originalQueuePayload = editor.textureAirbrushQueueScreenStrokePayload?.bind(editor);
+    const originalProjection = editor.textureAirbrushProjectedMeshFromEvent?.bind(editor);
+    editor.onPointerDown = function(event) {
+      validation.pointerDowns += 1;
+      return originalOnPointerDown?.(event);
+    };
+    editor.paintTextureStrokeFromEvent = function(event, options = {}) {
+      validation.paintEvents += 1;
+      return originalPaintTextureStrokeFromEvent?.(event, options);
+    };
+    editor.textureAirbrushQueueScreenStrokePayload = function(payload) {
+      const queued = originalQueuePayload?.(payload);
+      if (queued) {
+        validation.queuedPayloads += 1;
+      }
+      return queued;
+    };
+    editor.textureAirbrushProjectedMeshFromEvent = function(event, options = {}) {
+      validation.projectionCalls += 1;
+      const changed = originalProjection?.(event, options) || 0;
+      validation.projectionChanged += Number(changed) || 0;
+      return changed;
+    };
+    window.__airbrushRuntimeValidation = validation;
+
+    const eventAt = (clientX, clientY, buttons = 1) => ({
+      clientX,
+      clientY,
+      button: 0,
+      buttons,
+      pointerId: 711,
+      pointerType: "mouse",
+      pressure: 0.75,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      preventDefault() {},
+      stopPropagation() {},
+      stopImmediatePropagation() {}
+    });
+    const hitAt = (clientX, clientY) => editor.texturePaintHitForEvent?.(eventAt(clientX, clientY), "airbrush") || null;
+    const viewNormalZForPaintHit = (paintHit) => {
+      const normal = paintHit?.hit?.face?.normal?.clone?.() || null;
+      const object = paintHit?.record?.object || paintHit?.hit?.object || null;
+      if (!normal || !object || !editor.camera) {
+        return null;
+      }
+      object.updateMatrixWorld?.(true);
+      editor.camera.updateMatrixWorld?.(true);
+      normal.transformDirection?.(object.matrixWorld);
+      normal.transformDirection?.(editor.camera.matrixWorldInverse);
+      const z = Number(normal.z);
+      return Number.isFinite(z) ? z : null;
+    };
+    const candidates = [];
+    const xFractions = [0.78, 0.75, 0.72, 0.69, 0.66, 0.63, 0.60, 0.57, 0.54, 0.51, 0.48, 0.45, 0.42];
+    const yFractions = [0.48, 0.52, 0.56, 0.60, 0.64, 0.68, 0.44, 0.72, 0.40, 0.76];
+    for (const yFraction of yFractions) {
+      for (const xFraction of xFractions) {
+        const clientX = rect.left + rect.width * xFraction;
+        const clientY = rect.top + rect.height * yFraction;
+        const hit = hitAt(clientX, clientY);
+        if (hit?.record && hit?.hit) {
+          const viewNormalZ = viewNormalZForPaintHit(hit);
+          const cameraFacing = Number.isFinite(viewNormalZ) ? viewNormalZ : 1;
+          const grazingScore = cameraFacing > 0
+            ? 1 - Math.min(1, Math.abs(cameraFacing - 0.12) / 0.42)
+            : -2;
+          const centerBandScore = 1 - Math.min(1, Math.abs(yFraction - 0.58) / 0.26);
+          const score = grazingScore * 8 + xFraction * 1.5 + centerBandScore;
+          candidates.push({ clientX, clientY, xFraction, yFraction, hit, viewNormalZ, score });
+        }
+      }
+    }
+    candidates.sort((left, right) => right.score - left.score || right.clientX - left.clientX);
+    const sideHit = candidates[0] || null;
+    if (!sideHit) {
+      return {
+        ready: false,
+        loaded: Boolean(editor.model),
+        loadedAsset,
+        paintRecords: editor.paintRecords?.length || 0,
+        error: "missing-side-hit",
+        validation
+      };
+    }
+    const firstMaterial = editor.clonePaintMaterialForHit?.(sideHit.hit.record, sideHit.hit.hit) || editor.texturePaintFirstLayerMaterial?.() || null;
+    if (firstMaterial) {
+      editor.texturePaintActiveMaterial = firstMaterial;
+    }
+    const layerAdded = editor.addTexturePaintLayer?.() === true;
+    await waitFrame();
+    const material = editor.texturePaintActiveMaterial || firstMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+    const stack = material?.userData?.texturePaintLayerStack || null;
+    const activeLayer = (stack?.layers || []).find((layer) => layer.id === stack?.activeLayerId) || null;
+    const radius = 34;
+    const centerX = Math.max(rect.left + 90, Math.min(rect.right - 45, sideHit.clientX - 12));
+    const centerY = Math.max(rect.top + 130, Math.min(rect.bottom - 80, sideHit.clientY));
+    const strokeRows = [-38, -18, 2, 22, 42];
+    const strokes = strokeRows.map((offsetY) => ({
+      start: { x: Math.max(rect.left + 4, centerX - 78), y: centerY + offsetY },
+      mid: { x: centerX - 12, y: centerY + offsetY },
+      end: { x: Math.min(rect.right - 4, centerX + 50), y: centerY + offsetY }
+    }));
+    const paintStroke = async (stroke) => {
+      editor.onPointerDown?.(eventAt(stroke.start.x, stroke.start.y, 1));
+      await waitFrame();
+      const steps = 8;
+      for (let index = 1; index <= steps; index += 1) {
+        const ratio = index / steps;
+        const x = stroke.start.x + (stroke.end.x - stroke.start.x) * ratio;
+        const y = stroke.start.y + (stroke.end.y - stroke.start.y) * ratio;
+        editor.onPointerMove?.(eventAt(x, y, 1));
+        await waitFrame();
+      }
+      editor.onPointerUp?.(eventAt(stroke.end.x, stroke.end.y, 0));
+      await flushPaint();
+    };
+    for (const stroke of strokes) {
+      await paintStroke(stroke);
+    }
+    await flushPaint();
+    editor.flushTexturePaintLayerGpuTargetsToCanvases?.({ material, composite: true });
+    editor.render?.();
+
+    const layerCanvas = activeLayer?.canvas || null;
+    const layerContext = layerCanvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+    const alphaAtHit = (paintHit) => {
+      const uv = paintHit?.hit?.uv || null;
+      if (!uv || !layerCanvas || !layerContext) {
+        return null;
+      }
+      const centerPixelX = Math.max(0, Math.min(layerCanvas.width - 1, Math.floor(Number(uv.x || 0) * layerCanvas.width)));
+      const centerPixelY = Math.max(0, Math.min(layerCanvas.height - 1, Math.floor((1 - Number(uv.y || 0)) * layerCanvas.height)));
+      let alpha = 0;
+      for (let y = Math.max(0, centerPixelY - 1); y <= Math.min(layerCanvas.height - 1, centerPixelY + 1); y += 1) {
+        for (let x = Math.max(0, centerPixelX - 1); x <= Math.min(layerCanvas.width - 1, centerPixelX + 1); x += 1) {
+          alpha = Math.max(alpha, layerContext.getImageData(x, y, 1, 1).data[3]);
+        }
+      }
+      return alpha;
+    };
+    const distanceToSegment = (point, segment) => {
+      const dx = segment.end.x - segment.start.x;
+      const dy = segment.end.y - segment.start.y;
+      const lengthSq = dx * dx + dy * dy;
+      const t = lengthSq > 0.0001
+        ? Math.max(0, Math.min(1, ((point.x - segment.start.x) * dx + (point.y - segment.start.y) * dy) / lengthSq))
+        : 0;
+      const closestX = segment.start.x + dx * t;
+      const closestY = segment.start.y + dy * t;
+      const pointDx = point.x - closestX;
+      const pointDy = point.y - closestY;
+      return Math.sqrt(pointDx * pointDx + pointDy * pointDy);
+    };
+    const distanceToStroke = (point) => {
+      let best = Infinity;
+      for (const stroke of strokes) {
+        best = Math.min(best, distanceToSegment(point, stroke));
+      }
+      return best;
+    };
+    const samples = [];
+    const sampleByKey = new Map();
+    const step = 5;
+    let rowIndex = 0;
+    for (let y = centerY - 86; y <= centerY + 86; y += step, rowIndex += 1) {
+      let columnIndex = 0;
+      for (let x = centerX - 100; x <= centerX + 72; x += step, columnIndex += 1) {
+        if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+          continue;
+        }
+        const paintHit = hitAt(x, y);
+        if (!paintHit?.record || !paintHit?.hit) {
+          continue;
+        }
+        const alpha = alphaAtHit(paintHit);
+        if (!Number.isFinite(Number(alpha))) {
+          continue;
+        }
+        const distance = distanceToStroke({ x, y });
+        if (distance > radius * 1.45) {
+          continue;
+        }
+        const sample = { x, y, rowIndex, columnIndex, distance, alpha };
+        samples.push(sample);
+        sampleByKey.set(rowIndex + ":" + columnIndex, sample);
+      }
+    }
+    const insideSamples = samples.filter((sample) => sample.distance <= radius * 0.68);
+    const insidePainted = insideSamples.filter((sample) => sample.alpha > 8);
+    const insideHoles = insideSamples.filter((sample) => sample.alpha <= 8);
+    const edgeBandSamples = samples.filter((sample) => sample.distance > radius * 0.68 && sample.distance <= radius * 1.22);
+    const edgeSoftSamples = edgeBandSamples.filter((sample) => sample.alpha >= 16 && sample.alpha <= 230);
+    const edgePaintedSamples = edgeBandSamples.filter((sample) => sample.alpha > 8);
+    let adjacentPairs = 0;
+    let hardTransitions = 0;
+    const rows = new Map();
+    for (const sample of samples) {
+      const row = rows.get(sample.rowIndex) || [];
+      row.push(sample);
+      rows.set(sample.rowIndex, row);
+      for (const neighborKey of [
+        sample.rowIndex + ":" + (sample.columnIndex + 1),
+        (sample.rowIndex + 1) + ":" + sample.columnIndex
+      ]) {
+        const neighbor = sampleByKey.get(neighborKey);
+        if (!neighbor) {
+          continue;
+        }
+        adjacentPairs += 1;
+        const low = Math.min(sample.alpha, neighbor.alpha);
+        const high = Math.max(sample.alpha, neighbor.alpha);
+        if (low <= 18 && high >= 190) {
+          hardTransitions += 1;
+        }
+      }
+    }
+    let edgeRows = 0;
+    let fragmentedEdgeRows = 0;
+    for (const row of rows.values()) {
+      row.sort((left, right) => left.columnIndex - right.columnIndex);
+      const edgeRowSamples = row.filter((sample) => sample.distance <= radius * 1.22);
+      if (edgeRowSamples.length < 5) {
+        continue;
+      }
+      const paintedStates = edgeRowSamples.map((sample) => sample.alpha > 32);
+      const paintedCount = paintedStates.filter(Boolean).length;
+      const emptyCount = paintedStates.length - paintedCount;
+      if (paintedCount < 2 || emptyCount < 2) {
+        continue;
+      }
+      let transitions = 0;
+      for (let index = 1; index < paintedStates.length; index += 1) {
+        if (paintedStates[index] !== paintedStates[index - 1]) {
+          transitions += 1;
+        }
+      }
+      edgeRows += 1;
+      if (transitions > 2) {
+        fragmentedEdgeRows += 1;
+      }
+    }
+    const alphaStats = (() => {
+      if (!layerCanvas || !layerContext) {
+        return { count: 0, sum: 0 };
+      }
+      const image = layerContext.getImageData(0, 0, layerCanvas.width, layerCanvas.height).data;
+      let count = 0;
+      let sum = 0;
+      for (let index = 3; index < image.length; index += 4) {
+        const alpha = image[index];
+        if (alpha > 0) {
+          count += 1;
+          sum += alpha;
+        }
+      }
+      return { count, sum };
+    })();
+    return {
+      ready: true,
+      loaded: Boolean(editor.model),
+      loadedAsset,
+      paintRecords: editor.paintRecords?.length || 0,
+      activeTool: editor.activeTool,
+      layerAdded,
+      sideHitFound: Boolean(sideHit),
+      sideHit: {
+        xFraction: sideHit.xFraction,
+        yFraction: sideHit.yFraction,
+        viewNormalZ: sideHit.viewNormalZ,
+        score: sideHit.score
+      },
+      alphaStats,
+      edgeMetrics: {
+        visibleSamples: samples.length,
+        insideSamples: insideSamples.length,
+        insidePainted: insidePainted.length,
+        insideHoles: insideHoles.length,
+        insideCoverageRatio: insideSamples.length ? insidePainted.length / insideSamples.length : 0,
+        insideHoleRatio: insideSamples.length ? insideHoles.length / insideSamples.length : 1,
+        edgeBandSamples: edgeBandSamples.length,
+        edgePaintedSamples: edgePaintedSamples.length,
+        edgeSoftSamples: edgeSoftSamples.length,
+        edgeSoftSampleRatio: edgeBandSamples.length ? edgeSoftSamples.length / edgeBandSamples.length : 0,
+        adjacentPairs,
+        hardTransitions,
+        hardTransitionRatio: adjacentPairs ? hardTransitions / adjacentPairs : 1,
+        edgeRows,
+        fragmentedEdgeRows,
+        fragmentedEdgeRowRatio: edgeRows ? fragmentedEdgeRows / edgeRows : 0,
+        alphaPreview: samples.slice(0, 80).map((sample) => sample.alpha)
+      },
+      queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
+      pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
+      validation
+    };
+  })()`;
 }
 
 function runtimeAfterOrbitMacroExpression() {

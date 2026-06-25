@@ -1,5 +1,5 @@
 export const TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT = "rgba8unorm";
-export const TEXTURE_AIRBRUSH_WEBGPU_BRUSH_UNIFORM_BYTES = 64;
+export const TEXTURE_AIRBRUSH_WEBGPU_BRUSH_UNIFORM_BYTES = 80;
 export const TEXTURE_AIRBRUSH_WEBGPU_STROKE_SEGMENT_FLOATS = 4;
 export const TEXTURE_AIRBRUSH_WEBGPU_BYTES_PER_PIXEL = 4;
 export const TEXTURE_AIRBRUSH_WEBGPU_BYTES_PER_ROW_ALIGNMENT = 256;
@@ -73,6 +73,11 @@ export function textureAirbrushWebGpuTextureDescriptors(width, height, scope = g
       usage: usage.textureBinding | usage.copyDst
     },
     strokeSource: {
+      size,
+      format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
+      usage: usage.textureBinding | usage.copyDst
+    },
+    visibilityMask: {
       size,
       format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
       usage: usage.textureBinding | usage.copyDst
@@ -151,6 +156,11 @@ export function textureAirbrushWebGpuBindGroupLayoutEntries(scope = globalThis) 
     },
     {
       binding: 4,
+      visibility: compute,
+      texture: { sampleType: "float" }
+    },
+    {
+      binding: 5,
       visibility: compute,
       texture: { sampleType: "float" }
     }

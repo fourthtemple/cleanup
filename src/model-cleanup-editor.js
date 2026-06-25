@@ -41,7 +41,7 @@ import {
   installTextureAirbrushMethods,
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
-} from "./weight-editor/airbrush/index.js?v=visible-flat-visible-alpha-20260625a";
+} from "./weight-editor/airbrush/index.js";
 import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-await-airbrush-idle-20260624a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=layer-stroke-fix-20260619a";
 import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
@@ -689,6 +689,7 @@ async function loadOptionalWebGpuRenderer() {
     return null;
   }
   if (!textureAirbrushWebGpuRendererRequestedFromSearch(window.location?.search || "")) {
+    console.info("WebGPU renderer explicitly disabled; using WebGL.");
     return null;
   }
   if (!globalThis.navigator?.gpu) {

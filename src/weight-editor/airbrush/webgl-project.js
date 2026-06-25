@@ -1216,8 +1216,8 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
       shaderMaterial.uniforms.brushOpacity.value = options.opacity ?? this.textureAirbrushOpacity?.() ?? 0.42;
       shaderMaterial.uniforms.brushHardness.value = options.hardness ?? this.textureAirbrushHardness?.() ?? 0.35;
       shaderMaterial.uniforms.scatterAmount.value = options.scatter ?? this.textureAirbrushScatter?.() ?? 0.35;
+      const visibleEdgeMode = options.visibleEdgeMode || this.textureAirbrushVisibleEdgeMode?.() || "soft";
       if (shaderMaterial.uniforms.visibleEdgeSoftness) {
-        const visibleEdgeMode = options.visibleEdgeMode || this.textureAirbrushVisibleEdgeMode?.() || "soft";
         shaderMaterial.uniforms.visibleEdgeSoftness.value = visibleEdgeMode === "hard" ? 0 : 1;
       }
       if (shaderMaterial.uniforms.visibleOnlyDepthEpsilon) {
@@ -1359,14 +1359,26 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         // non-camera-facing side. Render only the exact UV pass; do not use
         // offset UV bleed as a shortcut for coverage.
         const bleedOffsets = [new THREE.Vector2()];
+        let uvFeatherApplied = false;
+        let livePatchRendered = false;
         for (const offset of bleedOffsets) {
           shaderMaterial.uniforms.uvOffset.value.copy(offset);
           this.renderer.setRenderTarget(pass.targetEntry.target);
           this.renderer.render(scene, this.textureAirbrushGpuCopyCamera);
+          if (visibleEdgeMode !== "hard" && useStrokeSource && !offset.x && !offset.y) {
+            uvFeatherApplied = this.textureAirbrushApplyUvFeatherToTarget?.(pass.targetEntry, {
+              strokeSourceTexture,
+              strokeSourceClear: strokeSourceSnapshot?.clear === true,
+              color,
+              erase: options.erase === true,
+              passes: 2
+            }) === true;
+          }
           if (
             liveCompositeTarget?.target
             && liveCompositeTarget.target !== pass.targetEntry.target
             && liveCompositeTarget.skipLiveBrushRender !== true
+            && uvFeatherApplied !== true
           ) {
             const layerOpacity = Number(liveCompositeTarget.activeLayerOpacity);
             const shouldVisualBlendLivePatch = options.erase !== true;
@@ -1400,6 +1412,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
             try {
               this.renderer.setRenderTarget(liveCompositeTarget.target);
               this.renderer.render(scene, this.textureAirbrushGpuCopyCamera);
+              livePatchRendered = true;
             } finally {
               if (shouldVisualBlendLivePatch) {
                 shaderMaterial.uniforms.brushOpacity.value = previousBrushOpacity;
@@ -1434,7 +1447,8 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
             || (
               forceDisplayCompositeRequested
               && liveCompositeTarget?.shaderComposite !== true
-            );
+            )
+            || uvFeatherApplied;
           if (forceDisplayCompositeRequested) {
             pass.targetEntry.forceDisplayCompositeOnce = false;
           }
@@ -1495,7 +1509,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
           }
           if (
             (
-              liveCompositeTarget?.target
+              livePatchRendered
               || liveBakedLayerDisplayRefreshed
               || firstPaintDisplayComposite
               || fastLayerDisplayRefreshed

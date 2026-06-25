@@ -250,6 +250,112 @@ export function installTextureAirbrushWebGlBackendMethods(BirdWeightEditor, deps
       return snapshot;
     },
 
+    textureAirbrushEnsureUvFeatherScratchTarget(targetEntry = null) {
+      const sourceTexture = targetEntry?.target?.texture || null;
+      if (!this.renderer || !sourceTexture || typeof THREE.WebGLRenderTarget !== "function") {
+        return null;
+      }
+      const width = Math.max(1, Math.round(targetEntry.width || targetEntry.target?.width || 1));
+      const height = Math.max(1, Math.round(targetEntry.height || targetEntry.target?.height || 1));
+      let scratch = targetEntry.uvFeatherScratchTarget || null;
+      if (!scratch || scratch.width !== width || scratch.height !== height) {
+        scratch?.dispose?.();
+        const settings = this.textureAirbrushRenderTextureSettings(sourceTexture);
+        scratch = new THREE.WebGLRenderTarget(width, height, {
+          minFilter: settings.minFilter,
+          magFilter: settings.magFilter,
+          wrapS: settings.wrapS,
+          wrapT: settings.wrapT,
+          depthBuffer: false,
+          stencilBuffer: false
+        });
+        scratch.texture.name = `${sourceTexture.name || "texture"} airbrush uv feather scratch`;
+        targetEntry.uvFeatherScratchTarget = scratch;
+      }
+      this.textureAirbrushCopyTextureRenderSettings?.(scratch.texture, sourceTexture);
+      return scratch;
+    },
+
+    textureAirbrushApplyUvFeatherToTarget(targetEntry = null, options = {}) {
+      const target = targetEntry?.target || null;
+      const paintedTexture = target?.texture || null;
+      const strokeSourceTexture = options.strokeSourceTexture || null;
+      const strokeSourceClear = options.strokeSourceClear === true;
+      if (
+        !this.renderer
+        || !target
+        || !paintedTexture
+        || (!strokeSourceTexture && !strokeSourceClear)
+      ) {
+        return false;
+      }
+      this.textureAirbrushEnsureCopyScene?.();
+      const material = this.textureAirbrushUvFeatherMaterial?.() || null;
+      const scratch = this.textureAirbrushEnsureUvFeatherScratchTarget?.(targetEntry);
+      if (
+        !material
+        || !scratch?.texture
+        || !this.textureAirbrushGpuCopyScene
+        || !this.textureAirbrushGpuCopyCamera
+        || !this.textureAirbrushGpuCopyMesh
+      ) {
+        return false;
+      }
+      const width = Math.max(1, Math.round(targetEntry.width || target.width || 1));
+      const height = Math.max(1, Math.round(targetEntry.height || target.height || 1));
+      const color = options.color || null;
+      if (material.uniforms.paintedTexture) {
+        material.uniforms.paintedTexture.value = scratch.texture;
+      }
+      if (material.uniforms.strokeSourceTexture) {
+        material.uniforms.strokeSourceTexture.value = strokeSourceTexture;
+      }
+      if (material.uniforms.useStrokeSourceTexture) {
+        material.uniforms.useStrokeSourceTexture.value = Boolean(strokeSourceTexture && !strokeSourceClear);
+      }
+      if (material.uniforms.strokeSourceClear) {
+        material.uniforms.strokeSourceClear.value = strokeSourceClear;
+      }
+      if (material.uniforms.paintColor && color) {
+        material.uniforms.paintColor.value.setRGB(color.r, color.g, color.b);
+      }
+      if (material.uniforms.texelSize) {
+        material.uniforms.texelSize.value.set(1 / width, 1 / height);
+      }
+      if (material.uniforms.featherStrength) {
+        material.uniforms.featherStrength.value = Math.max(0, Math.min(1, Number(options.featherStrength) || 0.72));
+      }
+      if (material.uniforms.eraseMode) {
+        material.uniforms.eraseMode.value = options.erase === true;
+      }
+      const passCount = Math.max(1, Math.min(3, Math.round(Number(options.passes) || 1)));
+      const previousTarget = this.renderer.getRenderTarget();
+      const previousAutoClear = this.renderer.autoClear;
+      try {
+        this.textureAirbrushGpuCopyMesh.material = material;
+        this.renderer.autoClear = false;
+        for (let passIndex = 0; passIndex < passCount; passIndex += 1) {
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // Multi-pass feathering widens only the already-authorized stroke
+          // delta in UV space. It does not add UV bleed offsets to projection
+          // and it does not relax the screen-depth/front-facing shader gates.
+          if (!this.textureAirbrushCopyTextureToTarget?.(target.texture, scratch)) {
+            return false;
+          }
+          this.renderer.setRenderTarget(target);
+          this.textureAirbrushWithRawTextureMatrix(scratch.texture, () => {
+            this.textureAirbrushWithRawTextureMatrix(strokeSourceTexture, () => {
+              this.renderer.render(this.textureAirbrushGpuCopyScene, this.textureAirbrushGpuCopyCamera);
+            });
+          });
+        }
+      } finally {
+        this.renderer.setRenderTarget(previousTarget);
+        this.renderer.autoClear = previousAutoClear;
+      }
+      return true;
+    },
+
     textureAirbrushLayerCompositeMaterial(opacity = 1) {
       if (!this.textureAirbrushGpuLayerCompositeMaterial) {
         this.textureAirbrushGpuLayerCompositeMaterial = new THREE.MeshBasicMaterial({

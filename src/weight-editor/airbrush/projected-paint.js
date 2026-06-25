@@ -78,20 +78,35 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
       const resolvedBackend = options.resolvedBackend && typeof options.resolvedBackend.backend === "string"
         ? options.resolvedBackend
         : null;
-      const backend = resolvedBackend || this.textureAirbrushResolveBackend?.(options) || {
+      const backendOptions = {
+        ...options,
+        visibleSurfaceMaskRequired: requireVisibleSurfaceShader,
+        liveProjectedPaint: requireVisibleSurfaceShader
+      };
+      const backend = resolvedBackend || this.textureAirbrushResolveBackend?.(backendOptions) || {
         backend: !this.textureAirbrushGpuDisabled ? "webgl" : "cpu",
         webGpuStatus: "not-installed"
       };
-      if (backend.backend === "webgpu") {
+      if (backend.backend === "webgpu" && requireVisibleSurfaceShader) {
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
-        // The WebGPU texture brush is disabled for live airbrush until it has
+        // The current WebGPU texture brush is not a live projection brush until it has
         // the same camera-visible/frontmost-depth mask as the WebGL shader.
-        // Do not re-enable this as a workaround for post-orbit holes; that
-        // would bypass the approved visible-side-only shader contract.
-        this.textureAirbrushWebGpuDisabled = true;
-        this.setStatus?.("Airbrush WebGPU path disabled: visible-surface depth mask required.");
+        // Do not route live airbrush here as a workaround for WebGL migration;
+        // that would bypass the approved visible-side-only shader contract.
+        this.textureAirbrushReportWebGpuFallback?.({
+          backend: "webgl",
+          webGpuStatus: "visible-surface-mask-required"
+        });
+        return 0;
+      }
+      if (backend.backend === "none") {
+        this.textureAirbrushReportWebGpuFallback?.(backend);
+        if (requireVisibleSurfaceShader) {
+          this.setStatus?.("Live airbrush needs a WebGPU visible-surface mask before the WebGL projection brush can be removed.");
+        }
+        return 0;
       }
       if (backend.backend !== "webgpu") {
         this.textureAirbrushReportWebGpuFallback?.(backend);

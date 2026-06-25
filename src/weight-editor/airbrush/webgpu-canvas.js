@@ -145,6 +145,7 @@ export function textureAirbrushPrewarmEditableWebGpuPaint(editor = null, editabl
   }
   const resources = textureAirbrushCreateWebGpuPaintResources(device, prepared.payload, {
     sourcePixels: prepared.sourcePixels,
+    visibilityMaskPixels: options.visibilityMaskPixels || null,
     readback: false,
     reuseResources,
     uploadSource: true,
@@ -215,6 +216,7 @@ export async function textureAirbrushRunEditableWebGpuPaint(editor = null, edita
   const run = textureAirbrushRunWebGpuPaint(device, prepared.payload, {
     sourcePixels: needsSource ? prepared.sourcePixels : null,
     strokeSourcePixels,
+    visibilityMaskPixels: options.visibilityMaskPixels || null,
     readback: true,
     reuseResources,
     uploadSource: needsSource,

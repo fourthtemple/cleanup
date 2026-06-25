@@ -27,6 +27,7 @@ function reusablePaintResources(resources = null, payload = null) {
     || !resources.bindGroup
     || !resources.sourceTexture
     || !resources.strokeSourceTexture
+    || !resources.visibilityMaskTexture
     || !resources.outputTexture
     || !resources.uniformBuffer
     || !resources.strokeBuffer
@@ -50,20 +51,46 @@ function reusableReadbackBuffer(resources = null, plan = null) {
   return null;
 }
 
-function textureAirbrushUploadWebGpuSourceTexture(device, texture, sourcePixels, plan) {
-  if (!sourcePixels || !device?.queue?.writeTexture || !texture || !plan) {
+function textureAirbrushDefaultVisibleMaskPixels(plan) {
+  const byteLength = Math.max(1, Math.floor(Number(plan?.width) || 1))
+    * Math.max(1, Math.floor(Number(plan?.height) || 1))
+    * 4;
+  const pixels = new Uint8Array(byteLength);
+  pixels.fill(255);
+  return pixels;
+}
+
+function textureAirbrushUploadWebGpuTexture(device, texture, pixels, plan, textureDescriptor = null) {
+  if (!pixels || !device?.queue?.writeTexture || !texture || !plan) {
     return false;
   }
   device.queue.writeTexture(
     { texture },
-    sourcePixels,
+    pixels,
     {
       bytesPerRow: plan.width * 4,
       rowsPerImage: plan.height
     },
-    plan.textures.source.size
+    (textureDescriptor || plan.textures.source).size
   );
   return true;
+}
+
+function textureAirbrushUploadWebGpuSourceTexture(device, texture, sourcePixels, plan) {
+  return textureAirbrushUploadWebGpuTexture(device, texture, sourcePixels, plan, plan.textures.source);
+}
+
+function textureAirbrushUploadWebGpuVisibilityMaskTexture(device, texture, visibilityMaskPixels, plan) {
+  if (!visibilityMaskPixels && !plan?.params?.useVisibilityMask) {
+    return false;
+  }
+  return textureAirbrushUploadWebGpuTexture(
+    device,
+    texture,
+    visibilityMaskPixels || textureAirbrushDefaultVisibleMaskPixels(plan),
+    plan,
+    plan.textures.visibilityMask
+  );
 }
 
 export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
@@ -72,8 +99,10 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
   readback = false,
   label = "texture-airbrush",
   reuseResources = null,
+  visibilityMaskPixels = null,
   uploadSource = true,
   uploadStrokeSource = strokeSourcePixels ? true : uploadSource,
+  uploadVisibilityMask = null,
   entryPoint = "textureAirbrushPaint"
 } = {}) {
   const plan = payload?.plan;
@@ -81,6 +110,9 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
   if (!device || !plan || typeof source !== "string") {
     return null;
   }
+  const shouldUploadVisibilityMask = uploadVisibilityMask === null
+    ? Boolean(visibilityMaskPixels || plan.params?.useVisibilityMask)
+    : uploadVisibilityMask !== false;
 
   if (reusablePaintResources(reuseResources, payload)) {
     const readbackBuffer = readback
@@ -106,6 +138,14 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
         device,
         resources.strokeSourceTexture,
         strokeSourcePixels || sourcePixels,
+        plan
+      );
+    }
+    if (shouldUploadVisibilityMask) {
+      textureAirbrushUploadWebGpuVisibilityMaskTexture(
+        device,
+        resources.visibilityMaskTexture,
+        visibilityMaskPixels,
         plan
       );
     }
@@ -140,6 +180,10 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
     label: `${label}-stroke-source-texture`,
     ...plan.textures.strokeSource
   });
+  const visibilityMaskTexture = device.createTexture({
+    label: `${label}-visibility-mask-texture`,
+    ...plan.textures.visibilityMask
+  });
   const outputTexture = device.createTexture({
     label: `${label}-output-texture`,
     ...plan.textures.output
@@ -166,6 +210,9 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
   writeBufferData(device.queue, strokeBuffer, plan.buffers.strokes.data);
   textureAirbrushUploadWebGpuSourceTexture(device, sourceTexture, sourcePixels, plan);
   textureAirbrushUploadWebGpuSourceTexture(device, strokeSourceTexture, strokeSourcePixels || sourcePixels, plan);
+  if (shouldUploadVisibilityMask) {
+    textureAirbrushUploadWebGpuVisibilityMaskTexture(device, visibilityMaskTexture, visibilityMaskPixels, plan);
+  }
 
   const bindGroup = device.createBindGroup({
     label: `${label}-bind-group`,
@@ -190,6 +237,10 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
       {
         binding: 4,
         resource: strokeSourceTexture.createView()
+      },
+      {
+        binding: 5,
+        resource: visibilityMaskTexture.createView()
       }
     ]
   });
@@ -205,6 +256,7 @@ export function textureAirbrushCreateWebGpuPaintResources(device, payload, {
     pipeline,
     sourceTexture,
     strokeSourceTexture,
+    visibilityMaskTexture,
     outputTexture,
     uniformBuffer,
     strokeBuffer,

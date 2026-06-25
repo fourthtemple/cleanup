@@ -2137,7 +2137,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           : null;
         const shouldUseSharedBackend = !anyCpuOnlyLayerBatch && (liveFlush || batches.length > 1 || anyLayerGpuPaintBatch);
         const backend = shouldUseSharedBackend
-          ? this.textureAirbrushResolveBackend?.({ gpu: true })
+          ? this.textureAirbrushResolveBackend?.({
+              gpu: true,
+              liveProjectedPaint: true,
+              visibleSurfaceMaskRequired: true
+            })
           : null;
         const useFullLayerSeededFrame = anyLayerGpuPaintBatch
           && (

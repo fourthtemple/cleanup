@@ -26,10 +26,13 @@ import {
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // This shader intentionally uses BOTH visibility gates:
-// 1. camera-facing geometric normal gate, so back-facing triangles are never eligible;
+// 1. camera-facing normal gates, so back-facing surfaces are never eligible;
 // 2. exact frontmost depth-buffer match, so hidden/behind/ahead fragments are never eligible.
-// Removing either gate can make the brush look more filled, but that is the
-// forbidden failure mode: painting through the model or onto the back side.
+// Hard edge uses the raw geometric normal. Soft edge may use the smoothed
+// frontmost normal only after exact current-depth agreement, so visible side
+// strokes can fade smoothly without painting through the model or onto the back
+// side. Removing either gate can make the brush look more filled, but that is
+// the forbidden failure mode.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.00018;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // Front and behind depth both stay strict. Keep this as a separate uniform so
@@ -44,7 +47,8 @@ const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = 0;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // The UV paint fragment has to agree tightly with the front-visible geometric
 // normal near the visible wrap. Clearly front-facing fragments get a bounded
-// normal relaxation below so the brush does not reveal triangle-facet teeth.
+// normal relaxation below only after a strict current-depth match, so the brush
+// does not reveal triangle-facet teeth while still rejecting hidden surfaces.
 const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.82;
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {
@@ -232,17 +236,25 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return paintFragmentGeometricViewNormal();
           }
 
-          float visibleSurfaceNormalMatchThreshold(vec3 visibleNormal, vec3 paintGateViewNormal, float normalMatchThreshold);
+          float visibleSurfaceNormalMatchThreshold(vec3 visibleNormal, vec3 paintMatchViewNormal, float normalMatchThreshold, float deltaFromVisibleSurface);
 
-          bool visibleSurfaceDepthNormalMatch(vec2 sampleUv, float fragmentDepth, vec3 paintGateViewNormal, float normalMatchThreshold) {
+          bool visibleSurfaceDepthNormalMatch(
+            vec2 sampleUv,
+            float fragmentDepth,
+            vec3 paintMatchViewNormal,
+            float normalMatchThreshold,
+            bool allowMissingVisibleNormal
+          ) {
             if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {
               return false;
             }
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // The visibility match itself refuses below-cutoff geometry. Keep
-            // this guard here as well as in main() so helper reuse cannot turn
-            // into a hidden/back-side paint path.
-            if (paintGateViewNormal.z <= visibleFacingNormalThreshold) {
+            // this guard here so helper reuse cannot turn into a hidden/back-
+            // side paint path. Soft edge may pass the smoothed normal into this
+            // helper, but the fragment still has to match the current frontmost
+            // depth buffer before any paint is written.
+            if (paintMatchViewNormal.z <= visibleFacingNormalThreshold) {
               return false;
             }
             float sceneDepth = texture2D(depthTexture, sampleUv).r;
@@ -257,21 +269,32 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             vec3 visibleNormal = vec3(0.0, 0.0, -1.0);
             float visibleNormalLength = 0.0;
             float visibleNormalDot = -1.0;
+            bool missingVisibleNormal = false;
             if (useVisibleNormalTexture) {
               visibleNormal = texture2D(visibleNormalTexture, sampleUv).rgb * 2.0 - 1.0;
               visibleNormalLength = length(visibleNormal);
               if (visibleNormalLength <= 0.000001) {
-                return false;
+                if (!allowMissingVisibleNormal) {
+                  return false;
+                }
+                missingVisibleNormal = true;
+              } else {
+                visibleNormal = visibleNormal / visibleNormalLength;
+                // DO NOT PAINT ON NON CAMERA FACING SIDES.
+                // The sampled front-surface authority also has to face the camera.
+                // Clear/background normals decode to a negative z vector; this
+                // check keeps them from acting like valid wrap coverage.
+                if (visibleNormal.z <= visibleFacingNormalThreshold) {
+                  return false;
+                }
+                visibleNormalDot = dot(visibleNormal, paintMatchViewNormal);
               }
-              visibleNormal = visibleNormal / visibleNormalLength;
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // The sampled front-surface authority also has to face the camera.
-              // Clear/background normals decode to a negative z vector; this
-              // check keeps them from acting like valid wrap coverage.
-              if (visibleNormal.z <= visibleFacingNormalThreshold) {
+            }
+            if (missingVisibleNormal && paintMatchViewNormal.z <= visibleFacingNormalThreshold + 0.02) {
+              // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
+              // A missing visible-normal texel is tolerated only for a clearly
+              // camera-facing smoothed normal. It is not a back-side fallback.
                 return false;
-              }
-              visibleNormalDot = dot(visibleNormal, paintGateViewNormal);
             }
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // The front-depth allowance is intentionally the same strict size as
@@ -291,6 +314,18 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             ) {
               return false;
             }
+            if (missingVisibleNormal) {
+              // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
+              // Soft edge can fill a faceted normal-buffer gap only when this
+              // fragment is almost exactly the current frontmost depth. This
+              // targets visible triangle teeth without resurrecting the old
+              // depth-only "close enough" leak around wraps.
+              float missingNormalDepthError = abs(deltaFromVisibleSurface) / max(visibleOnlyDepthEpsilon, 0.000001);
+              if (missingNormalDepthError > 0.24) {
+                return false;
+              }
+              return true;
+            }
             if (useVisibleNormalTexture) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
               // A nearby depth sample is useful only when its frontmost normal
@@ -302,8 +337,9 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // surface.
               float effectiveNormalMatchThreshold = visibleSurfaceNormalMatchThreshold(
                 visibleNormal,
-                paintGateViewNormal,
-                normalMatchThreshold
+                paintMatchViewNormal,
+                normalMatchThreshold,
+                deltaFromVisibleSurface
               );
               if (visibleNormalDot < effectiveNormalMatchThreshold) {
                 return false;
@@ -312,33 +348,169 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return true;
           }
 
-          float visibleSurfaceNormalMatchThreshold(vec3 visibleNormal, vec3 paintGateViewNormal, float normalMatchThreshold) {
+          float visibleSurfaceNormalMatchThreshold(vec3 visibleNormal, vec3 paintMatchViewNormal, float normalMatchThreshold, float deltaFromVisibleSurface) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This relaxes only the normal-dot tolerance for fragments that are
             // already camera-facing on both the visible buffer and the paint
-            // fragment. Depth stays strict and the z > 0 gates above stay
-            // mandatory. The first tiny band above the 90-degree wrap stays
-            // strict so a side/back fragment cannot masquerade as visible, but
-            // front-facing cloth triangles get tolerance before their normals
-            // stamp dark triangular teeth into the stroke.
-            float frontFacingStrength = min(visibleNormal.z, paintGateViewNormal.z);
-            float frontFacingRelax = smoothstep(
-              visibleFacingNormalThreshold + 0.04,
-              visibleFacingNormalThreshold + 0.36,
+            // fragment AND already matched the current frontmost depth. Depth
+            // stays strict and the z > 0 gates above stay mandatory. This is
+            // not a hidden-side rescue path: any fragment past the strict depth
+            // epsilon, or at/below the 90-degree camera-facing cutoff, has
+            // already returned false before this tolerance is considered.
+            float frontFacingStrength = min(visibleNormal.z, paintMatchViewNormal.z);
+            float cameraFacingConfidence = smoothstep(
+              visibleFacingNormalThreshold + 0.002,
+              visibleFacingNormalThreshold + 0.06,
               frontFacingStrength
             );
-            return mix(normalMatchThreshold, 0.55, frontFacingRelax);
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Relax the normal-dot match only at the exact current depth. When
+            // the depth delta approaches the strict visible epsilon, return to
+            // the tighter threshold so a nearby fold/wrap cannot receive paint
+            // just because its depth value is close.
+            float normalizedDepthError = abs(deltaFromVisibleSurface) / max(visibleOnlyDepthEpsilon, 0.000001);
+            float exactDepthConfidence = 1.0 - smoothstep(0.18, 0.82, normalizedDepthError);
+            float safeVisibleRelax = cameraFacingConfidence * exactDepthConfidence;
+            return mix(normalMatchThreshold, 0.18, safeVisibleRelax);
+          }
+
+          float visibleSurfaceGrazingFeatherEnd() {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This controls only alpha on fragments that already passed the
+            // center visible-surface gates. Larger brushes get a broader
+            // visible-side spray falloff; hard mode sets visibleEdgeSoftness to
+            // zero and bypasses this entirely.
+            float radiusScale = clamp(radiusPixels / 48.0, 0.0, 1.0);
+            return visibleFacingNormalThreshold + mix(0.18, 0.42, radiusScale);
+          }
+
+          float visibleSurfaceSoftEdgeAmount(vec3 paintFadeViewNormal) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This is alpha-only and uses the smoothed paint normal so the
+            // visible edge eases like an airbrush instead of stepping along raw
+            // triangle normals. It never makes a failed depth/normal fragment
+            // eligible for paint.
+            float grazingStart = visibleFacingNormalThreshold + 0.02;
+            float grazingEnd = visibleSurfaceGrazingFeatherEnd();
+            return 1.0 - smoothstep(grazingStart, grazingEnd, paintFadeViewNormal.z);
           }
 
           float visibleSurfaceSoftAlphaCoverage(vec3 paintFadeViewNormal, vec3 paintGateViewNormal) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This coverage is alpha-only after the center fragment already
-            // passed strict visible depth/normal eligibility. Do not modulate
-            // that visible fragment by paintFadeViewNormal or paintGateViewNormal
-            // angles here: normal-angle opacity is what makes side strokes show
-            // dark triangle faces. Once visibility is proven, the soft airbrush
-            // mark comes from brush distance/hardness/scatter below.
-            return 1.0;
+            // passed strict visible depth/normal eligibility. The geometric
+            // normal is still used by the hard discard gates before this helper;
+            // do not use this smooth fade as permission to paint through or
+            // behind the current frontmost surface.
+            float angleCoverage = smoothstep(
+              visibleFacingNormalThreshold,
+              visibleSurfaceGrazingFeatherEnd(),
+              paintFadeViewNormal.z
+            );
+            // Keep a low floor on already-visible fragments so Soft edge reads
+            // as feathered paint rather than missing visible triangle faces.
+            return mix(0.28, 1.0, pow(angleCoverage, 0.7));
+          }
+
+          float visibleSurfaceUvFeatherCoverage(vec3 paintFadeViewNormal, vec3 paintGateViewNormal) {
+            // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
+            // This is the missing piece for Soft edge: a frontmost fragment
+            // whose flat triangle normal sits just past the cutoff can receive
+            // a reduced UV-feather amount if the smoothed surface normal still
+            // faces the camera. It is not a depth bypass, not a Neighbor bypass,
+            // and not permission to paint around the back of the model.
+            float smoothFacing = smoothstep(
+              visibleFacingNormalThreshold,
+              visibleSurfaceGrazingFeatherEnd(),
+              paintFadeViewNormal.z
+            );
+            float geometricNearCutoff = smoothstep(
+              visibleFacingNormalThreshold - 0.34,
+              visibleFacingNormalThreshold + 0.08,
+              paintGateViewNormal.z
+            );
+            return 0.72 * smoothFacing * geometricNearCutoff;
+          }
+
+          float visibleSurfaceToothMaskSample(vec2 sampleUv, vec3 paintFadeViewNormal) {
+            // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
+            // This helper never grants paint eligibility. It reads the local
+            // visibility mask only so already-visible fragments can fade out
+            // before the edge turns into a jagged triangle comb.
+            if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {
+              return 0.0;
+            }
+            float sceneDepth = texture2D(depthTexture, sampleUv).r;
+            if (sceneDepth >= 0.9999) {
+              return 0.0;
+            }
+            if (!useVisibleNormalTexture) {
+              return 1.0;
+            }
+            vec3 visibleNormal = texture2D(visibleNormalTexture, sampleUv).rgb * 2.0 - 1.0;
+            float visibleNormalLength = length(visibleNormal);
+            if (visibleNormalLength <= 0.000001) {
+              return 0.0;
+            }
+            visibleNormal /= visibleNormalLength;
+            if (visibleNormal.z <= visibleFacingNormalThreshold) {
+              return 0.0;
+            }
+            float facing = smoothstep(
+              visibleFacingNormalThreshold,
+              visibleFacingNormalThreshold + 0.10,
+              visibleNormal.z
+            );
+            float normalAgreement = smoothstep(
+              0.06,
+              0.48,
+              dot(visibleNormal, paintFadeViewNormal)
+            );
+            return facing * normalAgreement;
+          }
+
+          float visibleSurfaceToothFeatherCoverage(vec2 depthUv, vec3 paintFadeViewNormal) {
+            // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
+            // Special side-edge algorithm: detect whether the current visible
+            // fragment sits in a mixed visible/invisible neighborhood. That is
+            // where the hard per-triangle visibility mask creates the teeth in
+            // side strokes. This is alpha-only for an already-visible fragment;
+            // failed center fragments are still discarded below.
+            vec2 screenPixel = 1.0 / max(viewportSize, vec2(1.0));
+            float radiusScale = clamp(radiusPixels / 48.0, 0.0, 1.0);
+            float featherPixels = mix(4.0, 18.0, radiusScale);
+            vec2 axis = screenPixel * featherPixels;
+            vec2 halfAxis = axis * 0.5;
+            float maskSum = visibleSurfaceToothMaskSample(depthUv, paintFadeViewNormal) * 0.22;
+            float weightSum = 0.22;
+
+            maskSum += visibleSurfaceToothMaskSample(depthUv + vec2(halfAxis.x, 0.0), paintFadeViewNormal) * 0.10;
+            maskSum += visibleSurfaceToothMaskSample(depthUv - vec2(halfAxis.x, 0.0), paintFadeViewNormal) * 0.10;
+            maskSum += visibleSurfaceToothMaskSample(depthUv + vec2(0.0, halfAxis.y), paintFadeViewNormal) * 0.10;
+            maskSum += visibleSurfaceToothMaskSample(depthUv - vec2(0.0, halfAxis.y), paintFadeViewNormal) * 0.10;
+            weightSum += 0.40;
+
+            maskSum += visibleSurfaceToothMaskSample(depthUv + vec2(axis.x, 0.0), paintFadeViewNormal) * 0.08;
+            maskSum += visibleSurfaceToothMaskSample(depthUv - vec2(axis.x, 0.0), paintFadeViewNormal) * 0.08;
+            maskSum += visibleSurfaceToothMaskSample(depthUv + vec2(0.0, axis.y), paintFadeViewNormal) * 0.08;
+            maskSum += visibleSurfaceToothMaskSample(depthUv - vec2(0.0, axis.y), paintFadeViewNormal) * 0.08;
+            weightSum += 0.32;
+
+            maskSum += visibleSurfaceToothMaskSample(depthUv + axis, paintFadeViewNormal) * 0.045;
+            maskSum += visibleSurfaceToothMaskSample(depthUv - axis, paintFadeViewNormal) * 0.045;
+            maskSum += visibleSurfaceToothMaskSample(depthUv + vec2(axis.x, -axis.y), paintFadeViewNormal) * 0.045;
+            maskSum += visibleSurfaceToothMaskSample(depthUv + vec2(-axis.x, axis.y), paintFadeViewNormal) * 0.045;
+            weightSum += 0.18;
+
+            return clamp(maskSum / max(weightSum, 0.0001), 0.0, 1.0);
+          }
+
+          float visibleSurfaceToothFeatherAlpha(vec2 depthUv, vec3 paintFadeViewNormal) {
+            float maskCoverage = visibleSurfaceToothFeatherCoverage(depthUv, paintFadeViewNormal);
+            // Fade the visible side toward zero near a fragmented visibility
+            // boundary. Interior fragments stay unchanged, while mixed
+            // visible/invisible neighborhoods become a smooth airbrush edge.
+            return smoothstep(0.30, 0.98, maskCoverage);
           }
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
@@ -463,11 +635,28 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               depthUv,
               fragmentDepth,
               paintGateViewNormal,
-              visibleNormalMatchThreshold
+              visibleNormalMatchThreshold,
+              false
             );
             float edgeSoftness = clamp(visibleEdgeSoftness, 0.0, 1.0);
-            bool centerVisibleSurfaceMatched = visibleSurfaceMatched;
-            if (paintGateViewNormal.z <= visibleFacingNormalThreshold) {
+            bool softUvFeatherSurfaceMatched = false;
+            if (!visibleSurfaceMatched && edgeSoftness > 0.0 && useVisibleNormalTexture) {
+              // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
+              // Soft edge gets one extra chance using the smoothed normal, but
+              // only through the same current frontmost-depth/visible-normal
+              // matcher. This fills the triangle-tooth silhouette seen at side
+              // strokes without resurrecting the unsafe depth-neighborhood or
+              // offset-UV bleed paths.
+              softUvFeatherSurfaceMatched = visibleSurfaceDepthNormalMatch(
+                depthUv,
+                fragmentDepth,
+                paintFadeViewNormal,
+                visibleNormalMatchThreshold,
+                true
+              );
+            }
+            bool centerVisibleSurfaceMatched = visibleSurfaceMatched || softUvFeatherSurfaceMatched;
+            if (paintGateViewNormal.z <= visibleFacingNormalThreshold && !softUvFeatherSurfaceMatched) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
               // Softness is only allowed on the camera-facing side of the
               // cutoff. Even an exact depth/normal match is not permission to
@@ -479,29 +668,61 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Center-visible fragments are already proven visible by the
             // current frontmost depth/normal buffers and the geometric z > 0
-            // discard. Do not apply a normal-angle visible-edge fade here:
-            // that fade turns side-painted strokes into dark triangular face
-            // stamps. Soft airbrush behavior comes from the brush coverage math
-            // below; hidden/back fragments still discard before any paint lands.
-            if (centerVisibleSurfaceMatched && useVisibleNormalTexture && edgeSoftness > 0.0) {
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // This helper intentionally returns 1.0. Keep the call so future
-              // edits have an obvious, tested place explaining why visible
-              // fragments must not be darkened by triangle normal angles.
-              visibleSurfaceCoverage = visibleSurfaceSoftAlphaCoverage(paintFadeViewNormal, paintGateViewNormal);
+            // discard. Soft mode may only reduce alpha for these already-visible
+            // fragments; it must never make a hidden or rejected fragment eligible.
+            if (visibleSurfaceMatched && useVisibleNormalTexture && edgeSoftness > 0.0) {
+              float centerGrazingEdgeAmount = visibleSurfaceSoftEdgeAmount(paintFadeViewNormal) * edgeSoftness;
+              if (centerGrazingEdgeAmount > 0.0) {
+                // DO NOT PAINT ON NON CAMERA FACING SIDES.
+                // This is a visible-side-only alpha fade. It never repairs a
+                // failed center depth/normal match, never lowers the geometric
+                // camera-facing cutoff, and never paints the hidden/back side.
+                float softCenterVisibleCoverage = visibleSurfaceSoftAlphaCoverage(paintFadeViewNormal, paintGateViewNormal);
+                visibleSurfaceCoverage = mix(1.0, softCenterVisibleCoverage, centerGrazingEdgeAmount);
+              }
             }
-            if (!visibleSurfaceMatched) {
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            if (softUvFeatherSurfaceMatched && !visibleSurfaceMatched) {
+              // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
+              // The raw triangle failed, but the current screen pixel still
+              // depth-matched the frontmost visible surface using the smoothed
+              // normal. Keep this alpha-limited; it is the UV soft fringe, not
+              // a full-strength hidden-side stroke.
+              visibleSurfaceCoverage = min(
+                visibleSurfaceCoverage,
+                visibleSurfaceUvFeatherCoverage(paintFadeViewNormal, paintGateViewNormal) * edgeSoftness
+              );
+              if (visibleSurfaceCoverage <= 0.012) {
+                discard;
+              }
+            }
+            if (!centerVisibleSurfaceMatched) {
+              // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
               // A center fragment that fails the current frontmost depth/normal
-              // match is a hard reject. Do not borrow neighboring depth/normal
-              // samples to make it eligible; that draws around the visible edge
-              // and onto the side/back at cloth and leg wraps.
+              // match is a hard reject. Soft mode may retry the same center
+              // sample with the smoothed normal, but it must not borrow
+              // neighboring depth/normal samples or offset UVs to make an
+              // actually hidden fragment eligible.
               //
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
               // Soft edge behavior above only reduces alpha after this center
-              // visible-surface match has already succeeded. It must never turn
-              // an unmatched fragment into painted texture.
+              // visible-surface match has already succeeded with either the
+              // geometric normal or the smoothed UV-feather normal.
               discard;
+            }
+            if (edgeSoftness > 0.0 && useVisibleNormalTexture) {
+              // DO NOT PAINT HIDDEN OR DEPTH-OCCLUDED SURFACES.
+              // The tooth detector is alpha-only and runs only after the
+              // center fragment has already matched the current visible
+              // surface. It blends out the visible-to-invisible edge instead of
+              // painting the invisible side.
+              visibleSurfaceCoverage *= mix(
+                1.0,
+                visibleSurfaceToothFeatherAlpha(depthUv, paintFadeViewNormal),
+                edgeSoftness
+              );
+              if (visibleSurfaceCoverage <= 0.012) {
+                discard;
+              }
             }
             vec2 screenPoint = vec2(
               (ndc.x * 0.5 + 0.5) * viewportSize.x,
@@ -626,19 +847,27 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             vec3 visibleGeometricNormal = cross(dFdx(vAirbrushVisibleViewPosition), dFdy(vAirbrushVisibleViewPosition));
             visibleGeometricNormal *= gl_FrontFacing ? 1.0 : -1.0;
             float visibleGeometricLength = length(visibleGeometricNormal);
-            vec3 visibleNormal = visibleGeometricLength > 0.000001
+            vec3 visibleGateNormal = visibleGeometricLength > 0.000001
               ? normalize(visibleGeometricNormal)
               : normalize(vAirbrushVisibleNormal);
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // The normal buffer stores geometric front-visible normals, not
-            // smoothed vertex normals. This texture is an eligibility authority
-            // for the paint shader; smoothing it can make a near-wrap/back
-            // fragment look compatible with the current visible side. Keep
-            // visual smoothing in alpha after a fragment is proven visible, not
-            // in the visibility buffer that decides whether paint is allowed.
-            if (visibleNormal.z <= 0.0) {
-              discard;
+            vec3 visibleSmoothNormal = normalize(vAirbrushVisibleNormal);
+            if (length(visibleSmoothNormal) <= 0.000001) {
+              visibleSmoothNormal = visibleGateNormal;
             }
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Do not discard here. This pass owns the frontmost depth buffer,
+            // and a discard at the 90-degree side edge turns the airbrush mask
+            // into raw triangle teeth before the paint shader can apply a soft
+            // falloff. Store the smoothed normal instead; the paint shader still
+            // rejects decoded normals at/below the camera-facing cutoff and it
+            // still requires exact frontmost depth before any paint is written.
+            //
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Do not clamp z positive here. A negative smoothed normal must
+            // decode as negative so the paint shader can reject it. The only
+            // smoothing allowed is the paint shader's exact-depth soft edge on
+            // the current rendered visible surface.
+            vec3 visibleNormal = normalize(visibleSmoothNormal);
             gl_FragColor = vec4(visibleNormal * 0.5 + 0.5, 1.0);
           }
         `
@@ -685,6 +914,163 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
       }
       this.textureAirbrushGpuCopyMaterial.needsUpdate = true;
       return this.textureAirbrushGpuCopyMaterial;
+    },
+
+    textureAirbrushUvFeatherMaterial() {
+      if (!this.textureAirbrushGpuUvFeatherMaterial) {
+        this.textureAirbrushGpuUvFeatherMaterial = new THREE.ShaderMaterial({
+          depthTest: false,
+          depthWrite: false,
+          transparent: false,
+          blending: THREE.NoBlending,
+          uniforms: {
+            paintedTexture: { value: null },
+            strokeSourceTexture: { value: null },
+            useStrokeSourceTexture: { value: false },
+            strokeSourceClear: { value: false },
+            paintColor: { value: new THREE.Color(1, 1, 1) },
+            texelSize: { value: new THREE.Vector2(1, 1) },
+            featherStrength: { value: 0.72 },
+            eraseMode: { value: false }
+          },
+          vertexShader: `
+            varying vec2 vUv;
+
+            void main() {
+              vUv = uv;
+              gl_Position = vec4(position.xy, 0.0, 1.0);
+            }
+          `,
+          fragmentShader: `
+            precision highp float;
+
+            uniform sampler2D paintedTexture;
+            uniform sampler2D strokeSourceTexture;
+            uniform bool useStrokeSourceTexture;
+            uniform bool strokeSourceClear;
+            uniform vec3 paintColor;
+            uniform vec2 texelSize;
+            uniform float featherStrength;
+            uniform bool eraseMode;
+            varying vec2 vUv;
+
+            vec4 sourceColorAt(vec2 uv) {
+              if (strokeSourceClear || !useStrokeSourceTexture) {
+                return vec4(0.0);
+              }
+              return texture2D(strokeSourceTexture, uv);
+            }
+
+            float strokePaintProgress(vec4 color, vec4 sourceColor) {
+              if (eraseMode) {
+                return clamp((sourceColor.a - color.a) / max(0.0001, sourceColor.a), 0.0, 1.0);
+              }
+              vec3 paintDelta = paintColor - sourceColor.rgb;
+              vec3 colorDelta = color.rgb - sourceColor.rgb;
+              float colorDenom = dot(paintDelta, paintDelta);
+              float colorProgress = colorDenom > 0.0001
+                ? dot(colorDelta, paintDelta) / colorDenom
+                : 0.0;
+              float alphaProgress = sourceColor.a < 0.9999
+                ? (color.a - sourceColor.a) / max(0.0001, 1.0 - sourceColor.a)
+                : 0.0;
+              if (sourceColor.a < 0.9999) {
+                return clamp(alphaProgress, 0.0, 1.0);
+              }
+              return clamp(colorProgress, 0.0, 1.0);
+            }
+
+            vec4 composeStrokeColor(vec4 sourceColor, float alpha) {
+              alpha = clamp(alpha, 0.0, 1.0);
+              if (eraseMode) {
+                return vec4(sourceColor.rgb, sourceColor.a * (1.0 - alpha));
+              }
+              float nextAlpha = alpha + sourceColor.a * (1.0 - alpha);
+              vec3 nextRgb = nextAlpha > 0.0001
+                ? (paintColor * alpha + sourceColor.rgb * sourceColor.a * (1.0 - alpha)) / nextAlpha
+                : vec3(0.0);
+              return vec4(nextRgb, nextAlpha);
+            }
+
+            float sampleStrokeProgress(vec2 uv) {
+              vec4 sampleSource = sourceColorAt(uv);
+              vec4 samplePainted = texture2D(paintedTexture, uv);
+              return strokePaintProgress(samplePainted, sampleSource);
+            }
+
+            void addFeatherSample(vec2 offset, float weight, inout float progressSum, inout float weightSum, inout float maxProgress) {
+              float progress = sampleStrokeProgress(clamp(vUv + offset, vec2(0.0), vec2(1.0)));
+              progressSum += progress * weight;
+              weightSum += weight;
+              maxProgress = max(maxProgress, progress);
+            }
+
+            void main() {
+              vec4 sourceColor = sourceColorAt(vUv);
+              vec4 currentColor = texture2D(paintedTexture, vUv);
+              float centerProgress = strokePaintProgress(currentColor, sourceColor);
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // This is a UV-space feather of the already-painted stroke delta,
+              // not a second visibility pass. The strict screen-depth and
+              // camera-facing gates have already decided the real stroke. This
+              // pass only turns the visible cutoff from triangle teeth into a
+              // small Gaussian-style airbrush falloff.
+              float progressSum = centerProgress * 0.159576;
+              float weightSum = 0.159576;
+              float maxProgress = centerProgress;
+
+              addFeatherSample(vec2(texelSize.x, 0.0), 0.096532, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x, 0.0), 0.096532, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(0.0, texelSize.y), 0.096532, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(0.0, -texelSize.y), 0.096532, progressSum, weightSum, maxProgress);
+
+              addFeatherSample(texelSize, 0.058550, progressSum, weightSum, maxProgress);
+              addFeatherSample(-texelSize, 0.058550, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(texelSize.x, -texelSize.y), 0.058550, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x, texelSize.y), 0.058550, progressSum, weightSum, maxProgress);
+
+              addFeatherSample(vec2(texelSize.x * 2.0, 0.0), 0.058550, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x * 2.0, 0.0), 0.058550, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(0.0, texelSize.y * 2.0), 0.058550, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(0.0, -texelSize.y * 2.0), 0.058550, progressSum, weightSum, maxProgress);
+
+              addFeatherSample(vec2(texelSize.x * 2.0, texelSize.y), 0.035512, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(texelSize.x * 2.0, -texelSize.y), 0.035512, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x * 2.0, texelSize.y), 0.035512, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x * 2.0, -texelSize.y), 0.035512, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(texelSize.x, texelSize.y * 2.0), 0.035512, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(texelSize.x, -texelSize.y * 2.0), 0.035512, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x, texelSize.y * 2.0), 0.035512, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x, -texelSize.y * 2.0), 0.035512, progressSum, weightSum, maxProgress);
+
+              addFeatherSample(vec2(texelSize.x * 2.0, texelSize.y * 2.0), 0.021539, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(texelSize.x * 2.0, -texelSize.y * 2.0), 0.021539, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x * 2.0, texelSize.y * 2.0), 0.021539, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x * 2.0, -texelSize.y * 2.0), 0.021539, progressSum, weightSum, maxProgress);
+
+              addFeatherSample(vec2(texelSize.x * 3.0, 0.0), 0.021539, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x * 3.0, 0.0), 0.021539, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(0.0, texelSize.y * 3.0), 0.021539, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(0.0, -texelSize.y * 3.0), 0.021539, progressSum, weightSum, maxProgress);
+
+              addFeatherSample(vec2(texelSize.x * 4.0, 0.0), 0.007614, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(-texelSize.x * 4.0, 0.0), 0.007614, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(0.0, texelSize.y * 4.0), 0.007614, progressSum, weightSum, maxProgress);
+              addFeatherSample(vec2(0.0, -texelSize.y * 4.0), 0.007614, progressSum, weightSum, maxProgress);
+
+              float blurredProgress = progressSum / max(weightSum, 0.0001);
+              float featherProgress = max(blurredProgress * featherStrength, maxProgress * featherStrength * 0.34);
+              float targetProgress = max(centerProgress, featherProgress);
+              if (targetProgress <= centerProgress + 0.001) {
+                gl_FragColor = currentColor;
+                return;
+              }
+              gl_FragColor = composeStrokeColor(sourceColor, targetProgress);
+            }
+          `
+        });
+      }
+      return this.textureAirbrushGpuUvFeatherMaterial;
     },
 
     textureAirbrushRenderTextureSettings(sourceTexture) {

@@ -46,7 +46,7 @@ export {
   textureAirbrushWebGpuDispatchSize,
   textureAirbrushWebGpuKernelParams,
   textureAirbrushWebGpuKernelSource
-} from "./webgpu-kernel.js?v=stroke-opacity-photoshop-cap-20260620a";
+} from "./webgpu-kernel.js";
 export {
   textureAirbrushUnpackWebGpuReadbackRows
 } from "./webgpu-readback.js";
@@ -73,16 +73,16 @@ export {
   textureAirbrushWebGpuStrokeBufferData,
   textureAirbrushWebGpuTextureDescriptors,
   textureAirbrushWebGpuUsageConstants
-} from "./webgpu-plan.js?v=stroke-opacity-photoshop-cap-20260620a";
+} from "./webgpu-plan.js";
 export {
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
-} from "./webgpu.js?v=layer-undo-fix-20260621a";
-export { installTextureAirbrushWebGpuCandidateMethods } from "./webgpu-candidates.js?v=layer-undo-fix-20260621a";
+} from "./webgpu.js";
+export { installTextureAirbrushWebGpuCandidateMethods } from "./webgpu-candidates.js";
 export { installTextureAirbrushWebGpuDiagnosticMethods } from "./webgpu-diagnostics.js";
 export { installTextureAirbrushWebGpuPrewarmMethods } from "./webgpu-prewarm.js";
 export {
   textureAirbrushWebGpuStrokeCandidateFromHit,
   textureAirbrushWebGpuStrokeEstimate,
   textureAirbrushWebGpuTextureRadiusPixels
-} from "./webgpu-stroke.js?v=layer-undo-fix-20260621a";
+} from "./webgpu-stroke.js";

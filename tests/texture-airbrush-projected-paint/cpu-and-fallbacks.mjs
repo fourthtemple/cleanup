@@ -665,6 +665,7 @@ test("projected airbrush reuses a resolved WebGL backend without resolving per b
 test("live GPU airbrush does not fall through to CPU texture paint when the shader misses", () => {
   const editor = new TestEditor();
   let cpuPathTouched = false;
+  let resolvedOptions = null;
   editor.canvas = {
     getBoundingClientRect() {
       cpuPathTouched = true;
@@ -678,7 +679,10 @@ test("live GPU airbrush does not fall through to CPU texture paint when the shad
     }
   };
   editor.textureAirbrushOptionsWithPressure = (event, options) => options;
-  editor.textureAirbrushResolveBackend = () => ({ backend: "webgl", webGpuStatus: "not-requested" });
+  editor.textureAirbrushResolveBackend = (options) => {
+    resolvedOptions = options;
+    return { backend: "webgl", webGpuStatus: "visible-surface-mask-required" };
+  };
   editor.textureAirbrushGpuProjectFromEvent = () => 0;
   editor.setStatus = () => {};
 
@@ -686,6 +690,8 @@ test("live GPU airbrush does not fall through to CPU texture paint when the shad
 
   assert.equal(changed, 0);
   assert.equal(cpuPathTouched, false);
+  assert.equal(resolvedOptions.visibleSurfaceMaskRequired, true);
+  assert.equal(resolvedOptions.liveProjectedPaint, true);
 });
 
 test("live airbrush never falls through to CPU texture paint when visible shader misses", () => {

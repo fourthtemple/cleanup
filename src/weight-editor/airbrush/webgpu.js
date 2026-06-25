@@ -10,9 +10,9 @@ import {
   textureAirbrushSourcePixelsFromEditable
 } from "./webgpu-canvas.js";
 import { installTextureAirbrushWebGpuDiagnosticMethods } from "./webgpu-diagnostics.js";
-import { textureAirbrushWebGpuKernelSource } from "./webgpu-kernel.js?v=stroke-opacity-photoshop-cap-20260620a";
-import { textureAirbrushWebGpuPaintPlan } from "./webgpu-plan.js?v=stroke-opacity-photoshop-cap-20260620a";
-import { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js?v=layer-undo-fix-20260621a";
+import { textureAirbrushWebGpuKernelSource } from "./webgpu-kernel.js";
+import { textureAirbrushWebGpuPaintPlan } from "./webgpu-plan.js";
+import { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js";
 import { installTextureAirbrushWebGpuPrewarmMethods } from "./webgpu-prewarm.js";
 import {
   resolveTextureAirbrushBackend,
@@ -32,7 +32,7 @@ export {
   textureAirbrushWebGpuRendererRequestedFromSearch,
   textureAirbrushWebGpuRequestedFromSearch
 } from "./webgpu-resolver.js";
-export { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js?v=layer-undo-fix-20260621a";
+export { installTextureAirbrushWebGpuLiveMethods } from "./webgpu-live.js";
 
 export function installTextureAirbrushWebGpuMethods(BirdWeightEditor) {
   Object.assign(BirdWeightEditor.prototype, {
@@ -74,7 +74,11 @@ export function installTextureAirbrushWebGpuMethods(BirdWeightEditor) {
         webGpuAvailable: textureAirbrushNativeWebGpuAvailable(globalThis),
         renderer: this.renderer,
         webGpuDisabled: this.textureAirbrushWebGpuDisabled === true,
-        webGlDisabled: this.textureAirbrushGpuDisabled === true
+        webGlDisabled: this.textureAirbrushGpuDisabled === true,
+        visibleSurfaceMaskRequired: options.visibleSurfaceMaskRequired === true
+          || options.liveProjectedPaint === true,
+        visibleSurfaceMaskReady: options.visibleSurfaceMaskReady === true
+          || Boolean(options.visibilityMaskPixels)
       });
       this.textureAirbrushLastBackend = resolved;
       return resolved;
@@ -94,7 +98,9 @@ export function installTextureAirbrushWebGpuMethods(BirdWeightEditor) {
         "backend-uninitialized": "WebGPU renderer is not ready yet; airbrush is using the WebGL shader brush.",
         "source-pixels-missing": "WebGPU airbrush needs source texture pixels before dispatch; using the WebGL shader brush.",
         "brush-kernel-unimplemented": "WebGPU airbrush backend is selected, but the brush dispatch path is not fully connected yet; using the WebGL shader brush.",
-        "dispatch-failed": "WebGPU airbrush dispatch failed; using the WebGL shader brush."
+        "dispatch-failed": "WebGPU airbrush dispatch failed; using the WebGL shader brush.",
+        "visible-surface-mask-required": "Live airbrush needs the camera-visible depth/normal mask; using the WebGL projection brush.",
+        "visible-surface-mask-unavailable": "Live airbrush needs a native WebGPU visible-surface mask before it can run under the WebGPU renderer."
       };
       const message = labels[status] || `WebGPU airbrush is not ready (${status}); using the WebGL shader brush.`;
       console.info(message);
@@ -153,6 +159,7 @@ export function installTextureAirbrushWebGpuMethods(BirdWeightEditor) {
       }
       return textureAirbrushRunWebGpuPaint(device, payload, {
         sourcePixels,
+        visibilityMaskPixels: options.visibilityMaskPixels || null,
         readback: options.readback === true,
         label: "texture-airbrush"
       });

@@ -259,16 +259,18 @@ function fakeEditableTexture(width, height, pixels) {
   };
 }
 
-test("airbrush WebGPU query flag is opt-in", () => {
-  assert.equal(textureAirbrushWebGpuRequestedFromSearch(""), false);
+test("airbrush WebGPU query flag defaults on with explicit opt-out", () => {
+  assert.equal(textureAirbrushWebGpuRequestedFromSearch(""), true);
   assert.equal(textureAirbrushWebGpuRequestedFromSearch("?webgpu-airbrush=0"), false);
+  assert.equal(textureAirbrushWebGpuRequestedFromSearch("?webgpu-airbrush=false"), false);
   assert.equal(textureAirbrushWebGpuRequestedFromSearch("?webgpu-airbrush=1"), true);
   assert.equal(textureAirbrushWebGpuRequestedFromSearch("?airbrush-webgpu=true"), true);
 });
 
-test("airbrush WebGPU renderer query flag is opt-in", () => {
+test("airbrush WebGPU renderer query flag stays opt-in until scene materials are ported", () => {
   assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch(""), false);
   assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch("?webgpu-renderer=0"), false);
+  assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch("?webgpu-renderer=off"), false);
   assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch("?webgpu-renderer=1"), true);
   assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch("?renderer-webgpu=true"), true);
 });
@@ -342,6 +344,37 @@ test("airbrush backend falls back to WebGL unless native WebGPU is ready", () =>
   assert.deepEqual(resolveTextureAirbrushBackend({
     preferWebGpu: true,
     webGpuAvailable: true,
+    renderer: { isWebGPURenderer: true, backend: { isWebGPUBackend: true } }
+  }), {
+    backend: "webgpu",
+    webGpuStatus: "ready"
+  });
+
+  assert.deepEqual(resolveTextureAirbrushBackend({
+    preferWebGpu: true,
+    webGpuAvailable: true,
+    visibleSurfaceMaskRequired: true,
+    renderer: { isWebGPURenderer: true, backend: { isWebGPUBackend: true } }
+  }), {
+    backend: "none",
+    webGpuStatus: "visible-surface-mask-unavailable"
+  });
+
+  assert.deepEqual(resolveTextureAirbrushBackend({
+    preferWebGpu: true,
+    webGpuAvailable: true,
+    visibleSurfaceMaskRequired: true,
+    renderer: { isWebGLRenderer: true }
+  }), {
+    backend: "webgl",
+    webGpuStatus: "visible-surface-mask-required"
+  });
+
+  assert.deepEqual(resolveTextureAirbrushBackend({
+    preferWebGpu: true,
+    webGpuAvailable: true,
+    visibleSurfaceMaskRequired: true,
+    visibleSurfaceMaskReady: true,
     renderer: { isWebGPURenderer: true, backend: { isWebGPUBackend: true } }
   }), {
     backend: "webgpu",
@@ -441,7 +474,13 @@ test("airbrush WebGPU kernel source exposes a compute texture paint pass", () =>
   assert.match(source, /array<StrokeSegment, 12>/);
   assert.match(source, /fn airbrushCoverage/);
   assert.match(source, /@group\(0\) @binding\(4\) var strokeSourceTexture/);
+  assert.match(source, /@group\(0\) @binding\(5\) var visibilityMaskTexture/);
+  assert.match(source, /fn visibleMaskFeatherCoverage/);
+  assert.match(source, /Hidden\/non-camera-facing texels are never painted/);
+  assert.match(source, /if \(center <= threshold\)/);
+  assert.match(source, /textureStore\(outputTexture, vec2<i32>\(pixel\), current\);\s+return;/);
   assert.match(source, /let strokeSource = textureLoad\(strokeSourceTexture/);
+  assert.match(source, /coverage \* visibilityCoverage/);
   assert.match(source, /let nextAlpha = alpha \+ strokeSource\.a \* \(1\.0 - alpha\)/);
   assert.match(source, /strokeSource\.a < 0\.9999/);
   assert.match(source, /clamp\(alphaProgress, 0\.0, 1\.0\)/);
@@ -474,7 +513,7 @@ test("airbrush WebGPU uniform buffer packs the brush struct layout", () => {
   }, 256, 128);
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
-  assert.equal(data.byteLength, 64);
+  assert.equal(data.byteLength, 80);
   assert.equal(view.getUint32(0, true), 256);
   assert.equal(view.getUint32(4, true), 128);
   assert.equal(view.getFloat32(8, true), 12);
@@ -490,6 +529,20 @@ test("airbrush WebGPU uniform buffer packs the brush struct layout", () => {
   assert.equal(view.getUint32(52, true), 0);
   assert.equal(view.getUint32(56, true), 256);
   assert.equal(view.getUint32(60, true), 128);
+  assert.equal(view.getUint32(64, true), 0);
+  assert.equal(view.getFloat32(68, true), 0);
+  assert.equal(view.getFloat32(72, true), 0.5);
+  assert.equal(view.getFloat32(76, true), 0);
+
+  const masked = textureAirbrushWebGpuBrushUniformData({
+    useVisibilityMask: 1,
+    visibilityFeatherRadius: 4,
+    visibilityMaskThreshold: 0.25
+  }, 32, 16);
+  const maskedView = new DataView(masked.buffer, masked.byteOffset, masked.byteLength);
+  assert.equal(maskedView.getUint32(64, true), 1);
+  assert.equal(maskedView.getFloat32(68, true), 4);
+  assert.equal(maskedView.getFloat32(72, true), 0.25);
 
   const dirty = textureAirbrushWebGpuBrushUniformData({
     radiusPixels: 12,
@@ -561,12 +614,13 @@ test("airbrush WebGPU paint plan prepares descriptors for dispatch", () => {
   assert.equal(plan.buffers.readback.size, 256 * 19);
   assert.equal(plan.buffers.readback.layout.width, 17);
   assert.equal(plan.buffers.readback.layout.height, 19);
-  assert.equal(plan.buffers.uniform.data.byteLength, 64);
+  assert.equal(plan.buffers.uniform.data.byteLength, 80);
   assert.equal(plan.buffers.strokes.data.length, 16);
-  assert.equal(plan.bindGroupLayoutEntries.length, 5);
+  assert.equal(plan.bindGroupLayoutEntries.length, 6);
   assert.deepEqual(textureAirbrushWebGpuUsageConstants(scope).shaderStage, { compute: 4 });
-  assert.deepEqual(textureAirbrushWebGpuBindGroupLayoutEntries(scope).map((entry) => entry.binding), [0, 1, 2, 3, 4]);
+  assert.deepEqual(textureAirbrushWebGpuBindGroupLayoutEntries(scope).map((entry) => entry.binding), [0, 1, 2, 3, 4, 5]);
   assert.equal(textureAirbrushWebGpuTextureDescriptors(4, 5, scope).strokeSource.usage, 6);
+  assert.equal(textureAirbrushWebGpuTextureDescriptors(4, 5, scope).visibilityMask.usage, 6);
   assert.deepEqual(textureAirbrushWebGpuTextureDescriptors(4, 5, scope).output.size, {
     width: 4,
     height: 5,
@@ -636,10 +690,48 @@ test("airbrush WebGPU dispatch helper allocates resources and submits compute wo
   assert.equal(run.result.outputTexture, run.resources.outputTexture);
   assert.ok(device.calls.some((call) => call[0] === "createShaderModule" && call[2] === true));
   assert.ok(device.calls.some((call) => call[0] === "createComputePipeline" && call[1] === "textureAirbrushPaint"));
-  assert.ok(device.calls.some((call) => call[0] === "writeBuffer" && call[4] === 64));
+  assert.ok(device.calls.some((call) => call[0] === "writeBuffer" && call[4] === 80));
   assert.ok(device.calls.some((call) => call[0] === "writeTexture" && call[3] === payload.plan.width * 4));
+  assert.ok(device.calls.some((call) => call[0] === "createBindGroup" && call[1] === "0,1,2,3,4,5"));
   assert.ok(device.calls.some((call) => call[0] === "dispatchWorkgroups" && call[1] === 3 && call[2] === 5 && call[3] === 1));
   assert.deepEqual(device.calls.at(-1), ["submit", 1]);
+});
+
+test("airbrush WebGPU resources bind an optional visibility mask texture", () => {
+  const device = fakeWebGpuDevice();
+  const visibilityMaskPixels = new Uint8Array(4 * 4 * 4);
+  visibilityMaskPixels.fill(255);
+  const payload = {
+    source: textureAirbrushWebGpuKernelSource({ maxStrokeSegments: 2, workgroupSize: 8 }),
+    plan: textureAirbrushWebGpuPaintPlan({
+      width: 4,
+      height: 4,
+      maxStrokeSegments: 2,
+      workgroupSize: 8,
+      options: {
+        visibilityMaskPixels,
+        visibilityFeatherRadius: 3,
+        visibilityMaskThreshold: 0.4,
+        strokeSegments: [{ start: { x: 0, y: 0 }, end: { x: 3, y: 3 } }]
+      }
+    })
+  };
+
+  const run = textureAirbrushRunWebGpuPaint(device, payload, {
+    sourcePixels: new Uint8Array(4 * 4 * 4),
+    visibilityMaskPixels,
+    label: "test-airbrush-mask"
+  });
+
+  const uniformView = new DataView(payload.plan.buffers.uniform.data.buffer);
+  assert.equal(payload.plan.params.useVisibilityMask, 1);
+  assert.equal(uniformView.getUint32(64, true), 1);
+  assert.equal(uniformView.getFloat32(68, true), 3);
+  assert.ok(Math.abs(uniformView.getFloat32(72, true) - 0.4) < 0.000001);
+  assert.ok(run.resources.visibilityMaskTexture);
+  assert.ok(device.calls.some((call) => call[0] === "createTexture" && call[1] === "test-airbrush-mask-visibility-mask-texture"));
+  assert.ok(device.calls.some((call) => call[0] === "writeTexture" && call[6] === "test-airbrush-mask-visibility-mask-texture"));
+  assert.ok(device.calls.some((call) => call[0] === "createBindGroup" && call[1] === "0,1,2,3,4,5"));
 });
 
 test("airbrush WebGPU dispatch helper can copy output into a readback buffer", async () => {

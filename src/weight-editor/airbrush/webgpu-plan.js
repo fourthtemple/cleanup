@@ -12,7 +12,7 @@ import {
   TEXTURE_AIRBRUSH_WEBGPU_WORKGROUP_SIZE,
   textureAirbrushWebGpuDispatchSize,
   textureAirbrushWebGpuKernelParams
-} from "./webgpu-kernel.js?v=stroke-opacity-photoshop-cap-20260620a";
+} from "./webgpu-kernel.js";
 export {
   TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
   TEXTURE_AIRBRUSH_WEBGPU_BRUSH_UNIFORM_BYTES,
@@ -151,6 +151,10 @@ export function textureAirbrushWebGpuBrushUniformData(params = {}, width = 1, he
   view.setUint32(52, Math.max(0, Math.floor(finiteNumber(bounds.y, 0))), true);
   view.setUint32(56, positiveInteger(bounds.width, safeWidth), true);
   view.setUint32(60, positiveInteger(bounds.height, safeHeight), true);
+  view.setUint32(64, params.useVisibilityMask ? 1 : 0, true);
+  view.setFloat32(68, Math.max(0, finiteNumber(params.visibilityFeatherRadius, 0)), true);
+  view.setFloat32(72, Math.max(0, Math.min(1, finiteNumber(params.visibilityMaskThreshold, 0.5))), true);
+  view.setFloat32(76, 0, true);
   return new Uint8Array(buffer);
 }
 

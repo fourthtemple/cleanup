@@ -150,6 +150,8 @@ function parseArgs(argv) {
       parsed.headed = true;
     } else if (value === "--keep-open") {
       parsed.keepOpen = true;
+    } else if (value === "--skip-asset-paint") {
+      parsed.skipAssetPaint = true;
     } else if (value === "--url") {
       parsed.url = argv[++index] || "";
     } else if (value === "--browser") {
@@ -361,15 +363,15 @@ function webGpuAssetPaintExpression() {
       return { loaded: false, error: "missing-editor" };
     }
     await editor.loadAnimationLibraryAsset({
-      key: "webgpu-validation:humanoid-cat-walking",
-      name: "humanoid-cat-walking.fbx",
-      label: "humanoid-cat-walking",
+      key: "webgpu-validation:test-walking-8",
+      name: "walking-8.fbx",
+      label: "walking-8",
       extension: "fbx",
-      folder: "cat",
-      path: "assets/models/animation-library/cat/humanoid-cat-walking.fbx",
-      url: "./assets/models/animation-library/cat/humanoid-cat-walking.fbx",
-      cleanupFile: "humanoid-cat-walking-weight-patch.json",
-      cleanupPath: "assets/models/animation-library/cat/humanoid-cat-walking-weight-patch.json",
+      folder: "test",
+      path: "assets/models/animation-library/test/walking-8.fbx",
+      url: "./assets/models/animation-library/test/walking-8.fbx",
+      cleanupFile: "",
+      cleanupPath: "",
       engine: true,
       demo: true
     });
