@@ -58,9 +58,14 @@ function texturePaintGpuTargetEffectivelyEmpty(targetEntry = null) {
   return targetEntry.emptyTransparent === true && layer?.isEmpty !== false;
 }
 
-function texturePaintActiveLayerMode(editor = null) {
-  return editor?.texturePaintLayerModeActive?.() === true
-    && editor?.texturePaintHasActivePaintLayer?.() === true;
+function texturePaintActiveLayerMode(editor = null, material = null) {
+  if (editor?.texturePaintLayerModeActive?.() !== true) {
+    return false;
+  }
+  if (typeof editor.texturePaintHasActivePaintLayer !== "function") {
+    return true;
+  }
+  return editor.texturePaintHasActivePaintLayer(material) === true;
 }
 
 function texturePaintLiveProjectionFrameNeedsVisibleRewarm(editor = null) {
@@ -2963,8 +2968,10 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.clearTextureAirbrushScreenLayer?.();
         const macroBrush = this.recordTutorialMacroPaintBrushState?.(event) || event.tutorialMacroBrush;
         const macroBrushOptions = this.textureAirbrushOptionsFromMacroBrush?.(macroBrush) || {};
-        const layerMode = this.texturePaintLayerModeActive?.() === true
-          && this.texturePaintHasActivePaintLayer?.() === true;
+        const textureHitMaterial = textureHit?.record
+          ? this.clonePaintMaterialForHit?.(textureHit.record, textureHit.hit) || null
+          : null;
+        const layerMode = texturePaintActiveLayerMode(this, textureHitMaterial);
         const layerGpuPaint = layerMode
           && this.activeTool === "airbrush"
           && typeof this.textureAirbrushGpuLayerTargetForMaterial === "function";
@@ -2978,7 +2985,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             || this.textureAirbrushNeighborProjectionFirstStrokeRewarm === true
             || liveProjectionRewarmNeeded
             || (
-              texturePaintActiveLayerMode(this)
+              layerMode
               && this.textureAirbrushLayerProjectionFirstStrokeRewarm === true
             )
           );
@@ -2987,7 +2994,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             this.textureAirbrushNeighborProjectionDirty === true
             || this.textureAirbrushNeighborProjectionFirstStrokeRewarm === true
             || (
-              texturePaintActiveLayerMode(this)
+              layerMode
               && this.textureAirbrushLayerProjectionFirstStrokeRewarm === true
             )
           );

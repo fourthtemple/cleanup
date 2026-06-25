@@ -1363,14 +1363,17 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.doesNotMatch(material.fragmentShader, /geometricFacingCoverage = max/);
   assert.match(material.fragmentShader, /if \(visibleSurfaceMatched && useVisibleNormalTexture\)/);
   assert.match(material.fragmentShader, /float fadeNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintFadeViewNormal\)/);
-  assert.match(material.fragmentShader, /float gateNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintGateViewNormal\)/);
-  assert.match(material.fragmentShader, /float grazingEdgeAmount = max\(fadeNormalGrazingEdgeAmount, gateNormalGrazingEdgeAmount\) \* edgeSoftness/);
+  assert.doesNotMatch(material.fragmentShader, /float gateNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintGateViewNormal\)/);
+  assert.match(material.fragmentShader, /float grazingEdgeAmount = fadeNormalGrazingEdgeAmount \* edgeSoftness/);
   assert.match(material.fragmentShader, /\* edgeSoftness/);
   assert.match(material.fragmentShader, /if \(grazingEdgeAmount > 0\.0\)/);
   assert.match(material.fragmentShader, /float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage\(paintFadeViewNormal\)/);
-  assert.match(material.fragmentShader, /float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage\(paintGateViewNormal\)/);
-  assert.match(material.fragmentShader, /float softVisibleEdgeCoverage = min\(fadeNormalCoverage, gateNormalCoverage\)/);
-  assert.match(material.fragmentShader, /alpha is capped by the geometric/);
+  assert.doesNotMatch(material.fragmentShader, /float geometricSoftCoverage = mix/);
+  assert.match(material.fragmentShader, /float softVisibleEdgeCoverage = fadeNormalCoverage/);
+  assert.match(material.fragmentShader, /geometric z > 0 discard/);
+  assert.match(material.fragmentShader, /Use the smoothed paint normal for the fade/);
+  assert.match(material.fragmentShader, /The geometric normal remains the[\s\S]*hard cutoff above/);
+  assert.doesNotMatch(material.fragmentShader, /partial alpha cap after visibility is proven/);
   assert.match(material.fragmentShader, /Do not mix local[\s\S]*depth-sample coverage/);
   assert.match(material.fragmentShader, /triangle\/comb-shaped edge[\s\S]*teeth/);
   assert.doesNotMatch(material.fragmentShader, /float visibleSurfaceCenterBoundaryCoverage/);
@@ -1424,8 +1427,12 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(normalMaterial.vertexShader, /vAirbrushVisibleViewPosition = mvPosition\.xyz/);
   assert.match(normalMaterial.fragmentShader, /cross\(dFdx\(vAirbrushVisibleViewPosition\), dFdy\(vAirbrushVisibleViewPosition\)\)/);
   assert.match(normalMaterial.fragmentShader, /geometric front-visible normals/);
-  assert.match(normalMaterial.fragmentShader, /Smoothed normals can make a wrap\/back/);
+  assert.match(normalMaterial.fragmentShader, /not[\s\S]*smoothed vertex normals/);
+  assert.match(normalMaterial.fragmentShader, /eligibility authority/);
+  assert.match(normalMaterial.fragmentShader, /smoothing it can make a near-wrap\/back/);
   assert.match(normalMaterial.fragmentShader, /visibleNormal\.z <= 0\.0/);
+  assert.match(normalMaterial.fragmentShader, /gl_FragColor = vec4\(visibleNormal \* 0\.5 \+ 0\.5, 1\.0\)/);
+  assert.doesNotMatch(normalMaterial.fragmentShader, /visibleSmoothNormal/);
   // DO NOT PAINT ON NON CAMERA FACING SIDES.
   // DO NOT PAINT ON NON CAMERA FACING SIDES.
   // These old names and shortcuts were associated with painting behind/through

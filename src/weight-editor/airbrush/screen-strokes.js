@@ -166,9 +166,14 @@ function liveProjectionFrameNeedsVisibleRewarm(editor = null) {
   return editor.textureAirbrushLiveProjectionFrameCurrent(frame) !== true;
 }
 
-function activeTexturePaintLayerMode(editor = null) {
-  return editor?.texturePaintLayerModeActive?.() === true
-    && editor?.texturePaintHasActivePaintLayer?.() === true;
+function activeTexturePaintLayerMode(editor = null, material = null) {
+  if (editor?.texturePaintLayerModeActive?.() !== true) {
+    return false;
+  }
+  if (typeof editor.texturePaintHasActivePaintLayer !== "function") {
+    return true;
+  }
+  return editor.texturePaintHasActivePaintLayer(material) === true;
 }
 
 function probePointForClientEvent(event = null, rect = null) {
@@ -843,8 +848,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
   Object.assign(BirdWeightEditor.prototype, {
     textureAirbrushCanUseScreenStroke() {
       const isPaintBrush = this.activeTool === "airbrush" || this.activeTool === "texture-eraser";
-      const layerMode = this.texturePaintLayerModeActive?.() === true
-        && this.texturePaintHasActivePaintLayer?.() === true;
+      const layerMode = activeTexturePaintLayerMode(this);
       return isPaintBrush
         && Boolean(this.model)
         && Boolean(this.canvas)
@@ -977,8 +981,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         pressureScatter: stabilizedOptions.pressureScatter === true,
         pressureApplied: true,
         erase: this.activeTool === "texture-eraser",
-        layerMode: this.texturePaintLayerModeActive?.() === true
-          && this.texturePaintHasActivePaintLayer?.() === true,
+        layerMode: activeTexturePaintLayerMode(this),
         layerMutationSerial: this.texturePaintLayerMutationSerialValue?.() ?? 0,
         strokeReset: false
       };
@@ -1556,7 +1559,10 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             postCameraProjectionAccumulates = true;
             this.textureAirbrushPostCameraProjectionStrokeAccumulateActive = true;
           }
-        } else if (this.textureAirbrushRewarmLayerResetProjection?.(event) === true) {
+        } else if (
+          layerPostCameraCoverageRepairBeforeReset
+          && this.textureAirbrushRewarmLayerResetProjection?.(event) === true
+        ) {
           postCameraProjectionRewarmed = true;
           // DO NOT PAINT ON NON CAMERA FACING SIDES.
           // Non-Neighbor layer painting has the same post-camera batch split:

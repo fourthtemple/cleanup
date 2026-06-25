@@ -493,24 +493,23 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             float visibleSurfaceCoverage = 1.0;
             if (visibleSurfaceMatched && useVisibleNormalTexture) {
               float fadeNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal);
-              float gateNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintGateViewNormal);
-              float grazingEdgeAmount = max(fadeNormalGrazingEdgeAmount, gateNormalGrazingEdgeAmount) * edgeSoftness;
+              float grazingEdgeAmount = fadeNormalGrazingEdgeAmount * edgeSoftness;
               if (grazingEdgeAmount > 0.0) {
                 float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
-                float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintGateViewNormal);
-                float softVisibleEdgeCoverage = min(fadeNormalCoverage, gateNormalCoverage);
+                float softVisibleEdgeCoverage = fadeNormalCoverage;
                 // DO NOT PAINT ON NON CAMERA FACING SIDES.
                 // Soft visible-edge mode uses continuous angle falloff after
                 // the center fragment has already matched the frontmost
-                // depth/normal buffers. The alpha is capped by the geometric
-                // cutoff normal from the camera-facing side only, which makes
-                // the edge ease out before the hard cutoff instead of staying
-                // opaque until individual triangles disappear. Do not mix local
-                // depth-sample coverage into this center-visible path: even a
-                // floored depth mask can imprint triangle/comb-shaped edge
-                // teeth on an already-visible airbrush stroke. The separate
-                // repair path below owns the tiny visibility-neighborhood check
-                // for real projection misses.
+                // depth/normal buffers and after the geometric z > 0 discard.
+                // Use the smoothed paint normal for the fade so the geometric
+                // triangle normal cannot carve comb-shaped holes into an
+                // already-visible surface. The geometric normal remains the
+                // hard cutoff above; do not move it into this alpha blend or
+                // loosen it below zero. Do not mix local depth-sample coverage
+                // into this center-visible path: even a floored depth mask can
+                // imprint triangle/comb-shaped edge teeth on an already-visible
+                // airbrush stroke. The separate repair path below owns the tiny
+                // visibility-neighborhood check for real projection misses.
                 // Hard mode sets softness to zero, keeping a crisp cutoff.
                 visibleSurfaceCoverage = mix(1.0, softVisibleEdgeCoverage, grazingEdgeAmount);
               }
@@ -683,10 +682,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               : normalize(vAirbrushVisibleNormal);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // The normal buffer stores geometric front-visible normals, not
-            // smoothed vertex normals. Smoothed normals can make a wrap/back
-            // surface look compatible with the current visible side; geometric
-            // normals keep the visibility authority tied to the camera-facing
-            // triangle actually rendered into the depth buffer.
+            // smoothed vertex normals. This texture is an eligibility authority
+            // for the paint shader; smoothing it can make a near-wrap/back
+            // fragment look compatible with the current visible side. Keep
+            // visual smoothing in alpha after a fragment is proven visible, not
+            // in the visibility buffer that decides whether paint is allowed.
             if (visibleNormal.z <= 0.0) {
               discard;
             }

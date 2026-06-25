@@ -80,10 +80,17 @@ function projectionLayerEffectivelyEmpty(layer = null) {
   return layer.gpuTarget?.emptyTransparent === true && layer.isEmpty !== false;
 }
 
-function projectionActiveLayerPaintMode(editor = null) {
-  return editor?.activeTool === "airbrush"
-    && editor?.texturePaintLayerModeActive?.() === true
-    && editor?.texturePaintHasActivePaintLayer?.() === true;
+function projectionActiveLayerPaintMode(editor = null, material = null) {
+  if (
+    editor?.activeTool !== "airbrush"
+    || editor?.texturePaintLayerModeActive?.() !== true
+  ) {
+    return false;
+  }
+  if (typeof editor.texturePaintHasActivePaintLayer !== "function") {
+    return true;
+  }
+  return editor.texturePaintHasActivePaintLayer(material) === true;
 }
 
 function projectionStaticUniformsCurrent(projectionFrame = null, shaderMaterial = null, depthTarget = null, rect = null) {
@@ -451,7 +458,7 @@ function activeLayerGpuTargetForProjection(editor = null, material = null) {
   if (
     !editor
     || !material
-    || !projectionActiveLayerPaintMode(editor)
+    || !projectionActiveLayerPaintMode(editor, material)
   ) {
     return null;
   }
@@ -479,7 +486,7 @@ function activeLayerGpuTargetForProjection(editor = null, material = null) {
 }
 
 function projectionSeedTargetEntryForMaterial(editor = null, material = null) {
-  if (projectionActiveLayerPaintMode(editor)) {
+  if (projectionActiveLayerPaintMode(editor, material)) {
     return activeLayerGpuTargetForProjection(editor, material);
   }
   return material?.userData?.textureAirbrushGpuTarget || null;
@@ -491,7 +498,7 @@ function shouldSeedProjectionProxyForPaintPass(editor = null, targetEntry = null
     && targetEntry?.layerMode === true
     && targetEntry?.target?.texture
     && material
-    && projectionActiveLayerPaintMode(editor)
+    && projectionActiveLayerPaintMode(editor, material)
   );
 }
 
@@ -971,7 +978,7 @@ export function installTextureAirbrushWebGlProjectMethods(BirdWeightEditor, deps
         if (paintPasses.has(key)) {
           return paintPasses.get(key);
         }
-        const layerMode = projectionActiveLayerPaintMode(this);
+        const layerMode = projectionActiveLayerPaintMode(this, material);
         const targetEntry = layerMode
           ? projectionSeedTargetEntryForMaterial(this, material)
             || this.textureAirbrushGpuTargetForMaterial(material)
