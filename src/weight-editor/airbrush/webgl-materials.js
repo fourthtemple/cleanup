@@ -315,14 +315,16 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           float visibleSurfaceNormalMatchThreshold(vec3 visibleNormal, vec3 paintGateViewNormal, float normalMatchThreshold) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This relaxes only the normal-dot tolerance for fragments that are
-            // already strongly camera-facing on both the visible buffer and the
-            // paint fragment. Depth stays strict and the z > 0 gates above stay
-            // mandatory. Near the 90-degree wrap, keep the strict threshold so
-            // a side/back fragment cannot masquerade as the visible surface.
+            // already camera-facing on both the visible buffer and the paint
+            // fragment. Depth stays strict and the z > 0 gates above stay
+            // mandatory. The first tiny band above the 90-degree wrap stays
+            // strict so a side/back fragment cannot masquerade as visible, but
+            // front-facing cloth triangles get tolerance before their normals
+            // stamp dark triangular teeth into the stroke.
             float frontFacingStrength = min(visibleNormal.z, paintGateViewNormal.z);
             float frontFacingRelax = smoothstep(
-              visibleFacingNormalThreshold + 0.18,
-              visibleFacingNormalThreshold + 0.64,
+              visibleFacingNormalThreshold + 0.04,
+              visibleFacingNormalThreshold + 0.36,
               frontFacingStrength
             );
             return mix(normalMatchThreshold, 0.55, frontFacingRelax);
@@ -360,14 +362,52 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             float grazingFeatherEnd = visibleSurfaceGrazingFeatherEnd();
             float angleCoverage = smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // Soft edge fades down to zero before the hard geometric cutoff.
             // Do not floor this value: a nonzero floor at the cutoff makes the
             // edge look like it wraps onto geometry that is no longer facing
-            // the camera.
+            // the camera. The geometric cutoff cap below enforces exact zero at
+            // the hard camera-facing boundary.
             // Raise small positive camera-facing angles without changing the
             // zero-at-cutoff invariant. Visible grazing surfaces can receive a
             // soft spray; non-camera-facing surfaces still receive exactly zero.
             return pow(angleCoverage, 0.35);
+          }
+
+          float visibleSurfaceGeometricCutoffCoverage(vec3 paintGateViewNormal) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This is a narrow alpha-only cap after strict visible eligibility.
+            // The hard discard below still owns hidden/back rejection. Keep the
+            // cap much smaller than the broad soft-airbrush fade so geometric
+            // triangle normals cannot draw long sawtooth ridges through the
+            // visible stroke.
+            return smoothstep(
+              visibleFacingNormalThreshold,
+              visibleFacingNormalThreshold + 0.075,
+              paintGateViewNormal.z
+            );
+          }
+
+          float visibleSurfaceSoftAlphaCoverage(vec3 paintFadeViewNormal, vec3 paintGateViewNormal) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This coverage is alpha-only after the center fragment already
+            // passed strict visible depth/normal eligibility. The smoothed
+            // paint normal may only soften already-visible alpha slightly; it
+            // must not get dark enough to reveal triangle facets. The geometric
+            // normal supplies the tiny zero-at-cutoff cap so non-camera-facing
+            // fragments still receive exactly zero paint.
+            float smoothNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
+            float smoothAirbrushCoverage = mix(0.9, 1.0, smoothNormalCoverage);
+            float geometricCutoffCoverage = visibleSurfaceGeometricCutoffCoverage(paintGateViewNormal);
+            return smoothAirbrushCoverage * geometricCutoffCoverage;
+          }
+
+          float visibleSurfaceSoftEdgeAmount(vec3 paintFadeViewNormal, vec3 paintGateViewNormal) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // The visible edge should ease out from the smoothed paint normal,
+            // not from broad bands of per-triangle geometric normals. The
+            // geometric contribution is limited to the tiny cutoff cap above.
+            float smoothNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal);
+            float geometricCutoffEdgeAmount = 1.0 - visibleSurfaceGeometricCutoffCoverage(paintGateViewNormal);
+            return max(smoothNormalGrazingEdgeAmount, geometricCutoffEdgeAmount);
           }
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
@@ -511,21 +551,17 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // discard. Soft mode may only reduce alpha for these already-visible
             // fragments; it must never make a hidden or rejected fragment eligible.
             if (centerVisibleSurfaceMatched && useVisibleNormalTexture && edgeSoftness > 0.0) {
-              float fadeNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal);
-              float gateNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintGateViewNormal);
-              float centerGrazingEdgeAmount = max(fadeNormalGrazingEdgeAmount, gateNormalGrazingEdgeAmount) * edgeSoftness;
+              float centerGrazingEdgeAmount = visibleSurfaceSoftEdgeAmount(paintFadeViewNormal, paintGateViewNormal) * edgeSoftness;
               if (centerGrazingEdgeAmount > 0.0) {
                 // DO NOT PAINT ON NON CAMERA FACING SIDES.
                 // This is a visible-side-only soft edge. Do not feed it a
                 // screen-neighborhood depth/normal mask: even alpha-only
                 // neighboring samples can punch triangle-shaped holes into a
                 // fragment that already matched the current visible surface.
-                // Do not floor the soft edge. A nonzero floor at the cutoff looks
-                // like paint leaking onto the non-camera-facing side.
+                // Do not floor the geometric cutoff. A nonzero floor at the
+                // cutoff looks like paint leaking onto the non-camera-facing side.
                 // rejected hidden/back fragments still discard below.
-                float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
-                float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintGateViewNormal);
-                float softCenterVisibleCoverage = min(fadeNormalCoverage, gateNormalCoverage);
+                float softCenterVisibleCoverage = visibleSurfaceSoftAlphaCoverage(paintFadeViewNormal, paintGateViewNormal);
                 visibleSurfaceCoverage = mix(1.0, softCenterVisibleCoverage, centerGrazingEdgeAmount);
               }
             }
