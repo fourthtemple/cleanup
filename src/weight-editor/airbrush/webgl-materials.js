@@ -345,7 +345,14 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // otherwise continuous visible wrap.
             float grazingFeatherStart = visibleFacingNormalThreshold;
             float grazingFeatherEnd = visibleFacingNormalThreshold + 0.86;
-            return smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
+            float angleCoverage = smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This floor is alpha shaping only after the fragment has already
+            // matched the current visible depth/normal surface. It keeps Soft
+            // edge from collapsing into sparse, triangle-sized needles at the
+            // visible wrap while preserving the hard gates that reject hidden
+            // and back-facing fragments.
+            return max(angleCoverage, 0.18);
           }
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
@@ -399,11 +406,12 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             vec3 paintGateViewNormal = paintFragmentGeometricViewNormal();
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Eligibility still comes from the hard visible-depth/normal gates
-            // below. For Soft edge alpha only, fade by the more grazing of the
-            // smoothed normal and geometric face normal so side-facing triangles
-            // cannot stay fully opaque and form a jagged ridge.
+            // below. For Soft edge alpha only, use the interpolated paint
+            // normal so a faceted geometric triangle cannot carve a hard tooth
+            // into an otherwise continuous visible airbrush fade. The geometric
+            // normal remains the eligibility/cutoff guard below; it is not
+            // removed as a visible-only gate.
             vec3 paintFadeViewNormal = paintViewNormal;
-            paintFadeViewNormal.z = min(paintViewNormal.z, paintGateViewNormal.z);
             if (
               useNeighborMask
               && useNeighborNormalMask
@@ -498,11 +506,18 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // triangles and leave the jagged teeth we are trying to soften.
               visibleSurfaceMatched = true;
               centerVisibleSurfaceMatched = true;
-              geometricFacingCoverage = smoothstep(
+              float geometricFeatherCoverage = smoothstep(
                 geometricFeatherStart,
                 visibleFacingNormalThreshold,
                 paintGateViewNormal.z
               );
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // This is not an eligibility bypass. The fragment already passed
+              // the exact visible-center depth/normal proof above; keep Soft
+              // edge from turning that proven visible wrap into near-zero alpha
+              // triangle teeth just because the faceted geometric normal is
+              // close to the cutoff.
+              geometricFacingCoverage = max(geometricFeatherCoverage, 0.22);
             }
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Center-visible fragments are already proven visible. Near the
