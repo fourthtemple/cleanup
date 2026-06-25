@@ -3,7 +3,7 @@ const TUTORIAL_MACRO_DRAFT_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-m
 const TUTORIAL_MACRO_DB_NAME = "fourth-temple-model-cleanup-tutorial-macros";
 const TUTORIAL_MACRO_DB_VERSION = 1;
 const TUTORIAL_MACRO_DB_STORE = "records";
-const TUTORIAL_MACRO_ASSET_URL = "./assets/tutorial-macros.json?v=visible-side-facing-20260623a";
+const TUTORIAL_MACRO_ASSET_URL = "./assets/tutorial-macros.json";
 const DEFAULT_MACRO_NAME = "airbrush";
 const AFTER_ORBIT_PAINT_REPRO_MACRO_NAME = "after-orbit-paint";
 const MACRO_POINTER_ID = 92817;

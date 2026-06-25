@@ -356,10 +356,10 @@ test("installed airbrush WebGPU methods expose a runtime diagnostic snapshot", (
   assert.equal(status.rendererRuntime, "webgpu");
   assert.equal(status.rendererReady, true);
   assert.deepEqual(status.backend, { backend: "webgpu", webGpuStatus: "ready" });
-  assert.deepEqual(status.liveProjectedBackend, { backend: "none", webGpuStatus: "visible-surface-mask-unavailable" });
+  assert.deepEqual(status.liveProjectedBackend, { backend: "webgpu", webGpuStatus: "ready" });
   assert.equal(status.deviceReady, true);
   assert.equal(status.airbrushReady, true);
-  assert.equal(status.liveProjectedAirbrushReady, false);
+  assert.equal(status.liveProjectedAirbrushReady, true);
   assert.deepEqual(status.lastPaintStats, { appliedBytes: 16 });
   assert.deepEqual(status.lastDispatch, {
     dispatch: { x: 2, y: 3, workgroupSize: 8 },
@@ -597,8 +597,14 @@ test("installed airbrush WebGPU live path queues editable texture paint from a h
     clientX: 10,
     clientY: 10
   }, {
-    mapRead: 1
+    mapRead: 1,
+    visibleSurfaceMaskRequired: true,
+    liveProjectedPaint: true,
+    requireVisibilityMask: true,
+    visibilityMaskStampRadiusPixels: 1
   });
+  assert.ok(editor.textureAirbrushQueuedWebGpuStrokes[0].options.visibilityMaskPixels instanceof Uint8Array);
+  assert.equal(editor.textureAirbrushQueuedWebGpuStrokes[0].options.useVisibilityMask, true);
   await editor.flushTextureAirbrushPendingWebGpuPaints();
 
   assert.ok(estimate > 0);
@@ -614,6 +620,10 @@ test("installed airbrush WebGPU live path queues editable texture paint from a h
   assert.equal(editor.updatedPreviews, true);
   assert.equal(
     device.calls.filter((call) => call[0] === "writeTexture" && call[6] === "texture-airbrush-editable-stroke-source-texture").length,
+    1
+  );
+  assert.equal(
+    device.calls.filter((call) => call[0] === "writeTexture" && call[6] === "texture-airbrush-editable-visibility-mask-texture").length,
     1
   );
 });

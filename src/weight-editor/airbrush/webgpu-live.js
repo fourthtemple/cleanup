@@ -26,7 +26,8 @@ function webGpuCandidateStyleKey(candidate = null) {
     Math.round(styleNumber(options.strength, 1) * 1000),
     clampByte(color.r),
     clampByte(color.g),
-    clampByte(color.b)
+    clampByte(color.b),
+    options.visibilityMaskKey || ""
   ].join(":");
 }
 

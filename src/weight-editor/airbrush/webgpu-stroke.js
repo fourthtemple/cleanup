@@ -72,10 +72,13 @@ export function textureAirbrushWebGpuStrokeEstimate(candidate = null) {
 }
 
 export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, record = null, hit = null, event = null, options = {}) {
+  const hitUv = hit?.uv || null;
+  if (!record || !hitUv) {
+    return null;
+  }
   const material = editor?.clonePaintMaterialForHit?.(record, hit);
   const editable = editor?.editableClonePaintTexture?.(material);
-  const hitUv = hit?.uv || null;
-  if (!record || !hitUv || !material || !editable?.canvas || !editable?.texture) {
+  if (!material || !editable?.canvas || !editable?.texture) {
     return null;
   }
 

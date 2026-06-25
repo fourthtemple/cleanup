@@ -3,7 +3,7 @@ import { clampByte } from "./math.js";
 import {
   textureAirbrushEventPressureValue,
   textureAirbrushPressurePointerType
-} from "./pressure.js?v=pressure-cleanup-20260623a";
+} from "./pressure.js";
 import { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js";
 
 const TEXTURE_AIRBRUSH_PRESSURE_STYLE_DELTA = 0.12;
@@ -2181,6 +2181,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             && batch.erase !== true
             && backend?.backend === "webgl"
             && typeof this.textureAirbrushGpuLayerTargetForMaterial === "function";
+          const layerWebGpuBatch = layerMode
+            && batch.erase !== true
+            && backend?.backend === "none"
+            && backend?.webGpuStatus === "visible-surface-mask-unavailable"
+            && Boolean(this.textureAirbrushWebGpuDevice?.());
           const renderAllCachedLayerPasses = layerGpuBatch
             && layerCachedContinuousPassesReady(this, projectionFrame, batch);
           const reusePartialLayerPasses = layerGpuBatch
@@ -2207,7 +2212,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           let batchChanged = 0;
           try {
             batchChanged = this.textureAirbrushProjectedMeshFromEvent?.(event, {
-              gpu: !layerMode || layerGpuBatch,
+              gpu: !layerMode || layerGpuBatch || layerWebGpuBatch,
               strokeSegments: batch.strokeSegments,
               radiusPixels: batch.radiusPixels,
               color: batch.color,
@@ -2217,8 +2222,8 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
               spacing: batch.spacing,
               strength: batch.strength,
               erase: batch.erase === true,
-              cpuStrokeSamples: layerMode && !layerGpuBatch,
-              ...(layerMode && !layerGpuBatch ? { resolvedBackend: { backend: "cpu", webGpuStatus: "layer-paint" } } : {}),
+              cpuStrokeSamples: layerMode && !layerGpuBatch && !layerWebGpuBatch,
+              ...(layerMode && !layerGpuBatch && !layerWebGpuBatch ? { resolvedBackend: { backend: "cpu", webGpuStatus: "layer-paint" } } : {}),
               ...((!layerMode || layerGpuBatch) && backend?.backend === "webgl" ? { resolvedBackend: backend } : {}),
               ...((!layerMode || layerGpuBatch) && projectionFrame ? { projectionFrame } : {}),
               ...(layerGpuBatch && !forceLayerDisplayComposite ? { deferLayerComposite: true } : {}),

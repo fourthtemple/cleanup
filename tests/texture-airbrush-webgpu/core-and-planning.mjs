@@ -40,7 +40,9 @@ import {
 } from "../../src/weight-editor/airbrush/webgpu-kernel.js";
 import {
   TEXTURE_AIRBRUSH_WEBGPU_PROJECTION_DEPTH_WINDOW,
+  textureAirbrushWebGpuAssignVisibilityMasks,
   textureAirbrushWebGpuProbePointsFromStroke,
+  textureAirbrushWebGpuVisibilityMaskPixels,
   textureAirbrushWebGpuScreenStrokeFromEvent
 } from "../../src/weight-editor/airbrush/webgpu-projection.js";
 import {
@@ -267,8 +269,8 @@ test("airbrush WebGPU query flag defaults on with explicit opt-out", () => {
   assert.equal(textureAirbrushWebGpuRequestedFromSearch("?airbrush-webgpu=true"), true);
 });
 
-test("airbrush WebGPU renderer query flag stays opt-in until scene materials are ported", () => {
-  assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch(""), false);
+test("airbrush WebGPU renderer query flag defaults on with explicit opt-out", () => {
+  assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch(""), true);
   assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch("?webgpu-renderer=0"), false);
   assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch("?webgpu-renderer=off"), false);
   assert.equal(textureAirbrushWebGpuRendererRequestedFromSearch("?webgpu-renderer=1"), true);
@@ -393,7 +395,7 @@ test("airbrush backend can fall through to CPU when WebGL is disabled", () => {
   });
 });
 
-test("airbrush renderer mode stays WebGL unless native WebGPU renderer is ready", () => {
+test("airbrush renderer mode obeys native WebGPU readiness", () => {
   function WebGPURenderer() {}
 
   assert.deepEqual(resolveTextureAirbrushRendererMode({
@@ -916,6 +918,50 @@ test("airbrush WebGPU projection helpers build screen probes from stroke footpri
   assert.ok(wideProbes.some((point) => Math.round(point.x) === 22 && Math.round(point.y) === 10));
 });
 
+test("airbrush WebGPU visible mask marks only sampled UV texels", () => {
+  const mask = textureAirbrushWebGpuVisibilityMaskPixels(8, 4, [
+    { x: 2, y: 1 },
+    { segment: { start: { x: 4, y: 2 }, end: { x: 6, y: 2 } } }
+  ], {
+    stampRadiusPixels: 1
+  });
+  const alphaAt = (x, y) => mask.pixels[(y * mask.width + x) * 4 + 3];
+
+  assert.equal(mask.width, 8);
+  assert.equal(mask.height, 4);
+  assert.ok(mask.markedPixels > 0);
+  assert.equal(alphaAt(2, 1), 255);
+  assert.equal(alphaAt(5, 2), 255);
+  assert.equal(alphaAt(0, 3), 0);
+
+  const candidate = {
+    record: { id: "record-mask" },
+    material: { uuid: "material-mask" },
+    materialIndex: 0,
+    editable: {
+      texture: { uuid: "texture-mask" },
+      canvas: { width: 8, height: 4 }
+    },
+    center: { x: 2, y: 1 },
+    radiusPixels: 2,
+    strokeSegments: [{ start: { x: 2, y: 1 }, end: { x: 6, y: 2 } }],
+    options: {
+      radiusPixels: 2
+    }
+  };
+  textureAirbrushWebGpuAssignVisibilityMasks([candidate], {
+    visibilityMaskStampRadiusPixels: 1,
+    visibilityFeatherRadius: 2
+  });
+
+  assert.equal(candidate.options.useVisibilityMask, true);
+  assert.equal(candidate.options.visibleSurfaceMaskReady, true);
+  assert.equal(candidate.options.visibilityFeatherRadius, 2);
+  assert.equal(candidate.options.visibilityMaskPixels.byteLength, 8 * 4 * 4);
+  assert.match(candidate.options.visibilityMaskKey, /record-mask:0:material-mask/);
+  assert.equal(candidate.options.visibilityMaskPixels[(3 * 8 + 0) * 4 + 3], 0);
+});
+
 test("airbrush projection keeps only front-surface depth-window hits", () => {
   const intersections = [
     { distance: 10, id: "front" },
@@ -991,4 +1037,17 @@ test("airbrush WebGPU stroke planner maps hit uv and stroke start to texture pix
   assert.equal(candidate.options.radiusPixels, radius);
   assert.equal(candidate.options.opacity, 0.5);
   assert.equal(candidate.estimate, textureAirbrushWebGpuStrokeEstimate(candidate));
+});
+
+test("airbrush WebGPU stroke planner ignores missing hits before material lookup", () => {
+  let materialLookups = 0;
+  const candidate = textureAirbrushWebGpuStrokeCandidateFromHit({
+    clonePaintMaterialForHit() {
+      materialLookups += 1;
+      return {};
+    }
+  }, null, null, null);
+
+  assert.equal(candidate, null);
+  assert.equal(materialLookups, 0);
 });

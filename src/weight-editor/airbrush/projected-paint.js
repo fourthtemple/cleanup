@@ -4,7 +4,7 @@ import {
   textureAirbrushPointInRect,
   textureAirbrushProbePointsFromStroke,
   textureAirbrushScreenStrokeFromEvent
-} from "./projection.js?v=layer-stroke-fix-20260619a";
+} from "./projection.js";
 import { installTextureAirbrushProjectedRegionMethods } from "./projected-region.js";
 
 export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
@@ -78,10 +78,14 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
       const resolvedBackend = options.resolvedBackend && typeof options.resolvedBackend.backend === "string"
         ? options.resolvedBackend
         : null;
+      const webGpuVisibleMaskReady = requireVisibleSurfaceShader
+        && typeof this.textureAirbrushWebGpuPaintFromEvent === "function"
+        && Boolean(this.textureAirbrushWebGpuDevice?.());
       const backendOptions = {
         ...options,
         visibleSurfaceMaskRequired: requireVisibleSurfaceShader,
-        liveProjectedPaint: requireVisibleSurfaceShader
+        liveProjectedPaint: requireVisibleSurfaceShader,
+        visibleSurfaceMaskReady: webGpuVisibleMaskReady
       };
       const backend = resolvedBackend || this.textureAirbrushResolveBackend?.(backendOptions) || {
         backend: !this.textureAirbrushGpuDisabled ? "webgl" : "cpu",
@@ -91,13 +95,21 @@ export function installTextureAirbrushProjectedPaintMethods(BirdWeightEditor) {
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
-        // The current WebGPU texture brush is not a live projection brush until it has
-        // the same camera-visible/frontmost-depth mask as the WebGL shader.
-        // Do not route live airbrush here as a workaround for WebGL migration;
-        // that would bypass the approved visible-side-only shader contract.
+        // The WebGPU live route is allowed only with an explicit visibility
+        // permission mask generated from frontmost raycast samples. That mask
+        // can soften visible edges, but it must never authorize hidden texels.
+        const webGpuChanged = this.textureAirbrushWebGpuPaintFromEvent?.(event, {
+          ...options,
+          visibleSurfaceMaskRequired: true,
+          liveProjectedPaint: true,
+          requireVisibilityMask: true
+        }) || 0;
+        if (webGpuChanged > 0) {
+          return webGpuChanged;
+        }
         this.textureAirbrushReportWebGpuFallback?.({
-          backend: "webgl",
-          webGpuStatus: "visible-surface-mask-required"
+          backend: "none",
+          webGpuStatus: "visible-surface-mask-unavailable"
         });
         return 0;
       }

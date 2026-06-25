@@ -32,13 +32,12 @@ export function textureAirbrushWebGpuRequestedFromSearch(search = "") {
 }
 
 export function textureAirbrushWebGpuRendererRequestedFromSearch(search = "") {
-  // Keep the renderer opt-in until the scene materials and live airbrush
-  // projection shader have a native WebGPU equivalent. Defaulting this on makes
-  // the current character render as a black silhouette in runtime validation.
+  // WebGPU is the primary renderer now. Keep the query flag only as an escape
+  // hatch for browser or driver failures: ?webgpu-renderer=0 uses WebGL compat.
   return queryFlagValue(search, [
     TEXTURE_AIRBRUSH_WEBGPU_RENDERER_QUERY_PARAM,
     "renderer-webgpu"
-  ], false);
+  ], true);
 }
 
 export function textureAirbrushNativeWebGpuAvailable(scope = globalThis) {

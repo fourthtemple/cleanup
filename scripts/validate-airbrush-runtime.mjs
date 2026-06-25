@@ -18,6 +18,10 @@ const thirdLayer = args.thirdLayer === true || process.env.AIRBRUSH_RUNTIME_THIR
 const afterOrbitNeighbor = args.afterOrbitNeighbor === true || process.env.AIRBRUSH_RUNTIME_AFTER_ORBIT_NEIGHBOR === "1";
 const afterOrbitMacro = args.afterOrbitMacro === true || process.env.AIRBRUSH_RUNTIME_AFTER_ORBIT_MACRO === "1";
 const sideEdgeSoftness = args.sideEdgeSoftness === true || process.env.AIRBRUSH_RUNTIME_SIDE_EDGE_SOFTNESS === "1";
+const forceWebGpuRenderer = args.webGpuRenderer === true || process.env.AIRBRUSH_RUNTIME_WEBGPU_RENDERER === "1";
+const forceWebGpuAirbrush = args.webGpuAirbrush === true || process.env.AIRBRUSH_RUNTIME_WEBGPU_AIRBRUSH === "1";
+const forceWebGlRenderer = args.webGlRenderer === true || process.env.AIRBRUSH_RUNTIME_WEBGL_RENDERER === "1";
+const webGpuRendererExpected = forceWebGpuRenderer === true || forceWebGlRenderer !== true;
 
 const cleanupTasks = [];
 
@@ -101,6 +105,13 @@ try {
   await cdp.send("Input.setIgnoreInputEvents", { ignore: false });
   await waitForRuntime(cdp, "document.readyState === 'complete' || document.readyState === 'interactive'", timeoutMs);
   await waitForRuntime(cdp, "Boolean(window.modelCleanupEditor)", timeoutMs);
+  if (webGpuRendererExpected) {
+    await waitForRuntime(cdp, [
+      "window.modelCleanupEditor.textureAirbrushWebGpuRendererReady === true",
+      "window.modelCleanupEditor.textureAirbrushWebGpuRendererDisabled === true",
+      "!window.modelCleanupEditor.textureAirbrushWebGpuRendererInit"
+    ].join(" || "), timeoutMs);
+  }
 
   if (afterOrbitMacro) {
     const result = await evaluateRuntime(cdp, runtimeAfterOrbitMacroExpression(), { awaitPromise: true, timeoutMs });
@@ -171,7 +182,7 @@ try {
   } else {
   const prepared = await evaluateRuntime(cdp, runtimePreparationExpression(), { awaitPromise: true, timeoutMs });
   if (!prepared?.ready) {
-    throw new Error(`Airbrush runtime preparation failed: ${prepared?.error || "unknown"}`);
+    throw new Error(`Airbrush runtime preparation failed: ${prepared?.error || "unknown"} ${JSON.stringify(prepared || {})}`);
   }
 
   await dispatchAirbrushStroke(cdp, prepared.stroke);
@@ -266,6 +277,12 @@ function parseArgs(argv) {
       parsed.afterOrbitMacro = true;
     } else if (value === "--side-edge-softness") {
       parsed.sideEdgeSoftness = true;
+    } else if (value === "--webgpu-renderer") {
+      parsed.webGpuRenderer = true;
+    } else if (value === "--webgpu-airbrush") {
+      parsed.webGpuAirbrush = true;
+    } else if (value === "--webgl-renderer") {
+      parsed.webGlRenderer = true;
     } else if (value === "--url") {
       parsed.url = argv[++index] || "";
     } else if (value === "--screenshot") {
@@ -303,6 +320,9 @@ Options:
   --after-orbit-neighbor  Validate Neighbor paint, orbit, then Neighbor paint again.
   --after-orbit-macro  Validate the packaged after-orbit Neighbor paint repro macro.
   --side-edge-softness  Validate a side-view soft-edge stroke for triangle teeth.
+  --webgpu-renderer  Force the native WebGPU renderer query flag.
+  --webgpu-airbrush  Force the WebGPU airbrush query flag.
+  --webgl-renderer   Force WebGL compatibility renderer for fallback validation.
 `);
 }
 
@@ -445,6 +465,9 @@ async function launchChrome({ browserPath, port, userDataDir, url, headless: use
     "--autoplay-policy=no-user-gesture-required",
     url
   ];
+  if (webGpuRendererExpected || forceWebGpuRenderer || forceWebGpuAirbrush) {
+    chromeArgs.splice(6, 0, "--enable-unsafe-webgpu");
+  }
   if (useHeadless) {
     chromeArgs.unshift("--headless=new");
   }
@@ -466,6 +489,15 @@ async function launchChrome({ browserPath, port, userDataDir, url, headless: use
 function withValidationQuery(value) {
   const url = new URL(value);
   url.searchParams.set("library", url.searchParams.get("library") || "server");
+  if (forceWebGlRenderer) {
+    url.searchParams.set("webgpu-renderer", "0");
+  }
+  if (forceWebGpuRenderer) {
+    url.searchParams.set("webgpu-renderer", "1");
+  }
+  if (forceWebGpuAirbrush) {
+    url.searchParams.set("webgpu-airbrush", "1");
+  }
   url.searchParams.set("airbrush-runtime-validation", String(Date.now()));
   return url.href;
 }
@@ -1862,11 +1894,20 @@ function runtimeAfterOrbitNeighborExpression() {
         if (pending && typeof pending.then === "function") {
           await pending;
         }
+        const webGpuPending = editor.flushTextureAirbrushPendingWebGpuPaints?.();
+        if (webGpuPending && typeof webGpuPending.then === "function") {
+          await webGpuPending;
+        }
         if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
           break;
         }
         await delay(25);
       }
+      const finalWebGpuPending = editor.flushTextureAirbrushPendingWebGpuPaints?.();
+      if (finalWebGpuPending && typeof finalWebGpuPending.then === "function") {
+        await finalWebGpuPending;
+      }
+      await waitFrame();
       await delay(50);
     };
     const assets = [
@@ -2348,6 +2389,8 @@ function runtimeAfterOrbitNeighborExpression() {
       pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
       flushing: Boolean(editor.textureAirbrushFlushingScreenStroke),
       neighborViewNormalThreshold: Number(shader?.uniforms?.neighborViewNormalThreshold?.value ?? 0),
+      webGpuStatus: editor.textureAirbrushWebGpuRuntimeStatus?.() || null,
+      lastBackend: editor.textureAirbrushLastBackend || null,
       status: document.getElementById("viewer-status")?.textContent || "",
       validation
     };
@@ -2361,19 +2404,47 @@ function runtimePreparationExpression() {
       return { ready: false, error: "missing-editor" };
     }
     const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
-    await editor.loadAnimationLibraryAsset({
-      key: "airbrush-runtime:humanoid-cat-walking",
-      name: "humanoid-cat-walking.fbx",
-      label: "humanoid-cat-walking",
-      extension: "fbx",
-      folder: "cat",
-      path: "assets/models/animation-library/cat/humanoid-cat-walking.fbx",
-      url: "./assets/models/animation-library/cat/humanoid-cat-walking.fbx",
-      cleanupFile: "humanoid-cat-walking-weight-patch.json",
-      cleanupPath: "assets/models/animation-library/cat/humanoid-cat-walking-weight-patch.json",
-      engine: true,
-      demo: true
-    });
+    const assets = [
+      {
+        key: "airbrush-runtime:test-walking-8",
+        name: "walking-8.fbx",
+        label: "walking-8",
+        extension: "fbx",
+        folder: "test",
+        path: "assets/models/animation-library/test/walking-8.fbx",
+        url: "./assets/models/animation-library/test/walking-8.fbx",
+        engine: true,
+        demo: true
+      },
+      {
+        key: "airbrush-runtime:etes-walking-8",
+        name: "walking-8.fbx",
+        label: "walking-8",
+        extension: "fbx",
+        folder: "etes",
+        path: "assets/models/animation-library/etes/walking-8.fbx",
+        url: "./assets/models/animation-library/etes/walking-8.fbx",
+        engine: true,
+        demo: true
+      }
+    ];
+    let loadedAsset = "";
+    let loadError = "";
+    for (const asset of assets) {
+      try {
+        const loaded = await editor.loadAnimationLibraryAsset(asset);
+        if (loaded && editor.model) {
+          loadedAsset = asset.path;
+          break;
+        }
+        loadError = "load returned without a model";
+      } catch (error) {
+        loadError = error?.message || String(error);
+      }
+    }
+    if (!loadedAsset) {
+      return { ready: false, loaded: false, error: "asset-load-failed", loadError };
+    }
     for (let index = 0; index < 6; index += 1) {
       await waitFrame();
     }
@@ -2411,13 +2482,15 @@ function runtimePreparationExpression() {
       stopPropagation() {},
       stopImmediatePropagation() {}
     });
-    const xFractions = [0.5, 0.46, 0.54, 0.42, 0.58, 0.38, 0.62, 0.34, 0.66];
-    const yFractions = [0.5, 0.46, 0.54, 0.42, 0.58, 0.38, 0.62, 0.34, 0.66, 0.3, 0.7];
+    const xFractions = [0.5, 0.46, 0.54, 0.42, 0.58, 0.38, 0.62, 0.34, 0.66, 0.3, 0.7, 0.26, 0.74, 0.22, 0.78, 0.18, 0.82];
+    const yFractions = [0.5, 0.46, 0.54, 0.42, 0.58, 0.38, 0.62, 0.34, 0.66, 0.3, 0.7, 0.26, 0.74, 0.22, 0.78, 0.18, 0.82];
     let chosen = null;
+    let tried = 0;
     for (const yFraction of yFractions) {
       for (const xFraction of xFractions) {
         const clientX = rect.left + rect.width * xFraction;
         const clientY = rect.top + rect.height * yFraction;
+        tried += 1;
         const hit = editor.texturePaintHitForEvent?.(eventAt(clientX, clientY), "airbrush");
         if (hit?.record && hit?.hit) {
           chosen = { clientX, clientY, xFraction, yFraction };
@@ -2432,12 +2505,37 @@ function runtimePreparationExpression() {
       return {
         ready: false,
         loaded: Boolean(editor.model),
+        loadedAsset,
         paintRecords: editor.paintRecords?.length || 0,
+        tried,
+        rendererMode: editor.textureAirbrushLastRendererMode || null,
+        webGpuStatus: editor.textureAirbrushWebGpuRuntimeStatus?.() || null,
         error: "missing-paintable-hit"
       };
     }
     const offset = Math.max(8, Math.min(24, rect.width * 0.025));
     const clampX = (value) => Math.max(rect.left + 2, Math.min(rect.right - 2, value));
+    const chosenEvent = eventAt(chosen.clientX, chosen.clientY);
+    const directHitAtChosen = editor.texturePaintHitForEvent?.(chosenEvent, "airbrush") || null;
+    const directMaterialAtChosen = directHitAtChosen?.record
+      ? editor.clonePaintMaterialForHit?.(directHitAtChosen.record, directHitAtChosen.hit) || null
+      : null;
+    const directEditableAtChosen = directMaterialAtChosen
+      ? editor.editableClonePaintTexture?.(directMaterialAtChosen) || null
+      : null;
+    const directPixelAtChosen = directHitAtChosen?.hit?.uv && directEditableAtChosen?.canvas && directEditableAtChosen?.texture
+      ? editor.clonePaintPixelFromUv?.(
+          directHitAtChosen.hit.uv,
+          directEditableAtChosen.canvas,
+          directEditableAtChosen.texture,
+          { wrap: true }
+        ) || null
+      : null;
+    const webGpuCandidatesAtHit = editor.textureAirbrushWebGpuCandidatesFromEvent?.(chosenEvent, {
+      visibleSurfaceMaskRequired: true,
+      liveProjectedPaint: true,
+      requireVisibilityMask: true
+    }) || [];
     const validation = {
       pointerDowns: 0,
       paintEvents: 0,
@@ -2478,10 +2576,46 @@ function runtimePreparationExpression() {
     return {
       ready: true,
       loaded: Boolean(editor.model),
+      loadedAsset,
       paintRecords: editor.paintRecords?.length || 0,
       activeTool: editor.activeTool,
       hitFound: true,
       hit: chosen,
+      directWebGpuPrereq: {
+        hasHitRecord: Boolean(directHitAtChosen?.record),
+        hasHit: Boolean(directHitAtChosen?.hit),
+        hasUv: Boolean(directHitAtChosen?.hit?.uv),
+        hasMaterial: Boolean(directMaterialAtChosen),
+        materialHasMap: Boolean(directMaterialAtChosen?.map),
+        mapName: directMaterialAtChosen?.map?.name || "",
+        mapImageType: directMaterialAtChosen?.map?.image?.constructor?.name || "",
+        mapImageWidth: directMaterialAtChosen?.map?.image?.width || directMaterialAtChosen?.map?.image?.naturalWidth || 0,
+        mapImageHeight: directMaterialAtChosen?.map?.image?.height || directMaterialAtChosen?.map?.image?.naturalHeight || 0,
+        mapIsTexture: directMaterialAtChosen?.map?.isTexture === true,
+        hasEditable: Boolean(directEditableAtChosen),
+        hasCanvas: Boolean(directEditableAtChosen?.canvas),
+        canvasWidth: directEditableAtChosen?.canvas?.width || 0,
+        canvasHeight: directEditableAtChosen?.canvas?.height || 0,
+        hasTexture: Boolean(directEditableAtChosen?.texture),
+        hasPixel: Boolean(directPixelAtChosen),
+        pixel: directPixelAtChosen
+          ? {
+              x: directPixelAtChosen.x,
+              y: directPixelAtChosen.y
+            }
+          : null
+      },
+      webGpuCandidateCountAtHit: webGpuCandidatesAtHit.length || 0,
+      webGpuCandidateDebug: webGpuCandidatesAtHit.slice(0, 3).map((candidate) => ({
+        hasRecord: Boolean(candidate?.record),
+        hasMaterial: Boolean(candidate?.material),
+        hasEditable: Boolean(candidate?.editable),
+        hasCanvas: Boolean(candidate?.editable?.canvas),
+        hasTexture: Boolean(candidate?.editable?.texture),
+        materialIndex: candidate?.materialIndex ?? null,
+        estimate: candidate?.estimate ?? 0,
+        visibleSurfaceMaskReady: candidate?.options?.visibleSurfaceMaskReady === true
+      })),
       canvas: {
         left: rect.left,
         top: rect.top,
@@ -2509,10 +2643,18 @@ function runtimeResultExpression() {
       if (pending && typeof pending.then === "function") {
         await pending;
       }
+      const webGpuPending = editor.flushTextureAirbrushPendingWebGpuPaints?.();
+      if (webGpuPending && typeof webGpuPending.then === "function") {
+        await webGpuPending;
+      }
       if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
         break;
       }
       await delay(25);
+    }
+    const finalWebGpuPending = editor.flushTextureAirbrushPendingWebGpuPaints?.();
+    if (finalWebGpuPending && typeof finalWebGpuPending.then === "function") {
+      await finalWebGpuPending;
     }
     await delay(50);
     return {
@@ -2522,6 +2664,8 @@ function runtimeResultExpression() {
       queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
       pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
       flushing: Boolean(editor.textureAirbrushFlushingScreenStroke),
+      webGpuStatus: editor.textureAirbrushWebGpuRuntimeStatus?.() || null,
+      lastBackend: editor.textureAirbrushLastBackend || null,
       status: document.getElementById("viewer-status")?.textContent || "",
       undoStackLength: editor.undoStack?.length || 0,
       validation: window.__airbrushRuntimeValidation || null

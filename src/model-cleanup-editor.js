@@ -12,39 +12,39 @@ import {
   remainingClipStartOffsetSeconds
 } from "./animation/animation-clip-utils.js";
 import { loadBirdFlapProfile } from "./animation/bird-flap-pose.js";
-import { installAssetExportMethods } from "./weight-editor/asset-export.js?v=export-merged-layers-20260621a";
-import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js?v=static-library-load-20260618a";
-import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js?v=layer-save-reload-20260621a";
-import { installClonePaintMethods } from "./weight-editor/clone-paint.js?v=layer-stroke-fix-20260619a";
-import { installClonePaintReplayMethods } from "./weight-editor/clone-paint-replay.js?v=airbrush-command-20260602a";
-import { installCurveEditorMethods } from "./weight-editor/curve-editor.js?v=adaptive-context-key-20260609a";
-import { installCurveHandleMethods } from "./weight-editor/curve-handles.js?v=adaptive-context-key-20260609a";
-import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js?v=adaptive-delta-cache-20260609a";
-import { installJointConstraintMethods } from "./weight-editor/joint-constraints.js?v=joint-limit-capture-20260604a";
-import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js?v=layer-camera-stable-frame-prewarm-20260620a";
-import { installPaintToolMethods } from "./weight-editor/paint-tools.js?v=post-orbit-solid-20260624a";
-import { installPoseCoreMethods } from "./weight-editor/pose-core.js?v=macro-replay-state-20260606a";
-import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js?v=adaptive-context-key-20260609a";
-import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js?v=responsive-drawer-polish-20260612a";
-import { installTimelineAdditiveKinematicsMethods } from "./weight-editor/timeline-additive-kinematics.js?v=edit-modes-20260609a";
-import { installTimelineAdaptiveEditMethods } from "./weight-editor/timeline-adaptive-edits.js?v=adaptive-convert-exact-20260609b";
-import { installTimelineSolvedKeyMethods } from "./weight-editor/timeline-solved-keys.js?v=key-detail-motion-20260609a";
-import { installIkSolverMethods } from "./weight-editor/ik-solver.js?v=ik-solver-dropdown-active-20260609a";
+import { installAssetExportMethods } from "./weight-editor/asset-export.js";
+import { installAnimationLibraryMethods } from "./weight-editor/animation-library.js";
+import { installActorAndModelMethods } from "./weight-editor/actors-and-models.js";
+import { installClonePaintMethods } from "./weight-editor/clone-paint.js";
+import { installClonePaintReplayMethods } from "./weight-editor/clone-paint-replay.js";
+import { installCurveEditorMethods } from "./weight-editor/curve-editor.js";
+import { installCurveHandleMethods } from "./weight-editor/curve-handles.js";
+import { installAutoKeySolverMethods } from "./weight-editor/auto-key-solver.js";
+import { installJointConstraintMethods } from "./weight-editor/joint-constraints.js";
+import { installOverlayAndRenderMethods } from "./weight-editor/overlays-and-render.js";
+import { installPaintToolMethods } from "./weight-editor/paint-tools.js";
+import { installPoseCoreMethods } from "./weight-editor/pose-core.js";
+import { installPoseClipboardMethods } from "./weight-editor/pose-clipboard.js";
+import { installPoseTimelineMethods } from "./weight-editor/pose-timeline.js";
+import { installTimelineAdditiveKinematicsMethods } from "./weight-editor/timeline-additive-kinematics.js";
+import { installTimelineAdaptiveEditMethods } from "./weight-editor/timeline-adaptive-edits.js";
+import { installTimelineSolvedKeyMethods } from "./weight-editor/timeline-solved-keys.js";
+import { installIkSolverMethods } from "./weight-editor/ik-solver.js";
 import { installLoopBlendMethods } from "./weight-editor/loop-blend.js";
-import { installRigEditorMethods } from "./weight-editor/rig-editor.js?v=responsive-drawer-polish-20260612a";
-import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js?v=macro-live-follow-20260608a";
-import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js?v=root-unbake-20260604b";
-import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js?v=post-camera-settle-guard-20260624a";
+import { installRigEditorMethods } from "./weight-editor/rig-editor.js";
+import { installRootMotionPreviewMethods } from "./weight-editor/root-motion-preview.js";
+import { installRootMotionUnbakeMethods } from "./weight-editor/root-motion-unbake.js";
+import { installSceneAndControlMethods } from "./weight-editor/scene-and-controls.js";
 import { installSequencePlaybackMethods } from "./weight-editor/sequence-playback.js";
-import { installTexturePaintLayerMethods } from "./weight-editor/texture-layers.js?v=layer-rename-20260621a";
+import { installTexturePaintLayerMethods } from "./weight-editor/texture-layers.js";
 import {
   installTextureAirbrushMethods,
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
 } from "./weight-editor/airbrush/index.js";
-import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-await-airbrush-idle-20260624a";
-import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=layer-stroke-fix-20260619a";
-import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
+import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js";
+import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js";
+import { installWeightMethods } from "./weight-editor/weights.js";
 
 const BIRD_WEIGHT_PATCH_FILE_NAME = "mixamo-cleanup-weight-patch.json";
 const ADDITIVE_POSE_EASE_FRAMES = 8;
@@ -689,18 +689,18 @@ async function loadOptionalWebGpuRenderer() {
     return null;
   }
   if (!textureAirbrushWebGpuRendererRequestedFromSearch(window.location?.search || "")) {
-    console.info("WebGPU renderer explicitly disabled; using WebGL.");
+    console.info("WebGPU renderer disabled; using WebGL compatibility renderer.");
     return null;
   }
   if (!globalThis.navigator?.gpu) {
-    console.info("WebGPU renderer requested, but navigator.gpu is not available; using WebGL.");
+    console.info("WebGPU renderer requested, but navigator.gpu is not available; using WebGL compatibility renderer.");
     return null;
   }
   try {
     const module = await import("../node_modules/three/build/three.webgpu.js");
     return typeof module.WebGPURenderer === "function" ? module.WebGPURenderer : null;
   } catch (error) {
-    console.warn("Could not load Three.js WebGPU renderer; using WebGL.", error);
+    console.warn("Could not load Three.js WebGPU renderer; using WebGL compatibility renderer.", error);
     return null;
   }
 }

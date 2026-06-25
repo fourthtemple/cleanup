@@ -52,7 +52,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
   const TUTORIAL_TIMELINE_DRAWER_OPEN_RATIO = 0.65;
   const TUTORIAL_EDITOR_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-editor-enabled:v1";
   const TUTORIAL_RECIPES_STORAGE_KEY = "fourth-temple-model-cleanup:tutorial-recipes:v1";
-  const TUTORIAL_RECIPES_ASSET_URL = "./assets/tutorial-recipes.json?v=20260609a";
+  const TUTORIAL_RECIPES_ASSET_URL = "./assets/tutorial-recipes.json";
 
   function sceneVectorArray(vector = null) {
     const values = typeof vector?.toArray === "function"
@@ -227,7 +227,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
               .catch((error) => {
                 this.textureAirbrushWebGpuRendererDisabled = true;
                 console.warn("Three.js WebGPU renderer failed to initialize.", error);
-                this.setStatus?.("WebGPU renderer failed to initialize; reload without ?webgpu-renderer=1 to use WebGL.");
+                this.setStatus?.("WebGPU renderer failed to initialize; reload with ?webgpu-renderer=0 to use WebGL compatibility mode.");
               });
           } else {
             this.textureAirbrushWebGpuRendererReady = true;

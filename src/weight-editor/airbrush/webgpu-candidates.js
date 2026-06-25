@@ -4,6 +4,7 @@ import {
   textureAirbrushProbePointsFromStroke,
   textureAirbrushScreenStrokeFromEvent
 } from "./projection.js";
+import { textureAirbrushWebGpuAssignVisibilityMasks } from "./webgpu-projection.js";
 import { textureAirbrushWebGpuStrokeCandidateFromHit } from "./webgpu-stroke.js";
 
 export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
@@ -16,6 +17,9 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
       if (!event || !this.model) {
         return [];
       }
+      const requiresVisibilityMask = options.visibleSurfaceMaskRequired === true
+        || options.liveProjectedPaint === true
+        || options.requireVisibilityMask === true;
       const candidates = [];
       const seen = new Set();
       const addCandidate = (candidate) => {
@@ -45,9 +49,12 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
       ));
 
       if (!this.canvas || !this.camera || !this.raycaster) {
+        if (requiresVisibilityMask) {
+          textureAirbrushWebGpuAssignVisibilityMasks(candidates, options);
+        }
         return candidates;
       }
-      if (this.clonePaintTargets?.size) {
+      if (this.clonePaintTargets?.size && !requiresVisibilityMask) {
         return candidates;
       }
       const rect = this.canvas.getBoundingClientRect?.();
@@ -94,6 +101,9 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
           );
           addCandidate(candidate);
         }
+      }
+      if (requiresVisibilityMask) {
+        textureAirbrushWebGpuAssignVisibilityMasks(candidates, options);
       }
       return candidates;
     }

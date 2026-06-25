@@ -1,8 +1,8 @@
-export { installTextureAirbrushMethods } from "./install.js?v=visible-flat-visible-alpha-20260625a";
+export { installTextureAirbrushMethods } from "./install.js";
 export { installTextureAirbrushBrushSettingsMethods } from "./brush-settings.js";
 export { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
-export { installTextureAirbrushNeighborPaintMethods } from "./neighbor.js?v=visible-side-facing-20260623a";
-export { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js?v=solid-preview-20260622a";
+export { installTextureAirbrushNeighborPaintMethods } from "./neighbor.js";
+export { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js";
 export { installTextureAirbrushTexturePickingMethods } from "./texture-picking.js";
 export {
   TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,
@@ -14,16 +14,16 @@ export {
   airbrushCoverageForDistance,
   airbrushHaloRadius
 } from "./math.js";
-export { installTextureAirbrushPointerMethods } from "./pointer.js?v=clean-preview-cursor-20260622a";
-export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js?v=post-orbit-solid-20260624a";
+export { installTextureAirbrushPointerMethods } from "./pointer.js";
+export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.js";
 export { installTextureAirbrushProjectedRegionMethods } from "./projected-region.js";
-export { installTextureAirbrushNearBrushMethods } from "./uv-near.js?v=visible-side-facing-20260623a";
-export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=visible-side-facing-20260623a";
+export { installTextureAirbrushNearBrushMethods } from "./uv-near.js";
+export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js";
 export { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 export { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-flat-visible-alpha-20260625a";
-export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=visible-flat-visible-alpha-20260625a";
-export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=neighbor-boundary-mask-20260624a";
+export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js";
+export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js";
+export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js";
 export {
   textureAirbrushCreateWebGpuPaintResources,
   textureAirbrushDispatchWebGpuPaint,
@@ -57,9 +57,11 @@ export {
   textureAirbrushPointInRect,
   textureAirbrushProbePointsFromStroke,
   textureAirbrushScreenStrokeFromEvent
-} from "./projection.js?v=layer-stroke-fix-20260619a";
+} from "./projection.js";
 export {
   TEXTURE_AIRBRUSH_WEBGPU_PROJECTION_DEPTH_WINDOW,
+  textureAirbrushWebGpuAssignVisibilityMasks,
+  textureAirbrushWebGpuVisibilityMaskPixels,
   textureAirbrushWebGpuProbePointsFromStroke,
   textureAirbrushWebGpuScreenStrokeFromEvent
 } from "./webgpu-projection.js";
