@@ -338,9 +338,9 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             float angleCoverage = smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Soft edge fades down to zero before the hard geometric cutoff.
-            // Do not floor this value: A nonzero floor at the cutoff looks
-            // like paint leaking onto geometry that is no longer facing the
-            // camera.
+            // Do not floor this value: a nonzero floor at the cutoff makes the
+            // edge look like it wraps onto geometry that is no longer facing
+            // the camera.
             // Raise small positive camera-facing angles without changing the
             // zero-at-cutoff invariant. Visible grazing surfaces can receive a
             // soft spray; non-camera-facing surfaces still receive exactly zero.
@@ -497,15 +497,12 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
                 // screen-neighborhood depth/normal mask: even alpha-only
                 // neighboring samples can punch triangle-shaped holes into a
                 // fragment that already matched the current visible surface.
-                // Do not floor the soft edge at the cutoff; a floor looks like
-                // paint leaking onto the non-camera-facing side.
-                // Use the smoother of the proven-visible normals for alpha only;
-                // the hard geometric normal gate above still owns eligibility.
-                // This avoids visible triangle teeth without authorizing any
-                // hidden/back fragment to paint.
+                // Do not floor the soft edge. A nonzero floor at the cutoff looks
+                // like paint leaking onto the non-camera-facing side.
+                // rejected hidden/back fragments still discard below.
                 float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
                 float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintGateViewNormal);
-                float softCenterVisibleCoverage = max(fadeNormalCoverage, gateNormalCoverage);
+                float softCenterVisibleCoverage = min(fadeNormalCoverage, gateNormalCoverage);
                 visibleSurfaceCoverage = mix(1.0, softCenterVisibleCoverage, centerGrazingEdgeAmount);
               }
             }
@@ -520,7 +517,6 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // Soft edge behavior above only reduces alpha after this center
               // visible-surface match has already succeeded. It must never turn
               // an unmatched fragment into painted texture.
-              // rejected hidden/back fragments still discard.
               discard;
             }
             vec2 screenPoint = vec2(
