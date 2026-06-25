@@ -40,12 +40,10 @@ const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.00018;
 // the back at wraps.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.0008;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-// This small negative value is only a visible-silhouette tolerance for meshes
-// whose smoothed/vertex normals tip just past 90 degrees while the triangle is
-// still the frontmost rendered surface. It is not a hidden-side allowance:
-// the strict depth gate and visible-normal agreement gate below still decide
-// whether the fragment belongs to the current camera-visible surface.
-const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = -0.12;
+// Zero is the 90-degree camera-facing cutoff. Keep this literal: a negative
+// value lets the soft edge cross onto geometry that is no longer facing the
+// paint camera, which shows up as paint wrapped around the side/back.
+const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = 0;
 const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.12;
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {
@@ -374,6 +372,10 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             vec3 paintViewNormal = paintFragmentViewNormal();
             vec3 paintGateViewNormal = paintFragmentGeometricViewNormal();
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Zero is the 90-degree camera-facing cutoff. A negative cutoff is
+            // not a smoothing option; it paints surfaces that no longer face
+            // the camera.
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Eligibility still comes from the hard visible-depth/normal gates
             // below. For Soft edge alpha only, use the interpolated paint
             // normal so a faceted geometric triangle cannot carve a hard tooth
@@ -647,7 +649,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // matching depth buffer. Do not add a smoothed-normal z cutoff here:
             // that can turn a continuous visible edge into triangle-ridge holes.
             // The paint shader still applies the paint fragment's camera-facing
-            // normal gate before any paint can land.
+            // strict z > 0 normal gate before any paint can land.
             gl_FragColor = vec4(visibleNormal * 0.5 + 0.5, 1.0);
           }
         `

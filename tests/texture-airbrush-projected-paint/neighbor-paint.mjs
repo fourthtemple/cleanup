@@ -1264,7 +1264,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.equal(material.uniforms.neighborNormalThreshold.value, 0);
   assert.equal(material.uniforms.visibleOnlyDepthEpsilon.value, 0.00018);
   assert.equal(material.uniforms.visibleOnlyFrontDepthEpsilon.value, 0.0008);
-  assert.equal(material.uniforms.visibleFacingNormalThreshold.value, -0.12);
+  assert.equal(material.uniforms.visibleFacingNormalThreshold.value, 0);
   assert.equal(material.uniforms.visibleEdgeSoftness.value, 1);
   assert.equal(material.uniforms.useVisibleNormalTexture.value, false);
   assert.equal(material.uniforms.visibleNormalTexture.value, null);
@@ -1326,6 +1326,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.doesNotMatch(material.fragmentShader, /sampleUv \+ screenPixel \* 2\.0/);
   assert.doesNotMatch(material.fragmentShader, /return clamp\(coverage \/ 42\.0, 0\.0, 1\.0\)/);
   assert.match(material.fragmentShader, /float visibleSurfaceGrazingEdgeAmount/);
+  assert.match(material.fragmentShader, /Zero is the 90-degree camera-facing cutoff/);
   assert.match(material.fragmentShader, /float grazingStart = visibleFacingNormalThreshold \+ 0\.08/);
   assert.match(material.fragmentShader, /float grazingEnd = visibleFacingNormalThreshold \+ 0\.86/);
   assert.match(material.fragmentShader, /float visibleSurfaceGrazingAngleCoverage/);

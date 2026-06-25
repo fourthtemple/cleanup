@@ -142,6 +142,144 @@ test("CPU layer airbrush caps opacity against the stroke-start image", () => {
   assert.equal(image.data[centerOffset + 3], 204);
 });
 
+test("CPU UV airbrush refuses non-camera-facing faces", () => {
+  class UvEditor {}
+  class Vector2 {
+    constructor(x = 0, y = 0) {
+      this.x = x;
+      this.y = y;
+    }
+  }
+  class Vector3 {
+    constructor(x = 0, y = 0, z = 0) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+    }
+    fromBufferAttribute(attribute, index) {
+      const point = attribute.points[index];
+      this.x = point.x;
+      this.y = point.y;
+      this.z = point.z;
+      return this;
+    }
+    clone() {
+      return new Vector3(this.x, this.y, this.z);
+    }
+    applyMatrix4() {
+      return this;
+    }
+    project() {
+      this.z = 0;
+      return this;
+    }
+    subVectors(a, b) {
+      this.x = a.x - b.x;
+      this.y = a.y - b.y;
+      this.z = a.z - b.z;
+      return this;
+    }
+    crossVectors(a, b) {
+      this.x = a.y * b.z - a.z * b.y;
+      this.y = a.z * b.x - a.x * b.z;
+      this.z = a.x * b.y - a.y * b.x;
+      return this;
+    }
+    length() {
+      return Math.hypot(this.x, this.y, this.z);
+    }
+  }
+  installTextureAirbrushUvBrushMethods(UvEditor, { THREE: { Vector2, Vector3 } });
+  const editor = new UvEditor();
+  const canvas = { width: 4, height: 4 };
+  const texture = {};
+  const image = {
+    width: 4,
+    height: 4,
+    data: new Uint8ClampedArray(4 * 4 * 4)
+  };
+  const record = {
+    deleted: new Set(),
+    object: {
+      updateMatrixWorld() {},
+      localToWorld(point) {
+        return point;
+      }
+    },
+    geometry: {
+      attributes: {
+        position: {
+          points: [
+            { x: -0.5, y: -0.5, z: 0 },
+            { x: -0.5, y: 0.5, z: 0 },
+            { x: 0.5, y: -0.5, z: 0 }
+          ]
+        },
+        uv: {
+          getX(index) {
+            return [0, 0, 1][index];
+          },
+          getY(index) {
+            return [0, 1, 0][index];
+          }
+        }
+      }
+    }
+  };
+  const hit = {
+    uv: { x: 0.25, y: 0.25 },
+    face: { a: 0, b: 1, c: 2, materialIndex: 0 }
+  };
+  editor.canvas = {
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 4, height: 4 };
+    }
+  };
+  editor.camera = { matrixWorldInverse: {} };
+  editor.model = { updateMatrixWorld() {} };
+  editor.applyBoneTransform = () => {};
+  editor.clonePaintMaterialForHit = () => ({ uuid: "paint-material" });
+  editor.editableClonePaintTexture = () => ({
+    canvas,
+    context: {},
+    texture,
+    layerMode: true
+  });
+  editor.textureAirbrushRegionPixelFromUv = (uv) => ({
+    x: uv.x * canvas.width,
+    y: uv.y * canvas.height
+  });
+  editor.texturePaintClosestTrianglePoint = () => ({ distanceSq: 0 });
+  editor.clonePaintTriangleTransform = () => ({});
+  editor.clonePaintTransformPoint = (transform, point) => ({ x: point.x, y: point.y });
+  editor.clonePaintBarycentric = () => ({});
+  editor.clonePaintBarycentricInside = () => true;
+  editor.clonePaintActualPixelFromTexturePoint = (point) => ({
+    x: Math.max(0, Math.min(canvas.width - 1, Math.round(point.x))),
+    y: Math.max(0, Math.min(canvas.height - 1, Math.round(point.y)))
+  });
+  editor.textureAirbrushColor = () => ({ r: 255, g: 0, b: 0 });
+
+  const changed = editor.textureAirbrushUvBrushOnFace(record, hit, {
+    clientX: 2,
+    clientY: 2
+  }, {
+    radiusPixels: 4,
+    opacity: 1,
+    hardness: 1,
+    scatter: 0,
+    strength: 1,
+    paintState: {
+      image,
+      changed: 0
+    },
+    deferCommit: true
+  });
+
+  assert.equal(changed, 0);
+  assert.equal(image.data.some((value) => value !== 0), false);
+});
+
 test("ending an airbrush stroke keeps WebGL target paint live for smooth follow-up strokes", () => {
   class PaintEditor {}
   installPaintToolMethods(PaintEditor, {});
@@ -302,6 +440,7 @@ test("post-stroke layer prewarm prepares the next active layer source off the do
     editor.painting = false;
     editor.texturePaintActiveMaterial = material;
     editor.texturePaintLayerModeActive = () => true;
+    editor.texturePaintHasActivePaintLayer = () => true;
     editor.textureAirbrushGpuLayerTargetForMaterial = (candidateMaterial, options) => {
       assert.equal(candidateMaterial, material);
       assert.deepEqual(options, { renderPanel: false, setActiveMaterial: false });
@@ -355,6 +494,7 @@ test("post-stroke layer prewarm uses the next frame before idle timing", () => {
     editor.painting = false;
     editor.texturePaintActiveMaterial = material;
     editor.texturePaintLayerModeActive = () => true;
+    editor.texturePaintHasActivePaintLayer = () => true;
     editor.textureAirbrushGpuLayerTargetForMaterial = () => targetEntry;
     editor.prewarmTexturePaintGpuStrokeSourceSnapshot = (candidateTarget) => {
       assert.equal(candidateTarget, targetEntry);
@@ -397,6 +537,7 @@ test("post-stroke layer prewarm retries after active painting clears", () => {
     editor.painting = true;
     editor.texturePaintActiveMaterial = material;
     editor.texturePaintLayerModeActive = () => true;
+    editor.texturePaintHasActivePaintLayer = () => true;
     editor.textureAirbrushScreenStrokeHasPendingWork = () => false;
     editor.textureAirbrushGpuLayerTargetForMaterial = () => targetEntry;
     editor.prewarmTexturePaintGpuStrokeSourceSnapshot = (candidateTarget) => {

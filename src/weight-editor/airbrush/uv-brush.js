@@ -156,6 +156,24 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
   const { THREE } = deps;
   installTextureAirbrushNearBrushMethods(BirdWeightEditor);
 
+  const cameraFacingNormalZFromViewPoints = (viewPoints = []) => {
+    if (
+      viewPoints.length !== 3
+      || typeof THREE.Vector3 !== "function"
+    ) {
+      return null;
+    }
+    try {
+      const edgeA = new THREE.Vector3().subVectors(viewPoints[1], viewPoints[0]);
+      const edgeB = new THREE.Vector3().subVectors(viewPoints[2], viewPoints[0]);
+      const normal = new THREE.Vector3().crossVectors(edgeA, edgeB);
+      const length = normal.length();
+      return length > 0.000001 ? normal.z / length : null;
+    } catch {
+      return null;
+    }
+  };
+
   Object.assign(BirdWeightEditor.prototype, {
     textureAirbrushRegionPixelFromUv(uv, canvas, texture, referenceUv = null) {
       if (!uv) {
@@ -210,6 +228,7 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
 
       const screenPoints = [];
       const texturePoints = [];
+      const viewPoints = [];
       for (const vertexIndex of vertexIndices) {
         if (!Number.isInteger(vertexIndex) || record.deleted?.has(vertexIndex)) {
           return 0;
@@ -217,6 +236,15 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
         const local = new THREE.Vector3().fromBufferAttribute(position, vertexIndex);
         this.applyBoneTransform?.(record.object, vertexIndex, local);
         record.object.localToWorld(local);
+        if (
+          this.camera?.matrixWorldInverse
+          && typeof local.clone === "function"
+        ) {
+          const viewPoint = local.clone();
+          if (typeof viewPoint.applyMatrix4 === "function") {
+            viewPoints.push(viewPoint.applyMatrix4(this.camera.matrixWorldInverse));
+          }
+        }
         const projected = local.project(this.camera);
         if (projected.z < -1 || projected.z > 1) {
           return 0;
@@ -235,6 +263,14 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
           texture,
           referenceUv
         ));
+      }
+      const viewNormalZ = cameraFacingNormalZFromViewPoints(viewPoints);
+      if (Number.isFinite(viewNormalZ) && viewNormalZ <= 0) {
+        // DO NOT PAINT ON NON CAMERA FACING SIDES.
+        // CPU/UV brushing is a fallback path, not permission to bypass the
+        // live shader's visible-side-only rule. If the face normal is at or
+        // behind 90 degrees from the paint camera, this path must paint nothing.
+        return 0;
       }
       if (texturePoints.some((point) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
         return 0;
