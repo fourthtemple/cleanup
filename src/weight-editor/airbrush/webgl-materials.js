@@ -231,8 +231,15 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return paintFragmentGeometricViewNormal();
           }
 
-          bool visibleSurfaceDepthNormalMatch(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
+          bool visibleSurfaceDepthNormalMatch(vec2 sampleUv, float fragmentDepth, vec3 paintGateViewNormal, float normalMatchThreshold) {
             if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {
+              return false;
+            }
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // The visibility match itself refuses below-cutoff geometry. Edge
+            // repair calls this helper too, so keep the guard here as well as in
+            // main().
+            if (paintGateViewNormal.z <= visibleFacingNormalThreshold) {
               return false;
             }
             float sceneDepth = texture2D(depthTexture, sampleUv).r;
@@ -245,12 +252,27 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             }
             float deltaFromVisibleSurface = fragmentDepth - sceneDepth;
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // The larger front-depth allowance is safe only for clearly
+            // camera-facing surfaces. At the 90-degree wrap, a "slightly in
+            // front" fragment is exactly how paint sneaks onto the side/back, so
+            // fade that allowance down to the strict depth epsilon before the
+            // soft visual edge reaches the cutoff.
+            float frontDepthAllowance = mix(
+              visibleOnlyDepthEpsilon,
+              visibleOnlyFrontDepthEpsilon,
+              smoothstep(
+                visibleFacingNormalThreshold + 0.18,
+                visibleFacingNormalThreshold + 0.42,
+                paintGateViewNormal.z
+              )
+            );
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Keep both sides bounded: this helper does not restore the old
             // "closer than depth is okay" shortcut and it does not widen the
             // strict behind/back-side depth gate.
             if (
               deltaFromVisibleSurface > visibleOnlyDepthEpsilon
-              || deltaFromVisibleSurface < -visibleOnlyFrontDepthEpsilon
+              || deltaFromVisibleSurface < -frontDepthAllowance
             ) {
               return false;
             }
@@ -262,33 +284,40 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               }
               visibleNormal = visibleNormal / visibleNormalLength;
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // The sampled front-surface authority also has to face the camera.
+              // Clear/background normals decode to a negative z vector; this
+              // check keeps them from acting like valid wrap coverage.
+              if (visibleNormal.z <= visibleFacingNormalThreshold) {
+                return false;
+              }
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
               // A nearby depth sample is useful only when its frontmost normal
               // still agrees with this paint fragment. This prevents edge
               // rescue from authorizing a wrap/back fragment that merely has a
               // similar depth value.
-              if (dot(visibleNormal, paintViewNormal) < normalMatchThreshold) {
+              if (dot(visibleNormal, paintGateViewNormal) < normalMatchThreshold) {
                 return false;
               }
             }
             return true;
           }
 
-          float visibleSurfaceGaussianCoverage(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
+          float visibleSurfaceGaussianCoverage(vec2 sampleUv, float fragmentDepth, vec3 paintGateViewNormal, float normalMatchThreshold) {
             vec2 screenPixel = 1.0 / max(viewportSize, vec2(1.0));
             float coverage = 0.0;
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This is a tiny Gaussian-style visibility feather, not a blur pass
             // over the paint texture. Every weighted sample must pass the same
             // visible-depth and visible-normal checks before it can contribute.
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(screenPixel.x, 0.0), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + screenPixel, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, -screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(-screenPixel.x, screenPixel.y), fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - screenPixel, fragmentDepth, paintViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv, fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, 0.0), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(screenPixel.x, 0.0), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, screenPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, screenPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + screenPixel, fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, -screenPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(-screenPixel.x, screenPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
+            coverage += visibleSurfaceDepthNormalMatch(sampleUv - screenPixel, fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
             return clamp(coverage / 16.0, 0.0, 1.0);
           }
 
@@ -300,7 +329,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // genuinely visible cloth/leg fragments too transparent and reads
             // as holes instead of a clean spray falloff.
             float grazingStart = visibleFacingNormalThreshold + 0.01;
-            float grazingEnd = visibleFacingNormalThreshold + 0.28;
+            float grazingEnd = visibleFacingNormalThreshold + 0.18;
             return 1.0 - smoothstep(grazingStart, grazingEnd, paintViewNormal.z);
           }
 
@@ -312,7 +341,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // because it can draw a comb of triangle-sized teeth along the
             // otherwise continuous visible wrap.
             float grazingFeatherStart = visibleFacingNormalThreshold;
-            float grazingFeatherEnd = visibleFacingNormalThreshold + 0.28;
+            float grazingFeatherEnd = visibleFacingNormalThreshold + 0.18;
             float angleCoverage = smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Soft edge fades down to zero before the hard geometric cutoff.
@@ -443,7 +472,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             bool visibleSurfaceMatched = visibleSurfaceDepthNormalMatch(
               depthUv,
               fragmentDepth,
-              paintViewNormal,
+              paintGateViewNormal,
               visibleNormalMatchThreshold
             );
             float edgeSoftness = clamp(visibleEdgeSoftness, 0.0, 1.0);
@@ -500,7 +529,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               float rawEdgeCoverage = visibleSurfaceGaussianCoverage(
                 depthUv,
                 fragmentDepth,
-                paintViewNormal,
+                paintGateViewNormal,
                 edgeNormalMatchThreshold
               );
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
@@ -613,6 +642,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
         return this.textureAirbrushGpuVisibleNormalMaterial;
       }
       this.textureAirbrushGpuVisibleNormalMaterial = new THREE.ShaderMaterial({
+        extensions: { derivatives: true },
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
         // The normal buffer is rendered front-side only so it describes the
         // current camera-visible surface. It is sampled by the paint shader to
@@ -625,6 +655,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           #include <common>
           #include <skinning_pars_vertex>
           varying vec3 vAirbrushVisibleNormal;
+          varying vec3 vAirbrushVisibleViewPosition;
 
           void main() {
             #include <beginnormal_vertex>
@@ -635,21 +666,30 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             vec3 transformed = position;
             #include <skinning_vertex>
             vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
+            vAirbrushVisibleViewPosition = mvPosition.xyz;
             gl_Position = projectionMatrix * mvPosition;
           }
         `,
         fragmentShader: `
           varying vec3 vAirbrushVisibleNormal;
+          varying vec3 vAirbrushVisibleViewPosition;
 
           void main() {
-            vec3 visibleNormal = normalize(vAirbrushVisibleNormal);
+            vec3 visibleGeometricNormal = cross(dFdx(vAirbrushVisibleViewPosition), dFdy(vAirbrushVisibleViewPosition));
+            visibleGeometricNormal *= gl_FrontFacing ? 1.0 : -1.0;
+            float visibleGeometricLength = length(visibleGeometricNormal);
+            vec3 visibleNormal = visibleGeometricLength > 0.000001
+              ? normalize(visibleGeometricNormal)
+              : normalize(vAirbrushVisibleNormal);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // The normal buffer stores only front-side rasterized surfaces
-            // because this material renders with THREE.FrontSide and writes the
-            // matching depth buffer. Do not add a smoothed-normal z cutoff here:
-            // that can turn a continuous visible edge into triangle-ridge holes.
-            // The paint shader still applies the paint fragment's camera-facing
-            // strict z > 0 normal gate before any paint can land.
+            // The normal buffer stores geometric front-visible normals, not
+            // smoothed vertex normals. Smoothed normals can make a wrap/back
+            // surface look compatible with the current visible side; geometric
+            // normals keep the visibility authority tied to the camera-facing
+            // triangle actually rendered into the depth buffer.
+            if (visibleNormal.z <= 0.0) {
+              discard;
+            }
             gl_FragColor = vec4(visibleNormal * 0.5 + 0.5, 1.0);
           }
         `
