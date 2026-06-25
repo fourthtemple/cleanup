@@ -1293,7 +1293,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /paintFragmentGeometricViewNormal/);
   assert.match(material.fragmentShader, /paintFragmentViewNormal/);
   assert.match(material.fragmentShader, /visibleSurfaceDepthNormalMatch/);
-  assert.match(material.fragmentShader, /visibleSurfaceStrictCenterMatch/);
+  assert.doesNotMatch(material.fragmentShader, /visibleSurfaceStrictCenterMatch/);
   assert.match(material.fragmentShader, /cross\(dFdx\(vPaintViewPosition\), dFdy\(vPaintViewPosition\)\)/);
   assert.match(material.fragmentShader, /gl_FrontFacing \? 1\.0 : -1\.0/);
   assert.match(material.fragmentShader, /return viewNormal/);
@@ -1313,10 +1313,15 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /Gaussian-style visibility feather/);
   assert.match(material.fragmentShader, /coverage \+= visibleSurfaceDepthNormalMatch\(sampleUv, fragmentDepth, paintViewNormal, normalMatchThreshold\) \? 4\.0 : 0\.0/);
   assert.match(material.fragmentShader, /return clamp\(coverage \/ 16\.0, 0\.0, 1\.0\)/);
-  assert.match(material.fragmentShader, /bool visibleSurfaceStrictCenterMatch/);
-  assert.match(material.fragmentShader, /exact frontmost visible pixel/);
-  assert.match(material.fragmentShader, /abs\(fragmentDepth - sceneDepth\) > visibleOnlyDepthEpsilon/);
-  assert.match(material.fragmentShader, /below-cutoff Soft feather is permitted only/);
+  // DO NOT PAINT ON NON CAMERA FACING SIDES.
+  // The visible-edge repair must stay immediate-neighbor only. A wider
+  // two-pixel blur looks smoother in UV space but leaks onto wrap/back
+  // surfaces at the side of the character.
+  assert.doesNotMatch(material.fragmentShader, /screenPixel2/);
+  assert.doesNotMatch(material.fragmentShader, /coverage \/ 25\.0/);
+  assert.doesNotMatch(material.fragmentShader, /screenPixel \* 2\.0/);
+  assert.doesNotMatch(material.fragmentShader, /exact frontmost visible pixel/);
+  assert.doesNotMatch(material.fragmentShader, /below-cutoff Soft feather is permitted only/);
   assert.doesNotMatch(material.fragmentShader, /float visibleSurfaceWideGaussianCoverage/);
   assert.doesNotMatch(material.fragmentShader, /sampleUv \+ screenPixel \* 2\.0/);
   assert.doesNotMatch(material.fragmentShader, /return clamp\(coverage \/ 42\.0, 0\.0, 1\.0\)/);
@@ -1328,8 +1333,9 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /float grazingFeatherStart = visibleFacingNormalThreshold/);
   assert.match(material.fragmentShader, /float grazingFeatherEnd = visibleFacingNormalThreshold \+ 0\.86/);
   assert.match(material.fragmentShader, /float angleCoverage = smoothstep\(grazingFeatherStart, grazingFeatherEnd, paintViewNormal\.z\)/);
-  assert.match(material.fragmentShader, /matched the current visible depth\/normal surface/);
-  assert.match(material.fragmentShader, /return max\(angleCoverage, 0\.18\)/);
+  assert.match(material.fragmentShader, /Soft edge fades down to zero before the hard geometric cutoff/);
+  assert.match(material.fragmentShader, /return angleCoverage/);
+  assert.doesNotMatch(material.fragmentShader, /return max\(angleCoverage, 0\.18\)/);
   assert.doesNotMatch(material.fragmentShader, /visibleSurfaceGateAngleCoverage/);
   assert.doesNotMatch(material.fragmentShader, /visibleSurfaceSoftAngleCoverage/);
   assert.match(material.fragmentShader, /bool visibleSurfaceMatched = visibleSurfaceDepthNormalMatch/);
@@ -1338,18 +1344,16 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /float visibleSurfaceCoverage = 1\.0/);
   assert.match(material.fragmentShader, /float edgeSoftness = clamp\(visibleEdgeSoftness, 0\.0, 1\.0\)/);
   assert.match(material.fragmentShader, /bool centerVisibleSurfaceMatched = visibleSurfaceMatched/);
-  assert.match(material.fragmentShader, /bool strictCenterVisibleSurfaceMatched = visibleSurfaceStrictCenterMatch/);
-  assert.match(material.fragmentShader, /float geometricFacingCoverage = 1\.0/);
-  assert.match(material.fragmentShader, /float geometricFeatherStart = visibleFacingNormalThreshold - 0\.32/);
-  assert.match(material.fragmentShader, /edgeSoftness <= 0\.0/);
-  assert.match(material.fragmentShader, /!\s*strictCenterVisibleSurfaceMatched/);
-  assert.match(material.fragmentShader, /paintGateViewNormal\.z <= geometricFeatherStart/);
-  assert.match(material.fragmentShader, /strict exact-center match is a visible-surface proof/);
-  assert.match(material.fragmentShader, /visibleSurfaceMatched = true/);
-  assert.match(material.fragmentShader, /centerVisibleSurfaceMatched = true/);
-  assert.match(material.fragmentShader, /float geometricFeatherCoverage = smoothstep/);
-  assert.match(material.fragmentShader, /not an eligibility bypass/);
-  assert.match(material.fragmentShader, /geometricFacingCoverage = max\(geometricFeatherCoverage, 0\.22\)/);
+  assert.match(material.fragmentShader, /Softness is only allowed on the camera-facing side/);
+  assert.match(material.fragmentShader, /discard/);
+  assert.doesNotMatch(material.fragmentShader, /bool strictCenterVisibleSurfaceMatched/);
+  assert.doesNotMatch(material.fragmentShader, /float geometricFacingCoverage = 1\.0/);
+  assert.doesNotMatch(material.fragmentShader, /float geometricFeatherStart = visibleFacingNormalThreshold - 0\.32/);
+  assert.doesNotMatch(material.fragmentShader, /strict exact-center match is a visible-surface proof/);
+  assert.doesNotMatch(material.fragmentShader, /visibleSurfaceMatched = true/);
+  assert.doesNotMatch(material.fragmentShader, /centerVisibleSurfaceMatched = true/);
+  assert.doesNotMatch(material.fragmentShader, /float geometricFeatherCoverage = smoothstep/);
+  assert.doesNotMatch(material.fragmentShader, /geometricFacingCoverage = max/);
   assert.match(material.fragmentShader, /if \(visibleSurfaceMatched && useVisibleNormalTexture\)/);
   assert.match(material.fragmentShader, /float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount\(paintFadeViewNormal\)/);
   assert.match(material.fragmentShader, /\* edgeSoftness/);
@@ -1376,6 +1380,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /Hard visible-edge mode deliberately skips this repair/);
   assert.match(material.fragmentShader, /float rawEdgeCoverage = visibleSurfaceGaussianCoverage/);
   assert.match(material.fragmentShader, /float clusteredEdgeCoverage = smoothstep\(0\.18, 0\.72, rawEdgeCoverage\)/);
+  assert.doesNotMatch(material.fragmentShader, /smoothstep\(0\.04, 0\.45, rawEdgeCoverage\)/);
   assert.match(material.fragmentShader, /visibleSurfaceCoverage = clusteredEdgeCoverage/);
   assert.match(material.fragmentShader, /visibleSurfaceGrazingAngleCoverage\(paintFadeViewNormal\)/);
   assert.match(material.fragmentShader, /if \(!centerVisibleSurfaceMatched && paintGateViewNormal\.z <= visibleFacingNormalThreshold\)/);
@@ -1394,7 +1399,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /deltaFromVisibleSurface > visibleOnlyDepthEpsilon/);
   assert.match(material.fragmentShader, /deltaFromVisibleSurface < -visibleOnlyFrontDepthEpsilon/);
   assert.match(material.fragmentShader, /alpha \*= visibleSurfaceCoverage/);
-  assert.match(material.fragmentShader, /alpha \*= geometricFacingCoverage/);
+  assert.doesNotMatch(material.fragmentShader, /alpha \*= geometricFacingCoverage/);
   assert.match(material.fragmentShader, /old unbounded "closer than depth is okay" shortcut/);
   assert.doesNotMatch(material.fragmentShader, /visibleFacingNormalFeather|visibleFacingCoverage/);
   assert.doesNotMatch(material.fragmentShader, /deltaFromVisibleSurface < -visibleOnlyDepthEpsilon/);

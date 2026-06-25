@@ -275,36 +275,6 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return true;
           }
 
-          bool visibleSurfaceStrictCenterMatch(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
-            if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {
-              return false;
-            }
-            float sceneDepth = texture2D(depthTexture, sampleUv).r;
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This stricter center test is the only path that can feather Soft
-            // edge slightly below the geometric normal cutoff. It must match
-            // the exact frontmost visible pixel, not a neighboring depth sample
-            // and not the wider front-side quantization window.
-            if (sceneDepth >= 0.9999 || abs(fragmentDepth - sceneDepth) > visibleOnlyDepthEpsilon) {
-              return false;
-            }
-            if (useVisibleNormalTexture) {
-              vec3 visibleNormal = texture2D(visibleNormalTexture, sampleUv).rgb * 2.0 - 1.0;
-              float visibleNormalLength = length(visibleNormal);
-              if (visibleNormalLength <= 0.000001) {
-                return false;
-              }
-              visibleNormal = visibleNormal / visibleNormalLength;
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // The below-cutoff Soft feather is permitted only when the
-              // rendered frontmost normal agrees with this exact fragment.
-              if (dot(visibleNormal, paintViewNormal) < normalMatchThreshold) {
-                return false;
-              }
-            }
-            return true;
-          }
-
           float visibleSurfaceGaussianCoverage(vec2 sampleUv, float fragmentDepth, vec3 paintViewNormal, float normalMatchThreshold) {
             vec2 screenPixel = 1.0 / max(viewportSize, vec2(1.0));
             float coverage = 0.0;
@@ -347,12 +317,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             float grazingFeatherEnd = visibleFacingNormalThreshold + 0.86;
             float angleCoverage = smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This floor is alpha shaping only after the fragment has already
-            // matched the current visible depth/normal surface. It keeps Soft
-            // edge from collapsing into sparse, triangle-sized needles at the
-            // visible wrap while preserving the hard gates that reject hidden
-            // and back-facing fragments.
-            return max(angleCoverage, 0.18);
+            // Soft edge fades down to zero before the hard geometric cutoff.
+            // Do not floor this value: a nonzero floor at the cutoff makes the
+            // edge look like it wraps onto geometry that is no longer facing
+            // the camera.
+            return angleCoverage;
           }
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
@@ -477,47 +446,13 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             );
             float edgeSoftness = clamp(visibleEdgeSoftness, 0.0, 1.0);
             bool centerVisibleSurfaceMatched = visibleSurfaceMatched;
-            bool strictCenterVisibleSurfaceMatched = visibleSurfaceStrictCenterMatch(
-              depthUv,
-              fragmentDepth,
-              paintViewNormal,
-              visibleNormalMatchThreshold
-            );
-            float geometricFacingCoverage = 1.0;
             if (paintGateViewNormal.z <= visibleFacingNormalThreshold) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // Hard edge keeps the old strict cutoff. Soft edge may only
-              // feather a tiny distance below this cutoff when this exact
-              // fragment already matched the frontmost visible depth/normal
-              // buffer. Neighbor/sample repair is not allowed to carry paint
-              // below the geometric cutoff.
-              float geometricFeatherStart = visibleFacingNormalThreshold - 0.32;
-              if (
-                edgeSoftness <= 0.0
-                || !strictCenterVisibleSurfaceMatched
-                || paintGateViewNormal.z <= geometricFeatherStart
-              ) {
-                discard;
-              }
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // The strict exact-center match is a visible-surface proof for
-              // Soft edge at the cutoff. Without promoting it here, the old
-              // normal-match path can still discard individual visible edge
-              // triangles and leave the jagged teeth we are trying to soften.
-              visibleSurfaceMatched = true;
-              centerVisibleSurfaceMatched = true;
-              float geometricFeatherCoverage = smoothstep(
-                geometricFeatherStart,
-                visibleFacingNormalThreshold,
-                paintGateViewNormal.z
-              );
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // This is not an eligibility bypass. The fragment already passed
-              // the exact visible-center depth/normal proof above; keep Soft
-              // edge from turning that proven visible wrap into near-zero alpha
-              // triangle teeth just because the faceted geometric normal is
-              // close to the cutoff.
-              geometricFacingCoverage = max(geometricFeatherCoverage, 0.22);
+              // Softness is only allowed on the camera-facing side of the
+              // cutoff. Even an exact depth/normal match is not permission to
+              // paint a fragment whose geometric normal has crossed to the
+              // non-camera-facing side.
+              discard;
             }
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Center-visible fragments are already proven visible. Near the
@@ -618,7 +553,6 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             }
             float alpha = min(1.0, brushOpacity * strength * coverage);
             alpha *= visibleSurfaceCoverage;
-            alpha *= geometricFacingCoverage;
             if (alpha <= ${TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD}) {
               discard;
             }
