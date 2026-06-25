@@ -330,84 +330,15 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return mix(normalMatchThreshold, 0.55, frontFacingRelax);
           }
 
-          float visibleSurfaceGrazingFeatherEnd() {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This controls only alpha on fragments that already passed the
-            // center visible-surface gates. Larger brushes need a broader soft
-            // spray fade at the 90-degree wrap; hard mode still sets
-            // visibleEdgeSoftness to zero and keeps a crisp visible cutoff.
-            float radiusScale = clamp(radiusPixels / 32.0, 0.0, 1.0);
-            return visibleFacingNormalThreshold + mix(0.28, 0.64, radiusScale);
-          }
-
-          float visibleSurfaceGrazingEdgeAmount(vec3 paintViewNormal) {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This angle test only decides whether an already-visible local
-            // boundary should ease out like an airbrush. The fade band scales
-            // with brush radius so Soft mode reads as spray falloff instead of a
-            // row of triangle teeth at the visible wrap.
-            float grazingStart = visibleFacingNormalThreshold + 0.01;
-            float grazingEnd = visibleSurfaceGrazingFeatherEnd();
-            return 1.0 - smoothstep(grazingStart, grazingEnd, paintViewNormal.z);
-          }
-
-          float visibleSurfaceGrazingAngleCoverage(vec3 paintViewNormal) {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This is only alpha coverage for fragments that already passed the
-            // center visible-surface gates. It smooths the 90-degree falloff by
-            // angle only; screen-sample coverage is intentionally not used here
-            // because it can draw a comb of triangle-sized teeth along the
-            // otherwise continuous visible wrap.
-            float grazingFeatherStart = visibleFacingNormalThreshold;
-            float grazingFeatherEnd = visibleSurfaceGrazingFeatherEnd();
-            float angleCoverage = smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // Do not floor this value: a nonzero floor at the cutoff makes the
-            // edge look like it wraps onto geometry that is no longer facing
-            // the camera. The geometric cutoff cap below enforces exact zero at
-            // the hard camera-facing boundary.
-            // Raise small positive camera-facing angles without changing the
-            // zero-at-cutoff invariant. Visible grazing surfaces can receive a
-            // soft spray; non-camera-facing surfaces still receive exactly zero.
-            return pow(angleCoverage, 0.35);
-          }
-
-          float visibleSurfaceGeometricCutoffCoverage(vec3 paintGateViewNormal) {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This is a narrow alpha-only cap after strict visible eligibility.
-            // The hard discard below still owns hidden/back rejection. Keep the
-            // cap much smaller than the broad soft-airbrush fade so geometric
-            // triangle normals cannot draw long sawtooth ridges through the
-            // visible stroke.
-            return smoothstep(
-              visibleFacingNormalThreshold,
-              visibleFacingNormalThreshold + 0.075,
-              paintGateViewNormal.z
-            );
-          }
-
           float visibleSurfaceSoftAlphaCoverage(vec3 paintFadeViewNormal, vec3 paintGateViewNormal) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This coverage is alpha-only after the center fragment already
-            // passed strict visible depth/normal eligibility. The smoothed
-            // paint normal may only soften already-visible alpha slightly; it
-            // must not get dark enough to reveal triangle facets. The geometric
-            // normal supplies the tiny zero-at-cutoff cap so non-camera-facing
-            // fragments still receive exactly zero paint.
-            float smoothNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
-            float smoothAirbrushCoverage = mix(0.9, 1.0, smoothNormalCoverage);
-            float geometricCutoffCoverage = visibleSurfaceGeometricCutoffCoverage(paintGateViewNormal);
-            return smoothAirbrushCoverage * geometricCutoffCoverage;
-          }
-
-          float visibleSurfaceSoftEdgeAmount(vec3 paintFadeViewNormal, vec3 paintGateViewNormal) {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // The visible edge should ease out from the smoothed paint normal,
-            // not from broad bands of per-triangle geometric normals. The
-            // geometric contribution is limited to the tiny cutoff cap above.
-            float smoothNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal);
-            float geometricCutoffEdgeAmount = 1.0 - visibleSurfaceGeometricCutoffCoverage(paintGateViewNormal);
-            return max(smoothNormalGrazingEdgeAmount, geometricCutoffEdgeAmount);
+            // passed strict visible depth/normal eligibility. Do not modulate
+            // that visible fragment by paintFadeViewNormal or paintGateViewNormal
+            // angles here: normal-angle opacity is what makes side strokes show
+            // dark triangle faces. Once visibility is proven, the soft airbrush
+            // mark comes from brush distance/hardness/scatter below.
+            return 1.0;
           }
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
@@ -548,22 +479,16 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Center-visible fragments are already proven visible by the
             // current frontmost depth/normal buffers and the geometric z > 0
-            // discard. Soft mode may only reduce alpha for these already-visible
-            // fragments; it must never make a hidden or rejected fragment eligible.
+            // discard. Do not apply a normal-angle visible-edge fade here:
+            // that fade turns side-painted strokes into dark triangular face
+            // stamps. Soft airbrush behavior comes from the brush coverage math
+            // below; hidden/back fragments still discard before any paint lands.
             if (centerVisibleSurfaceMatched && useVisibleNormalTexture && edgeSoftness > 0.0) {
-              float centerGrazingEdgeAmount = visibleSurfaceSoftEdgeAmount(paintFadeViewNormal, paintGateViewNormal) * edgeSoftness;
-              if (centerGrazingEdgeAmount > 0.0) {
-                // DO NOT PAINT ON NON CAMERA FACING SIDES.
-                // This is a visible-side-only soft edge. Do not feed it a
-                // screen-neighborhood depth/normal mask: even alpha-only
-                // neighboring samples can punch triangle-shaped holes into a
-                // fragment that already matched the current visible surface.
-                // Do not floor the geometric cutoff. A nonzero floor at the
-                // cutoff looks like paint leaking onto the non-camera-facing side.
-                // rejected hidden/back fragments still discard below.
-                float softCenterVisibleCoverage = visibleSurfaceSoftAlphaCoverage(paintFadeViewNormal, paintGateViewNormal);
-                visibleSurfaceCoverage = mix(1.0, softCenterVisibleCoverage, centerGrazingEdgeAmount);
-              }
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // This helper intentionally returns 1.0. Keep the call so future
+              // edits have an obvious, tested place explaining why visible
+              // fragments must not be darkened by triangle normal angles.
+              visibleSurfaceCoverage = visibleSurfaceSoftAlphaCoverage(paintFadeViewNormal, paintGateViewNormal);
             }
             if (!visibleSurfaceMatched) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.

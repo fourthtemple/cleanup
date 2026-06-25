@@ -41,7 +41,7 @@ import {
   installTextureAirbrushMethods,
   installTextureAirbrushWebGpuMethods,
   textureAirbrushWebGpuRendererRequestedFromSearch
-} from "./weight-editor/airbrush/index.js?v=visible-soft-alpha-normal-20260625b";
+} from "./weight-editor/airbrush/index.js?v=visible-flat-visible-alpha-20260625a";
 import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js?v=macro-await-airbrush-idle-20260624a";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js?v=layer-stroke-fix-20260619a";
 import { installWeightMethods } from "./weight-editor/weights.js?v=pose-weight-preserve-20260605a";
