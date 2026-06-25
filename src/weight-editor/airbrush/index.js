@@ -1,4 +1,4 @@
-export { installTextureAirbrushMethods } from "./install.js?v=neighbor-boundary-mask-20260624a";
+export { installTextureAirbrushMethods } from "./install.js?v=visible-edge-strict-fade-20260625d";
 export { installTextureAirbrushBrushSettingsMethods } from "./brush-settings.js";
 export { installTextureAirbrushCloneReplayMethods } from "./clone-replay.js";
 export { installTextureAirbrushNeighborPaintMethods } from "./neighbor.js?v=visible-side-facing-20260623a";
@@ -21,8 +21,8 @@ export { installTextureAirbrushNearBrushMethods } from "./uv-near.js?v=visible-s
 export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js?v=visible-side-facing-20260623a";
 export { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 export { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-front-depth-20260624a";
-export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=visible-front-depth-20260624a";
+export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-edge-strict-fade-20260625d";
+export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js?v=visible-edge-strict-fade-20260625d";
 export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=neighbor-boundary-mask-20260624a";
 export {
   textureAirbrushCreateWebGpuPaintResources,

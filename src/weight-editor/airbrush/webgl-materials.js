@@ -32,13 +32,10 @@ import {
 // forbidden failure mode: painting through the model or onto the back side.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.00018;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-// The back/behind tolerance stays strict. This separate front tolerance only
-// absorbs sub-pixel depth disagreement where the UV paint fragment projects a
-// hair in front of the sampled visible depth while its normal still matches the
-// current frontmost visible surface. It is capped; do not turn it into the old
-// unbounded "closer than depth is okay" shortcut, because that paints around the
-// back at wraps.
-const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.0008;
+// Front and behind depth both stay strict. Keep this as a separate uniform so
+// the shader/test can explicitly reject future "slightly in front is okay"
+// coverage fixes; that shortcut paints around the back at cloth and leg wraps.
+const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.00018;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // Zero is the 90-degree camera-facing cutoff. Keep this literal: a negative
 // value lets the soft edge cross onto geometry that is no longer facing the
@@ -240,17 +237,17 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               return false;
             }
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // The visibility match itself refuses below-cutoff geometry. The
-            // alpha-only soft boundary sampler calls this helper too, so keep
-            // the guard here as well as in main().
+            // The visibility match itself refuses below-cutoff geometry. Keep
+            // this guard here as well as in main() so helper reuse cannot turn
+            // into a hidden/back-side paint path.
             if (paintGateViewNormal.z <= visibleFacingNormalThreshold) {
               return false;
             }
             float sceneDepth = texture2D(depthTexture, sampleUv).r;
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // Background depth is not a visible model surface. Neighboring
-            // samples may only lower alpha after the center fragment has
-            // already matched; they cannot rescue eligibility.
+            // Background depth is not a visible model surface. Do not use
+            // neighboring samples to rescue eligibility or to punch holes in an
+            // already-visible soft edge.
             if (sceneDepth >= 0.9999) {
               return false;
             }
@@ -275,20 +272,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               visibleNormalDot = dot(visibleNormal, paintGateViewNormal);
             }
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // The larger front-depth allowance is safe only for clearly
-            // camera-facing surfaces. At the 90-degree wrap, a "slightly in
-            // front" fragment is exactly how paint sneaks onto the side/back, so
-            // fade that allowance down to the strict depth epsilon before the
-            // soft visual edge reaches the cutoff.
-            float frontDepthAllowance = mix(
-              visibleOnlyDepthEpsilon,
-              visibleOnlyFrontDepthEpsilon,
-              smoothstep(
-                visibleFacingNormalThreshold + 0.18,
-                visibleFacingNormalThreshold + 0.42,
-                paintGateViewNormal.z
-              )
-            );
+            // The front-depth allowance is intentionally the same strict size as
+            // the behind-depth allowance. A larger "slightly in front is okay"
+            // cushion is exactly how paint sneaks around cloth/leg wraps and
+            // lands outside the current visible field.
+            float frontDepthAllowance = min(visibleOnlyDepthEpsilon, visibleOnlyFrontDepthEpsilon);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Keep both sides bounded: this helper does not restore the old
             // "closer than depth is okay" shortcut. Behind-depth fragments get
@@ -317,41 +305,24 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return true;
           }
 
-          float visibleSurfaceSoftBoundaryCoverage(vec2 sampleUv, float fragmentDepth, vec3 paintGateViewNormal, float normalMatchThreshold) {
-            vec2 screenPixel = 1.0 / max(viewportSize, vec2(1.0));
-            vec2 twoPixel = screenPixel + screenPixel;
-            float coverage = 0.0;
+          float visibleSurfaceGrazingFeatherEnd() {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // This wider Gaussian-like sample is alpha-only and is used only
-            // after the center fragment has already matched the visible surface.
-            // It cannot authorize a hidden/back fragment to paint; it only fades
-            // already-visible pixels near the 90-degree boundary so the edge
-            // reads like an airbrush instead of a row of triangle teeth.
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv, fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 8.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, 0.0), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(screenPixel.x, 0.0), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, screenPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, screenPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 4.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + screenPixel, fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(screenPixel.x, -screenPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(-screenPixel.x, screenPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - screenPixel, fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 2.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(twoPixel.x, 0.0), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(twoPixel.x, 0.0), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv + vec2(0.0, twoPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            coverage += visibleSurfaceDepthNormalMatch(sampleUv - vec2(0.0, twoPixel.y), fragmentDepth, paintGateViewNormal, normalMatchThreshold) ? 1.0 : 0.0;
-            return clamp(coverage / 36.0, 0.0, 1.0);
+            // This controls only alpha on fragments that already passed the
+            // center visible-surface gates. Larger brushes need a broader soft
+            // spray fade at the 90-degree wrap; hard mode still sets
+            // visibleEdgeSoftness to zero and keeps a crisp visible cutoff.
+            float radiusScale = clamp(radiusPixels / 32.0, 0.0, 1.0);
+            return visibleFacingNormalThreshold + mix(0.28, 0.64, radiusScale);
           }
 
           float visibleSurfaceGrazingEdgeAmount(vec3 paintViewNormal) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This angle test only decides whether an already-visible local
-            // boundary should ease out like an airbrush. Keep the fade band on
-            // the camera-facing side and keep it narrow: a broad band makes
-            // genuinely visible cloth/leg fragments too transparent and reads
-            // as holes instead of a clean spray falloff.
+            // boundary should ease out like an airbrush. The fade band scales
+            // with brush radius so Soft mode reads as spray falloff instead of a
+            // row of triangle teeth at the visible wrap.
             float grazingStart = visibleFacingNormalThreshold + 0.01;
-            float grazingEnd = visibleFacingNormalThreshold + 0.18;
+            float grazingEnd = visibleSurfaceGrazingFeatherEnd();
             return 1.0 - smoothstep(grazingStart, grazingEnd, paintViewNormal.z);
           }
 
@@ -363,14 +334,17 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // because it can draw a comb of triangle-sized teeth along the
             // otherwise continuous visible wrap.
             float grazingFeatherStart = visibleFacingNormalThreshold;
-            float grazingFeatherEnd = visibleFacingNormalThreshold + 0.18;
+            float grazingFeatherEnd = visibleSurfaceGrazingFeatherEnd();
             float angleCoverage = smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Soft edge fades down to zero before the hard geometric cutoff.
             // Do not floor this value: a nonzero floor at the cutoff makes the
             // edge look like it wraps onto geometry that is no longer facing
             // the camera.
-            return angleCoverage;
+            // Raise small positive camera-facing angles without changing the
+            // zero-at-cutoff invariant. Visible grazing surfaces can receive a
+            // soft spray; non-camera-facing surfaces still receive exactly zero.
+            return pow(angleCoverage, 0.35);
           }
 
           float strokePaintProgress(vec4 color, vec4 sourceColor, bool erasing) {
@@ -514,29 +488,21 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // discard. Soft mode may only reduce alpha for these already-visible
             // fragments; it must never make a hidden or rejected fragment eligible.
             if (centerVisibleSurfaceMatched && useVisibleNormalTexture && edgeSoftness > 0.0) {
-              float centerGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal) * edgeSoftness;
+              float fadeNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal);
+              float gateNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintGateViewNormal);
+              float centerGrazingEdgeAmount = max(fadeNormalGrazingEdgeAmount, gateNormalGrazingEdgeAmount) * edgeSoftness;
               if (centerGrazingEdgeAmount > 0.0) {
                 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-                // This is a visible-side-only soft edge. It samples a small
-                // depth/normal neighborhood, but it is only allowed to lower
-                // alpha after the center fragment has already matched the
-                // current frontmost visible surface.
-                // A floor keeps the soft airbrush edge from turning into dark
-                // triangle holes; rejected hidden/back fragments still discard.
-                float centerVisibleNeighborhood = visibleSurfaceSoftBoundaryCoverage(
-                  depthUv,
-                  fragmentDepth,
-                  paintGateViewNormal,
-                  visibleNormalMatchThreshold
-                );
-                float centerAngleCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
-                float softCenterVisibleCoverage = max(
-                  0.08,
-                  min(
-                    centerAngleCoverage,
-                    smoothstep(0.18, 0.94, centerVisibleNeighborhood)
-                  )
-                );
+                // This is a visible-side-only soft edge. Do not feed it a
+                // screen-neighborhood depth/normal mask: even alpha-only
+                // neighboring samples can punch triangle-shaped holes into a
+                // fragment that already matched the current visible surface.
+                // Do not floor the soft edge. A nonzero floor at the cutoff looks
+                // like paint leaking onto the non-camera-facing side.
+                // rejected hidden/back fragments still discard below.
+                float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
+                float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintGateViewNormal);
+                float softCenterVisibleCoverage = min(fadeNormalCoverage, gateNormalCoverage);
                 visibleSurfaceCoverage = mix(1.0, softCenterVisibleCoverage, centerGrazingEdgeAmount);
               }
             }
