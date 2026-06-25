@@ -32,12 +32,12 @@ import {
 // forbidden failure mode: painting through the model or onto the back side.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_DEPTH_EPSILON = 0.00018;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-// The back/behind tolerance above stays strict. This separate front tolerance
-// only absorbs sub-pixel depth disagreement where the UV paint fragment projects
-// a hair in front of the sampled visible depth while its normal still matches
-// the current frontmost visible surface. It is capped; do not turn it into the
-// old unbounded "closer than depth is okay" shortcut, because that paints around
-// the back at wraps.
+// The back/behind tolerance stays strict. This separate front tolerance only
+// absorbs sub-pixel depth disagreement where the UV paint fragment projects a
+// hair in front of the sampled visible depth while its normal still matches the
+// current frontmost visible surface. It is capped; do not turn it into the old
+// unbounded "closer than depth is okay" shortcut, because that paints around the
+// back at wraps.
 const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.0008;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // Zero is the 90-degree camera-facing cutoff. Keep this literal: a negative
@@ -251,6 +251,25 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               return false;
             }
             float deltaFromVisibleSurface = fragmentDepth - sceneDepth;
+            vec3 visibleNormal = vec3(0.0, 0.0, -1.0);
+            float visibleNormalLength = 0.0;
+            float visibleNormalDot = -1.0;
+            if (useVisibleNormalTexture) {
+              visibleNormal = texture2D(visibleNormalTexture, sampleUv).rgb * 2.0 - 1.0;
+              visibleNormalLength = length(visibleNormal);
+              if (visibleNormalLength <= 0.000001) {
+                return false;
+              }
+              visibleNormal = visibleNormal / visibleNormalLength;
+              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+              // The sampled front-surface authority also has to face the camera.
+              // Clear/background normals decode to a negative z vector; this
+              // check keeps them from acting like valid wrap coverage.
+              if (visibleNormal.z <= visibleFacingNormalThreshold) {
+                return false;
+              }
+              visibleNormalDot = dot(visibleNormal, paintGateViewNormal);
+            }
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // The larger front-depth allowance is safe only for clearly
             // camera-facing surfaces. At the 90-degree wrap, a "slightly in
@@ -268,8 +287,10 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             );
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Keep both sides bounded: this helper does not restore the old
-            // "closer than depth is okay" shortcut and it does not widen the
-            // strict behind/back-side depth gate.
+            // "closer than depth is okay" shortcut. Behind-depth fragments get
+            // only the strict epsilon; do not add a normal-confirmed cushion
+            // here, because even matched normals can smear paint just past the
+            // visible wrap.
             if (
               deltaFromVisibleSurface > visibleOnlyDepthEpsilon
               || deltaFromVisibleSurface < -frontDepthAllowance
@@ -277,25 +298,15 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               return false;
             }
             if (useVisibleNormalTexture) {
-              vec3 visibleNormal = texture2D(visibleNormalTexture, sampleUv).rgb * 2.0 - 1.0;
-              float visibleNormalLength = length(visibleNormal);
-              if (visibleNormalLength <= 0.000001) {
-                return false;
-              }
-              visibleNormal = visibleNormal / visibleNormalLength;
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // The sampled front-surface authority also has to face the camera.
-              // Clear/background normals decode to a negative z vector; this
-              // check keeps them from acting like valid wrap coverage.
-              if (visibleNormal.z <= visibleFacingNormalThreshold) {
-                return false;
-              }
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
               // A nearby depth sample is useful only when its frontmost normal
               // still agrees with this paint fragment. This prevents edge
               // rescue from authorizing a wrap/back fragment that merely has a
-              // similar depth value.
-              if (dot(visibleNormal, paintGateViewNormal) < normalMatchThreshold) {
+              // similar depth value. Do not add an exact-depth exception here:
+              // at cloth wraps and overlapping folds, depth alone is still not
+              // proof that this texture fragment belongs to the current visible
+              // surface.
+              if (visibleNormalDot < normalMatchThreshold) {
                 return false;
               }
             }
@@ -485,35 +496,15 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // non-camera-facing side.
               discard;
             }
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // Center-visible fragments are already proven visible. Near the
-            // 90-degree normal cutoff they still need a continuous airbrush
-            // fade; otherwise a fully matched triangle can paint at full alpha
-            // until it suddenly discards and leaves a hard angular cutoff.
             float visibleSurfaceCoverage = 1.0;
-            if (visibleSurfaceMatched && useVisibleNormalTexture) {
-              float fadeNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal);
-              float grazingEdgeAmount = fadeNormalGrazingEdgeAmount * edgeSoftness;
-              if (grazingEdgeAmount > 0.0) {
-                float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
-                float softVisibleEdgeCoverage = fadeNormalCoverage;
-                // DO NOT PAINT ON NON CAMERA FACING SIDES.
-                // Soft visible-edge mode uses continuous angle falloff after
-                // the center fragment has already matched the frontmost
-                // depth/normal buffers and after the geometric z > 0 discard.
-                // Use the smoothed paint normal for the fade so the geometric
-                // triangle normal cannot carve comb-shaped holes into an
-                // already-visible surface. The geometric normal remains the
-                // hard cutoff above; do not move it into this alpha blend or
-                // loosen it below zero. Do not mix local depth-sample coverage
-                // into this center-visible path: even a floored depth mask can
-                // imprint triangle/comb-shaped edge teeth on an already-visible
-                // airbrush stroke. The separate repair path below owns the tiny
-                // visibility-neighborhood check for real projection misses.
-                // Hard mode sets softness to zero, keeping a crisp cutoff.
-                visibleSurfaceCoverage = mix(1.0, softVisibleEdgeCoverage, grazingEdgeAmount);
-              }
-            }
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // Center-visible fragments are already proven visible by the
+            // current frontmost depth/normal buffers and the geometric z > 0
+            // discard. Do not reduce their alpha again by vertex-normal or
+            // triangle-angle math: that is what creates dark triangular holes
+            // on a visible 90-degree side. The brush radius/hardness/scatter
+            // falloff below owns the airbrush softness for matched visible
+            // pixels; visibility only clips whether the pixel can receive paint.
             if (!visibleSurfaceMatched && useVisibleNormalTexture && edgeSoftness > 0.0) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
               // This is an edge rasterization repair only. At grazing visible
@@ -524,25 +515,45 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // visible normal match and keep the same strict depth windows.
               // Hard visible-edge mode deliberately skips this repair so a hard
               // cutoff stays hard instead of gaining screen-pixel teeth.
-              float edgeNormalMatchThreshold = max(0.55, visibleNormalMatchThreshold);
-              float rawEdgeCoverage = visibleSurfaceGaussianCoverage(
-                depthUv,
-                fragmentDepth,
-                paintGateViewNormal,
-                edgeNormalMatchThreshold
+              float centerSceneDepth = texture2D(depthTexture, depthUv).r;
+              float centerDeltaFromVisibleSurface = fragmentDepth - centerSceneDepth;
+              float centerFrontDepthAllowance = mix(
+                visibleOnlyDepthEpsilon,
+                visibleOnlyFrontDepthEpsilon,
+                smoothstep(
+                  visibleFacingNormalThreshold + 0.18,
+                  visibleFacingNormalThreshold + 0.42,
+                  paintGateViewNormal.z
+                )
               );
-              // DO NOT PAINT ON NON CAMERA FACING SIDES.
-              // A single matching neighbor is not enough to draw a tooth that
-              // stretches through a grazing UV island. Keep only clustered
-              // Gaussian coverage, then cap it by the same front-facing angle
-              // fade used for center-matched soft edges.
-              float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
-              float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintGateViewNormal);
-              float clusteredEdgeCoverage = smoothstep(0.18, 0.72, rawEdgeCoverage);
-              visibleSurfaceCoverage = clusteredEdgeCoverage
-                * min(fadeNormalCoverage, gateNormalCoverage)
-                * edgeSoftness;
-              visibleSurfaceMatched = visibleSurfaceCoverage > 0.0;
+              bool centerDepthCanRepairEdge =
+                centerSceneDepth < 0.9999
+                && centerDeltaFromVisibleSurface <= visibleOnlyDepthEpsilon
+                && centerDeltaFromVisibleSurface >= -centerFrontDepthAllowance;
+              if (centerDepthCanRepairEdge) {
+                float edgeNormalMatchThreshold = max(0.55, visibleNormalMatchThreshold);
+                float rawEdgeCoverage = visibleSurfaceGaussianCoverage(
+                  depthUv,
+                  fragmentDepth,
+                  paintGateViewNormal,
+                  edgeNormalMatchThreshold
+                );
+                // DO NOT PAINT ON NON CAMERA FACING SIDES.
+                // A single matching neighbor is not enough to draw a tooth that
+                // stretches through a grazing UV island. Keep only clustered
+                // Gaussian coverage from the same visible-depth/normal checks.
+                // Do not multiply this repair by vertex-normal angle again: that
+                // turns the visible 90-degree side into triangle-shaped holes.
+                // The center depth guard above prevents this repair from borrowing
+                // an adjacent visible sample to paint a fragment that is actually
+                // behind the current frontmost surface at its own screen point.
+                // The helper above also rejects non-camera-facing geometry,
+                // hidden depth, and mismatched wrap/back normals.
+                float clusteredEdgeCoverage = smoothstep(0.18, 0.72, rawEdgeCoverage);
+                visibleSurfaceCoverage = clusteredEdgeCoverage
+                  * edgeSoftness;
+                visibleSurfaceMatched = visibleSurfaceCoverage > 0.0;
+              }
             }
             if (!centerVisibleSurfaceMatched && paintGateViewNormal.z <= visibleFacingNormalThreshold) {
               // DO NOT PAINT ON NON CAMERA FACING SIDES.
