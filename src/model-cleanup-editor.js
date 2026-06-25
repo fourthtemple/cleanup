@@ -1,4 +1,4 @@
-import * as THREE from "../node_modules/three/build/three.module.js";
+import * as THREE from "../node_modules/three/build/three.webgpu.js";
 import { GLTFLoader } from "../node_modules/three/examples/jsm/loaders/GLTFLoader.js";
 import { FBXLoader } from "../node_modules/three/examples/jsm/loaders/FBXLoader.js";
 import { GLTFExporter } from "../node_modules/three/examples/jsm/exporters/GLTFExporter.js";
@@ -39,8 +39,7 @@ import { installSequencePlaybackMethods } from "./weight-editor/sequence-playbac
 import { installTexturePaintLayerMethods } from "./weight-editor/texture-layers.js";
 import {
   installTextureAirbrushMethods,
-  installTextureAirbrushWebGpuMethods,
-  textureAirbrushWebGpuRendererRequestedFromSearch
+  installTextureAirbrushWebGpuMethods
 } from "./weight-editor/airbrush/index.js";
 import { installTutorialMacroMethods } from "./weight-editor/tutorial-macros.js";
 import { installVertexPatchMethods } from "./weight-editor/vertex-patches.js";
@@ -599,7 +598,7 @@ const MODEL_CLEANUP_EDITOR_DEPS = {
   finitePoseValue,
   writeJsonFile,
   writeAnimationLibraryCleanupFile,
-  WebGPURenderer: null
+  WebGPURenderer: THREE.WebGPURenderer
 };
 
 installSceneAndControlMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
@@ -632,8 +631,6 @@ installAutoKeySolverMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 installTextureAirbrushWebGpuMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 installTextureAirbrushMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
 installTutorialMacroMethods(ModelCleanupEditor, MODEL_CLEANUP_EDITOR_DEPS);
-
-MODEL_CLEANUP_EDITOR_DEPS.WebGPURenderer = await loadOptionalWebGpuRenderer();
 
 async function writeJsonFile(fileName, text, description) {
   if (typeof window.showSaveFilePicker === "function") {
@@ -681,27 +678,6 @@ async function writeAnimationLibraryCleanupFile(folder, fileName, text) {
     return response.ok;
   } catch {
     return false;
-  }
-}
-
-async function loadOptionalWebGpuRenderer() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  if (!textureAirbrushWebGpuRendererRequestedFromSearch(window.location?.search || "")) {
-    console.info("WebGPU renderer disabled; using WebGL compatibility renderer.");
-    return null;
-  }
-  if (!globalThis.navigator?.gpu) {
-    console.info("WebGPU renderer requested, but navigator.gpu is not available; using WebGL compatibility renderer.");
-    return null;
-  }
-  try {
-    const module = await import("../node_modules/three/build/three.webgpu.js");
-    return typeof module.WebGPURenderer === "function" ? module.WebGPURenderer : null;
-  } catch (error) {
-    console.warn("Could not load Three.js WebGPU renderer; using WebGL compatibility renderer.", error);
-    return null;
   }
 }
 

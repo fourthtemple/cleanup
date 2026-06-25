@@ -208,39 +208,44 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         alpha: false,
         preserveDrawingBuffer: true
       };
+      const WebGPURenderer = deps.WebGPURenderer || THREE.WebGPURenderer;
       const rendererMode = this.textureAirbrushResolveRendererMode?.({
-        WebGPURenderer: deps.WebGPURenderer
+        webgpuRenderer: true,
+        WebGPURenderer
       }) || {
-        renderer: "webgl",
-        webGpuRendererStatus: "not-installed"
+        renderer: "webgpu",
+        webGpuRendererStatus: "ready"
       };
-      if (rendererMode.renderer === "webgpu" && deps.WebGPURenderer) {
-        try {
-          this.renderer = new deps.WebGPURenderer(rendererOptions);
-          this.textureAirbrushRendererMode = "webgpu";
-          if (typeof this.renderer.init === "function") {
-            this.textureAirbrushWebGpuRendererReady = false;
-            this.textureAirbrushWebGpuRendererInit = this.renderer.init()
-              .then(() => {
-                this.textureAirbrushWebGpuRendererReady = true;
-              })
-              .catch((error) => {
-                this.textureAirbrushWebGpuRendererDisabled = true;
-                console.warn("Three.js WebGPU renderer failed to initialize.", error);
-                this.setStatus?.("WebGPU renderer failed to initialize; reload with ?webgpu-renderer=0 to use WebGL compatibility mode.");
-              });
-          } else {
+      if (rendererMode.renderer !== "webgpu" || typeof WebGPURenderer !== "function") {
+        const message = `WebGPU renderer is required (${rendererMode.webGpuRendererStatus || "unavailable"}).`;
+        this.textureAirbrushWebGpuRendererDisabled = true;
+        this.textureAirbrushRendererMode = "webgpu";
+        this.setStatus?.(message);
+        throw new Error(message);
+      }
+      try {
+        this.renderer = new WebGPURenderer(rendererOptions);
+        this.textureAirbrushRendererMode = "webgpu";
+        if (typeof this.renderer.init === "function") {
+          this.textureAirbrushWebGpuRendererReady = false;
+          this.textureAirbrushWebGpuRendererInit = this.renderer.init()
+            .then(() => {
+              this.textureAirbrushWebGpuRendererReady = true;
+            })
+            .catch((error) => {
+              this.textureAirbrushWebGpuRendererDisabled = true;
+              console.warn("Three.js WebGPU renderer failed to initialize.", error);
+              this.setStatus?.("WebGPU renderer failed to initialize.");
+            });
+        } else {
             this.textureAirbrushWebGpuRendererReady = true;
-          }
-        } catch (error) {
-          this.textureAirbrushWebGpuRendererDisabled = true;
-          console.warn("Three.js WebGPU renderer failed; using WebGL.", error);
-          this.renderer = new THREE.WebGLRenderer(rendererOptions);
-          this.textureAirbrushRendererMode = "webgl";
         }
-      } else {
-        this.renderer = new THREE.WebGLRenderer(rendererOptions);
-        this.textureAirbrushRendererMode = "webgl";
+      } catch (error) {
+        this.textureAirbrushWebGpuRendererDisabled = true;
+        this.textureAirbrushRendererMode = "webgpu";
+        console.warn("Three.js WebGPU renderer failed.", error);
+        this.setStatus?.("WebGPU renderer failed to initialize.");
+        throw error;
       }
       this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
       this.applyBackgroundColor(this.backgroundColor || "#11171c");
