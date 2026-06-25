@@ -295,12 +295,12 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
           float visibleSurfaceGrazingEdgeAmount(vec3 paintViewNormal) {
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // This angle test only decides whether an already-visible local
-            // boundary should ease out like an airbrush. The band is deliberately
-            // broad because the visible wrap edge can still have smoothed normals
-            // that are slightly camera-facing; a narrow band leaves those
-            // triangles solid until they suddenly disappear.
-            float grazingStart = visibleFacingNormalThreshold + 0.08;
-            float grazingEnd = visibleFacingNormalThreshold + 0.86;
+            // boundary should ease out like an airbrush. Keep the fade band on
+            // the camera-facing side and keep it narrow: a broad band makes
+            // genuinely visible cloth/leg fragments too transparent and reads
+            // as holes instead of a clean spray falloff.
+            float grazingStart = visibleFacingNormalThreshold + 0.01;
+            float grazingEnd = visibleFacingNormalThreshold + 0.28;
             return 1.0 - smoothstep(grazingStart, grazingEnd, paintViewNormal.z);
           }
 
@@ -312,7 +312,7 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // because it can draw a comb of triangle-sized teeth along the
             // otherwise continuous visible wrap.
             float grazingFeatherStart = visibleFacingNormalThreshold;
-            float grazingFeatherEnd = visibleFacingNormalThreshold + 0.86;
+            float grazingFeatherEnd = visibleFacingNormalThreshold + 0.28;
             float angleCoverage = smoothstep(grazingFeatherStart, grazingFeatherEnd, paintViewNormal.z);
             // DO NOT PAINT ON NON CAMERA FACING SIDES.
             // Soft edge fades down to zero before the hard geometric cutoff.

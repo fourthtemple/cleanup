@@ -1327,12 +1327,13 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.doesNotMatch(material.fragmentShader, /return clamp\(coverage \/ 42\.0, 0\.0, 1\.0\)/);
   assert.match(material.fragmentShader, /float visibleSurfaceGrazingEdgeAmount/);
   assert.match(material.fragmentShader, /Zero is the 90-degree camera-facing cutoff/);
-  assert.match(material.fragmentShader, /float grazingStart = visibleFacingNormalThreshold \+ 0\.08/);
-  assert.match(material.fragmentShader, /float grazingEnd = visibleFacingNormalThreshold \+ 0\.86/);
+  assert.match(material.fragmentShader, /float grazingStart = visibleFacingNormalThreshold \+ 0\.01/);
+  assert.match(material.fragmentShader, /float grazingEnd = visibleFacingNormalThreshold \+ 0\.28/);
   assert.match(material.fragmentShader, /float visibleSurfaceGrazingAngleCoverage/);
   assert.match(material.fragmentShader, /center visible-surface gates/);
   assert.match(material.fragmentShader, /float grazingFeatherStart = visibleFacingNormalThreshold/);
-  assert.match(material.fragmentShader, /float grazingFeatherEnd = visibleFacingNormalThreshold \+ 0\.86/);
+  assert.match(material.fragmentShader, /float grazingFeatherEnd = visibleFacingNormalThreshold \+ 0\.28/);
+  assert.match(material.fragmentShader, /broad band makes[\s\S]*visible cloth\/leg fragments too transparent/);
   assert.match(material.fragmentShader, /float angleCoverage = smoothstep\(grazingFeatherStart, grazingFeatherEnd, paintViewNormal\.z\)/);
   assert.match(material.fragmentShader, /Soft edge fades down to zero before the hard geometric cutoff/);
   assert.match(material.fragmentShader, /return angleCoverage/);
