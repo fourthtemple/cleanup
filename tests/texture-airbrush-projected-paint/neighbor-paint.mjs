@@ -1268,7 +1268,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.equal(material.uniforms.visibleEdgeSoftness.value, 1);
   assert.equal(material.uniforms.useVisibleNormalTexture.value, false);
   assert.equal(material.uniforms.visibleNormalTexture.value, null);
-  assert.equal(material.uniforms.visibleNormalMatchThreshold.value, 0.12);
+  assert.equal(material.uniforms.visibleNormalMatchThreshold.value, 0.55);
   assert.equal("paintOccludedNeighborFragments" in material.uniforms, false);
   assert.match(material.vertexShader, /attribute float textureAirbrushNeighborMask/);
   assert.match(material.vertexShader, /varying float vNeighborMask/);
@@ -1415,6 +1415,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.doesNotMatch(material.fragmentShader, /float centerSceneDepth = texture2D\(depthTexture, depthUv\)\.r/);
   assert.doesNotMatch(material.fragmentShader, /float centerDeltaFromVisibleSurface = fragmentDepth - centerSceneDepth/);
   assert.doesNotMatch(material.fragmentShader, /bool centerDepthCanRepairEdge/);
+  assert.doesNotMatch(material.fragmentShader, /visibleSurfaceSoftBoundarySample/);
   assert.match(material.fragmentShader, /A center fragment that fails the current frontmost depth\/normal/);
   assert.match(material.fragmentShader, /hard reject/);
   assert.match(material.fragmentShader, /Do not borrow neighboring depth\/normal/);

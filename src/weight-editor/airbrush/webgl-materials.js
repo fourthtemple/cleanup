@@ -44,7 +44,11 @@ const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.0008;
 // value lets the soft edge cross onto geometry that is no longer facing the
 // paint camera, which shows up as paint wrapped around the side/back.
 const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = 0;
-const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.12;
+// DO NOT PAINT ON NON CAMERA FACING SIDES.
+// The UV paint fragment has to agree with the front-visible geometric normal.
+// Keep this intentionally strict: a loose dot threshold lets depth-close wrap
+// fragments on the side/back masquerade as the visible surface.
+const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.55;
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {
   const { THREE } = deps;
