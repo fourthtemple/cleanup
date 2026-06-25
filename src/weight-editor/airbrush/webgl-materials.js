@@ -43,8 +43,8 @@ const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.00018;
 const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = 0;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
 // The UV paint fragment has to agree tightly with the front-visible geometric
-// normal. Keep this intentionally strict: a loose dot threshold lets
-// depth-close wrap fragments on the side/back masquerade as the visible surface.
+// normal near the visible wrap. Clearly front-facing fragments get a bounded
+// normal relaxation below so the brush does not reveal triangle-facet teeth.
 const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.82;
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {
@@ -232,6 +232,8 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             return paintFragmentGeometricViewNormal();
           }
 
+          float visibleSurfaceNormalMatchThreshold(vec3 visibleNormal, vec3 paintGateViewNormal, float normalMatchThreshold);
+
           bool visibleSurfaceDepthNormalMatch(vec2 sampleUv, float fragmentDepth, vec3 paintGateViewNormal, float normalMatchThreshold) {
             if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {
               return false;
@@ -298,11 +300,32 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // at cloth wraps and overlapping folds, depth alone is still not
               // proof that this texture fragment belongs to the current visible
               // surface.
-              if (visibleNormalDot < normalMatchThreshold) {
+              float effectiveNormalMatchThreshold = visibleSurfaceNormalMatchThreshold(
+                visibleNormal,
+                paintGateViewNormal,
+                normalMatchThreshold
+              );
+              if (visibleNormalDot < effectiveNormalMatchThreshold) {
                 return false;
               }
             }
             return true;
+          }
+
+          float visibleSurfaceNormalMatchThreshold(vec3 visibleNormal, vec3 paintGateViewNormal, float normalMatchThreshold) {
+            // DO NOT PAINT ON NON CAMERA FACING SIDES.
+            // This relaxes only the normal-dot tolerance for fragments that are
+            // already strongly camera-facing on both the visible buffer and the
+            // paint fragment. Depth stays strict and the z > 0 gates above stay
+            // mandatory. Near the 90-degree wrap, keep the strict threshold so
+            // a side/back fragment cannot masquerade as the visible surface.
+            float frontFacingStrength = min(visibleNormal.z, paintGateViewNormal.z);
+            float frontFacingRelax = smoothstep(
+              visibleFacingNormalThreshold + 0.18,
+              visibleFacingNormalThreshold + 0.64,
+              frontFacingStrength
+            );
+            return mix(normalMatchThreshold, 0.55, frontFacingRelax);
           }
 
           float visibleSurfaceGrazingFeatherEnd() {

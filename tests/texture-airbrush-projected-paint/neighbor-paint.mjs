@@ -1294,6 +1294,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.match(material.fragmentShader, /paintFragmentGeometricViewNormal/);
   assert.match(material.fragmentShader, /paintFragmentViewNormal/);
   assert.match(material.fragmentShader, /visibleSurfaceDepthNormalMatch/);
+  assert.match(material.fragmentShader, /visibleSurfaceNormalMatchThreshold/);
   assert.doesNotMatch(material.fragmentShader, /visibleSurfaceStrictCenterMatch/);
   assert.match(material.fragmentShader, /cross\(dFdx\(vPaintViewPosition\), dFdy\(vPaintViewPosition\)\)/);
   assert.match(material.fragmentShader, /gl_FrontFacing \? 1\.0 : -1\.0/);
@@ -1315,6 +1316,11 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.doesNotMatch(material.fragmentShader, /visibleFacingNormalThreshold \+ 0\.42/);
   assert.match(material.fragmentShader, /visibleNormal\.z <= visibleFacingNormalThreshold/);
   assert.match(material.fragmentShader, /visibleNormalDot = dot\(visibleNormal, paintGateViewNormal\)/);
+  assert.match(material.fragmentShader, /float effectiveNormalMatchThreshold = visibleSurfaceNormalMatchThreshold/);
+  assert.match(material.fragmentShader, /float frontFacingStrength = min\(visibleNormal\.z, paintGateViewNormal\.z\)/);
+  assert.match(material.fragmentShader, /visibleFacingNormalThreshold \+ 0\.18/);
+  assert.match(material.fragmentShader, /visibleFacingNormalThreshold \+ 0\.64/);
+  assert.match(material.fragmentShader, /return mix\(normalMatchThreshold, 0\.55, frontFacingRelax\)/);
   assert.doesNotMatch(material.fragmentShader, /float visibleSurfaceGaussianCoverage/);
   assert.doesNotMatch(material.fragmentShader, /float visibleSurfaceSoftBoundaryCoverage/);
   assert.doesNotMatch(material.fragmentShader, /vec2 twoPixel = screenPixel \+ screenPixel/);
@@ -1446,7 +1452,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.doesNotMatch(material.fragmentShader, /bool exactFrontDepthMatch/);
   assert.match(material.fragmentShader, /Do not add an exact-depth exception/);
   assert.match(material.fragmentShader, /depth alone is still not[\s\S]*proof/);
-  assert.match(material.fragmentShader, /visibleNormalDot < normalMatchThreshold/);
+  assert.match(material.fragmentShader, /visibleNormalDot < effectiveNormalMatchThreshold/);
   assert.match(material.fragmentShader, /alpha \*= visibleSurfaceCoverage/);
   assert.doesNotMatch(material.fragmentShader, /alpha \*= geometricFacingCoverage/);
   assert.match(material.fragmentShader, /old unbounded "closer than depth is okay" shortcut/);
