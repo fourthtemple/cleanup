@@ -42,10 +42,10 @@ const TEXTURE_AIRBRUSH_VISIBLE_ONLY_FRONT_DEPTH_EPSILON = 0.00018;
 // paint camera, which shows up as paint wrapped around the side/back.
 const TEXTURE_AIRBRUSH_VISIBLE_FACING_NORMAL_THRESHOLD = 0;
 // DO NOT PAINT ON NON CAMERA FACING SIDES.
-// The UV paint fragment has to agree with the front-visible geometric normal.
-// Keep this intentionally strict: a loose dot threshold lets depth-close wrap
-// fragments on the side/back masquerade as the visible surface.
-const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.55;
+// The UV paint fragment has to agree tightly with the front-visible geometric
+// normal. Keep this intentionally strict: a loose dot threshold lets
+// depth-close wrap fragments on the side/back masquerade as the visible surface.
+const TEXTURE_AIRBRUSH_VISIBLE_NORMAL_MATCH_THRESHOLD = 0.82;
 
 export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, deps) {
   const { THREE } = deps;
@@ -460,10 +460,10 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // This is global, not a Neighbor special case: no airbrush mode is
             // allowed to paint non-visible, back-side, hidden, or through-object
             // fragments. A painted texture fragment must depth-match the
-            // frontmost visible scene surface at the same screen pixel. A small,
-            // bounded front-side epsilon is allowed only after the visible-normal
-            // check above agrees with the current front surface; behind/back-side
-            // fragments still use the strict epsilon and must be rejected.
+            // frontmost visible scene surface at the same screen pixel. Front
+            // and behind deltas both use the same strict epsilon; do not restore
+            // a larger front-side cushion, because that is how paint leaks just
+            // past the visible wrap.
             // Do not restore the old unbounded "closer than depth is okay" shortcut.
             bool visibleSurfaceMatched = visibleSurfaceDepthNormalMatch(
               depthUv,

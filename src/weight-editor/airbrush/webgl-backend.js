@@ -1,4 +1,4 @@
-import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-edge-strict-fade-20260625d";
+import { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js?v=visible-edge-strict-normal-20260625a";
 import { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js?v=neighbor-boundary-mask-20260624a";
 
 const TEXTURE_AIRBRUSH_LAYER_HIT_SEED_MAX_AGE_MS = 10000;

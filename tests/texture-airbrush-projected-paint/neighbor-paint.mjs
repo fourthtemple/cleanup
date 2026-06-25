@@ -1269,7 +1269,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.equal(material.uniforms.visibleEdgeSoftness.value, 1);
   assert.equal(material.uniforms.useVisibleNormalTexture.value, false);
   assert.equal(material.uniforms.visibleNormalTexture.value, null);
-  assert.equal(material.uniforms.visibleNormalMatchThreshold.value, 0.55);
+  assert.equal(material.uniforms.visibleNormalMatchThreshold.value, 0.82);
   assert.equal("paintOccludedNeighborFragments" in material.uniforms, false);
   assert.match(material.vertexShader, /attribute float textureAirbrushNeighborMask/);
   assert.match(material.vertexShader, /varying float vNeighborMask/);
