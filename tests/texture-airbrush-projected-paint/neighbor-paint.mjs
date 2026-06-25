@@ -1377,8 +1377,8 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.doesNotMatch(material.fragmentShader, /float centerAngleCoverage = visibleSurfaceGrazingAngleCoverage\(paintFadeViewNormal\)/);
   assert.match(material.fragmentShader, /float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage\(paintFadeViewNormal\)/);
   assert.match(material.fragmentShader, /float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage\(paintGateViewNormal\)/);
-  assert.match(material.fragmentShader, /float softCenterVisibleCoverage = min\(fadeNormalCoverage, gateNormalCoverage\)/);
-  assert.doesNotMatch(material.fragmentShader, /float softCenterVisibleCoverage = max/);
+  assert.match(material.fragmentShader, /float softCenterVisibleCoverage = max\(fadeNormalCoverage, gateNormalCoverage\)/);
+  assert.doesNotMatch(material.fragmentShader, /float softCenterVisibleCoverage = min/);
   assert.doesNotMatch(material.fragmentShader, /smoothstep\(0\.18, 0\.94, centerVisibleNeighborhood\)/);
   assert.match(material.fragmentShader, /visibleSurfaceCoverage = mix\(1\.0, softCenterVisibleCoverage, centerGrazingEdgeAmount\)/);
   assert.match(material.fragmentShader, /visible-side-only soft edge/);
@@ -1413,7 +1413,7 @@ test("airbrush WebGL brush shader discards fragments outside an active neighbor 
   assert.doesNotMatch(material.fragmentShader, /float clusteredEdgeCoverage = smoothstep/);
   assert.doesNotMatch(material.fragmentShader, /smoothstep\(0\.04, 0\.45, rawEdgeCoverage\)/);
   assert.doesNotMatch(material.fragmentShader, /visibleSurfaceCoverage = clusteredEdgeCoverage\s*\* edgeSoftness/);
-  assert.match(material.fragmentShader, /min\(fadeNormalCoverage, gateNormalCoverage\)/);
+  assert.match(material.fragmentShader, /max\(fadeNormalCoverage, gateNormalCoverage\)/);
   assert.match(material.fragmentShader, /A nonzero floor at the cutoff looks[\s\S]*like paint leaking/);
   assert.doesNotMatch(material.fragmentShader, /turns the visible 90-degree side into triangle-shaped holes/);
   assert.doesNotMatch(material.fragmentShader, /float centerSceneDepth = texture2D\(depthTexture, depthUv\)\.r/);

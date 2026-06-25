@@ -17,6 +17,9 @@ const layerAfterUndo = args.layerAfterUndo === true || process.env.AIRBRUSH_RUNT
 const thirdLayer = args.thirdLayer === true || process.env.AIRBRUSH_RUNTIME_THIRD_LAYER === "1";
 const afterOrbitNeighbor = args.afterOrbitNeighbor === true || process.env.AIRBRUSH_RUNTIME_AFTER_ORBIT_NEIGHBOR === "1";
 const afterOrbitMacro = args.afterOrbitMacro === true || process.env.AIRBRUSH_RUNTIME_AFTER_ORBIT_MACRO === "1";
+const sideEdge = args.sideEdge === true || process.env.AIRBRUSH_RUNTIME_SIDE_EDGE === "1";
+const clothEdge = args.clothEdge === true || process.env.AIRBRUSH_RUNTIME_CLOTH_EDGE === "1";
+const frontRotateMacro = args.frontRotateMacro === true || process.env.AIRBRUSH_RUNTIME_FRONT_ROTATE_MACRO === "1";
 
 const cleanupTasks = [];
 
@@ -101,7 +104,52 @@ try {
   await waitForRuntime(cdp, "document.readyState === 'complete' || document.readyState === 'interactive'", timeoutMs);
   await waitForRuntime(cdp, "Boolean(window.modelCleanupEditor)", timeoutMs);
 
-  if (afterOrbitMacro) {
+  if (sideEdge || clothEdge) {
+    const result = await evaluateRuntime(cdp, runtimeSideEdgeExpression({ clothEdge }), { awaitPromise: true, timeoutMs });
+    const checks = runtimeSideEdgeChecks(result);
+    const summary = {
+      ok: Object.values(checks).every(Boolean),
+      url: validationUrl,
+      headless,
+      sideEdge,
+      clothEdge,
+      checks,
+      result
+    };
+    console.log(JSON.stringify(summary, null, 2));
+    await captureValidationLayerImage(cdp);
+    await captureValidationScreenshot(cdp);
+
+    if (!summary.ok) {
+      const failed = Object.entries(checks)
+        .filter(([, passed]) => !passed)
+        .map(([name]) => name)
+        .join(", ");
+      throw new Error(`Airbrush side-edge runtime validation failed: ${failed}`);
+    }
+  } else if (frontRotateMacro) {
+    const result = await evaluateRuntime(cdp, runtimeAfterOrbitMacroExpression(), { awaitPromise: true, timeoutMs });
+    const checks = runtimeFrontRotateMacroChecks(result);
+    const summary = {
+      ok: Object.values(checks).every(Boolean),
+      url: validationUrl,
+      headless,
+      frontRotateMacro,
+      checks,
+      result
+    };
+    console.log(JSON.stringify(summary, null, 2));
+    await captureValidationLayerImage(cdp);
+    await captureValidationScreenshot(cdp);
+
+    if (!summary.ok) {
+      const failed = Object.entries(checks)
+        .filter(([, passed]) => !passed)
+        .map(([name]) => name)
+        .join(", ");
+      throw new Error(`Airbrush front-rotate macro runtime validation failed: ${failed}`);
+    }
+  } else if (afterOrbitMacro) {
     const result = await evaluateRuntime(cdp, runtimeAfterOrbitMacroExpression(), { awaitPromise: true, timeoutMs });
     const checks = runtimeAfterOrbitMacroChecks(result);
     const summary = {
@@ -241,6 +289,12 @@ function parseArgs(argv) {
       parsed.afterOrbitNeighbor = true;
     } else if (value === "--after-orbit-macro") {
       parsed.afterOrbitMacro = true;
+    } else if (value === "--side-edge") {
+      parsed.sideEdge = true;
+    } else if (value === "--cloth-edge") {
+      parsed.clothEdge = true;
+    } else if (value === "--front-rotate-macro") {
+      parsed.frontRotateMacro = true;
     } else if (value === "--url") {
       parsed.url = argv[++index] || "";
     } else if (value === "--screenshot") {
@@ -277,6 +331,9 @@ Options:
   --third-layer     Validate adding and painting Paint 1, Paint 2, and Paint 3.
   --after-orbit-neighbor  Validate Neighbor paint, orbit, then Neighbor paint again.
   --after-orbit-macro  Validate the packaged after-orbit Neighbor paint repro macro.
+  --side-edge     Validate a programmatic near-grazing visible airbrush edge.
+  --cloth-edge    Validate a programmatic near-grazing visible airbrush edge biased to upper cloth.
+  --front-rotate-macro Validate front paint, orbit, then inspect the rotated visible edge.
 `);
 }
 
@@ -641,7 +698,7 @@ function runtimeAfterOrbitMacroExpression() {
       for (let index = 0; index < 24; index += 1) {
         const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
         if (pending && typeof pending.then === "function") {
-          await pending;
+          await Promise.race([pending, delay(400)]);
         }
         if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
           break;
@@ -1186,10 +1243,10 @@ function runtimeAfterOrbitMacroExpression() {
         alphas: measured.slice(0, 60).map((sample) => sample.alpha)
       };
     };
-    const offStrokeSurfacePaint = (stroke, beforeSnapshot) => {
-      const seed = neighborSeedForStroke(stroke);
-      const path = strokePathPoints(stroke);
-      const radiusPixels = macroBrushRadiusPixels();
+	    const offStrokeSurfacePaint = (stroke, beforeSnapshot) => {
+	      const seed = neighborSeedForStroke(stroke);
+	      const path = strokePathPoints(stroke);
+	      const radiusPixels = macroBrushRadiusPixels();
       const outsideMargin = Math.max(24, Math.min(72, radiusPixels * 2.35));
       const samples = [];
       const seen = new Set();
@@ -1271,14 +1328,276 @@ function runtimeAfterOrbitMacroExpression() {
             after: sample.after,
             materialIndex: sample.materialIndex,
             neighborAllowed: sample.neighborAllowed
-          }))
-      };
-    };
-    const secondStrokeCoverage = strokeCoverage(secondStroke);
-    const secondStrokeBandCoverage = strokeBandCoverage(secondStroke);
-    const secondStrokeOffPathPaint = offStrokeSurfacePaint(secondStroke, beforeSecondStrokeSnapshot);
-    return {
-      ready: true,
+	          }))
+	      };
+	    };
+	    const analyzePaintRuns = (rows) => {
+	      let components = 0;
+	      let componentsWithPaint = 0;
+	      let paintedSamples = 0;
+	      let visibleSamples = 0;
+	      let interiorSamples = 0;
+	      let interiorHoleSamples = 0;
+	      let jaggedComponents = 0;
+	      let maxTransitions = 0;
+	      const jaggedExamples = [];
+	      for (const row of rows) {
+	        let component = [];
+	        const flushComponent = () => {
+	          if (!component.length) {
+	            return;
+	          }
+	          components += 1;
+	          visibleSamples += component.length;
+	          const paintedIndexes = [];
+	          for (let index = 0; index < component.length; index += 1) {
+	            if (component[index].painted) {
+	              paintedIndexes.push(index);
+	            }
+	          }
+	          paintedSamples += paintedIndexes.length;
+	          if (!paintedIndexes.length) {
+	            component = [];
+	            return;
+	          }
+	          componentsWithPaint += 1;
+	          let transitions = 0;
+	          for (let index = 1; index < component.length; index += 1) {
+	            if (component[index].painted !== component[index - 1].painted) {
+	              transitions += 1;
+	            }
+	          }
+	          maxTransitions = Math.max(maxTransitions, transitions);
+	          const firstPaint = paintedIndexes[0];
+	          const lastPaint = paintedIndexes[paintedIndexes.length - 1];
+	          let holes = 0;
+	          let interior = 0;
+	          for (let index = firstPaint; index <= lastPaint; index += 1) {
+	            interior += 1;
+	            if (!component[index].painted) {
+	              holes += 1;
+	            }
+	          }
+	          interiorSamples += interior;
+	          interiorHoleSamples += holes;
+	          if (transitions > 2 || holes > Math.max(1, Math.floor(interior * 0.12))) {
+	            jaggedComponents += 1;
+	            if (jaggedExamples.length < 10) {
+	              jaggedExamples.push({
+	                length: component.length,
+	                painted: paintedIndexes.length,
+	                transitions,
+	                holes,
+	                firstPaint,
+	                lastPaint,
+	                pattern: component.map((sample) => sample.painted ? "#" : ".").join(""),
+	                alphas: component.map((sample) => Math.round(Number(sample.alpha) || 0)),
+	                normalZ: component.map((sample) => (
+	                  Number.isFinite(Number(sample.viewNormalZ))
+	                    ? Number(Number(sample.viewNormalZ).toFixed(3))
+	                    : null
+	                )),
+	                brushCoverage: component.map((sample) => (
+	                  Number.isFinite(Number(sample.brushCoverage))
+	                    ? Number(Number(sample.brushCoverage).toFixed(3))
+	                    : null
+	                ))
+	              });
+	            }
+	          }
+	          component = [];
+	        };
+	        for (const sample of row) {
+	          if (!sample.visible || sample.inBrush === false) {
+	            flushComponent();
+	            continue;
+	          }
+	          component.push(sample);
+	        }
+	        flushComponent();
+	      }
+	      return {
+	        components,
+	        componentsWithPaint,
+	        visibleSamples,
+	        paintedSamples,
+	        interiorSamples,
+	        interiorHoleSamples,
+	        interiorHoleRatio: interiorSamples ? interiorHoleSamples / interiorSamples : 0,
+	        jaggedComponents,
+	        jaggedRatio: componentsWithPaint ? jaggedComponents / componentsWithPaint : 0,
+	        maxTransitions,
+	        jaggedExamples
+	      };
+	    };
+	    const finalRotatedPaintEdgeMetrics = (sampleOptions = {}) => {
+	      editor.render?.();
+	      editor.flushTexturePaintLayerGpuTargetsToCanvases?.({ composite: true });
+	      const alphaThreshold = 8;
+	      const columns = Math.max(8, Math.floor(Number(sampleOptions.columns) || 44));
+	      const rows = Math.max(8, Math.floor(Number(sampleOptions.rows) || 60));
+	      const xMin = Number.isFinite(Number(sampleOptions.xMin)) ? Number(sampleOptions.xMin) : 0.14;
+	      const xMax = Number.isFinite(Number(sampleOptions.xMax)) ? Number(sampleOptions.xMax) : 0.88;
+	      const yMin = Number.isFinite(Number(sampleOptions.yMin)) ? Number(sampleOptions.yMin) : 0.08;
+	      const yMax = Number.isFinite(Number(sampleOptions.yMax)) ? Number(sampleOptions.yMax) : 0.9;
+	      const rowSamples = [];
+	      const columnSamples = Array.from({ length: columns }, () => []);
+	      const paintedPoints = [];
+	      for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+	        const yFraction = yMin + (yMax - yMin) * (rowIndex / Math.max(1, rows - 1));
+	        const row = [];
+	        for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
+	          const xFraction = xMin + (xMax - xMin) * (columnIndex / Math.max(1, columns - 1));
+	          const point = {
+	            x: rect.left + rect.width * xFraction,
+	            y: rect.top + rect.height * yFraction
+	          };
+	          const paintHit = hitAt(point.x, point.y);
+	          let alpha = 0;
+	          let visible = false;
+	          if (paintHit?.record && paintHit?.hit) {
+	            const sampledAlpha = alphaAtHit(paintHit);
+	            if (Number.isFinite(Number(sampledAlpha))) {
+	              visible = true;
+	              alpha = Number(sampledAlpha) || 0;
+	            }
+	          }
+	          const sample = {
+	            visible,
+	            painted: visible && alpha > alphaThreshold,
+	            alpha
+	          };
+	          row.push(sample);
+	          columnSamples[columnIndex].push(sample);
+	          if (sample.painted) {
+	            paintedPoints.push({
+	              x: Math.round(point.x),
+	              y: Math.round(point.y),
+	              alpha
+	            });
+	          }
+	        }
+	        rowSamples.push(row);
+	      }
+	      const rowMetrics = analyzePaintRuns(rowSamples);
+	      const columnMetrics = analyzePaintRuns(columnSamples);
+	      const preferredMetrics = rowMetrics.interiorHoleRatio <= columnMetrics.interiorHoleRatio
+	        ? rowMetrics
+	        : columnMetrics;
+	      return {
+	        alphaThreshold,
+	        grid: { columns, rows, xMin, xMax, yMin, yMax },
+	        rowMetrics,
+	        columnMetrics,
+	        preferredAxis: preferredMetrics === rowMetrics ? "row" : "column",
+	        preferredMetrics,
+	        paintedPointExamples: paintedPoints.slice(0, 16)
+	      };
+	    };
+	    const findVisibleRotatedPaintEdgeMetrics = async () => {
+	      const cameraEvents = macroEvents.filter((event) => event?.type === "camera" && event.camera);
+	      const finalCamera = cameraEvents.at(-1)?.camera || startCamera?.camera || null;
+	      const target = finalCamera?.target || null;
+	      const position = finalCamera?.position || null;
+	      if (!Array.isArray(target) || !Array.isArray(position) || target.length < 3 || position.length < 3) {
+	        return {
+	          searched: false,
+	          reason: "missing-camera-snapshot",
+	          metrics: finalRotatedPaintEdgeMetrics()
+	        };
+	      }
+	      const targetX = Number(target[0]);
+	      const targetY = Number(target[1]);
+	      const targetZ = Number(target[2]);
+	      const baseX = Number(position[0]);
+	      const baseY = Number(position[1]);
+	      const baseZ = Number(position[2]);
+	      if (![targetX, targetY, targetZ, baseX, baseY, baseZ].every(Number.isFinite)) {
+	        return {
+	          searched: false,
+	          reason: "invalid-camera-snapshot",
+	          metrics: finalRotatedPaintEdgeMetrics()
+	        };
+	      }
+	      const horizontalRadius = Math.hypot(baseX - targetX, baseZ - targetZ);
+	      if (!Number.isFinite(horizontalRadius) || horizontalRadius <= 0.0001) {
+	        return {
+	          searched: false,
+	          reason: "invalid-camera-radius",
+	          metrics: finalRotatedPaintEdgeMetrics()
+	        };
+	      }
+	      const baseYaw = Math.atan2(baseZ - targetZ, baseX - targetX);
+	      const yawOffsets = [0, -0.55, 0.55, -1.1, 1.1, -1.65, 1.65, Math.PI];
+	      const candidates = [];
+	      let best = null;
+	      for (const offset of yawOffsets) {
+	        const yaw = baseYaw + offset;
+	        const snapshot = {
+	          ...finalCamera,
+	          target: [targetX, targetY, targetZ],
+	          position: [
+	            targetX + Math.cos(yaw) * horizontalRadius,
+	            baseY,
+	            targetZ + Math.sin(yaw) * horizontalRadius
+	          ]
+	        };
+	        editor.applyTutorialMacroCameraSnapshot?.(snapshot);
+	        await waitFrame();
+	        editor.render?.();
+	        const metrics = finalRotatedPaintEdgeMetrics({ columns: 20, rows: 28 });
+	        const paintedSamples = Number(metrics?.preferredMetrics?.paintedSamples) || 0;
+	        const holeRatio = Number(metrics?.preferredMetrics?.interiorHoleRatio) || 0;
+	        const jaggedRatio = Number(metrics?.preferredMetrics?.jaggedRatio) || 0;
+	        const score = paintedSamples - holeRatio * 20 - jaggedRatio * 10;
+	        const candidate = {
+	          yawOffset: offset,
+	          paintedSamples,
+	          visibleSamples: Number(metrics?.preferredMetrics?.visibleSamples) || 0,
+	          interiorHoleRatio: holeRatio,
+	          jaggedRatio,
+	          score,
+	          snapshot
+	        };
+	        candidates.push({
+	          yawOffset: candidate.yawOffset,
+	          paintedSamples: candidate.paintedSamples,
+	          visibleSamples: candidate.visibleSamples,
+	          interiorHoleRatio: candidate.interiorHoleRatio,
+	          jaggedRatio: candidate.jaggedRatio,
+	          score: candidate.score
+	        });
+	        if (!best || candidate.score > best.score) {
+	          best = candidate;
+	        }
+	      }
+	      if (best?.snapshot) {
+	        editor.applyTutorialMacroCameraSnapshot?.(best.snapshot);
+	        await waitFrame();
+	        editor.render?.();
+	      }
+	      return {
+	        searched: true,
+	        candidateCount: candidates.length,
+	        best: best ? {
+	          yawOffset: best.yawOffset,
+	          paintedSamples: best.paintedSamples,
+	          visibleSamples: best.visibleSamples,
+	          interiorHoleRatio: best.interiorHoleRatio,
+	          jaggedRatio: best.jaggedRatio,
+	          score: best.score
+	        } : null,
+	        candidates,
+	        metrics: finalRotatedPaintEdgeMetrics()
+	      };
+	    };
+	    const secondStrokeCoverage = strokeCoverage(secondStroke);
+	    const secondStrokeBandCoverage = strokeBandCoverage(secondStroke);
+	    const secondStrokeOffPathPaint = offStrokeSurfacePaint(secondStroke, beforeSecondStrokeSnapshot);
+	    const rotatedPaintEdgeMetrics = finalRotatedPaintEdgeMetrics();
+	    const visibleRotatedPaintEdge = await findVisibleRotatedPaintEdgeMetrics();
+	    return {
+	      ready: true,
       loaded: Boolean(editor.model),
       loadedAsset,
       macroLoaded: true,
@@ -1299,11 +1618,13 @@ function runtimeAfterOrbitMacroExpression() {
         pixelCount: beforeSecondStrokeSnapshot?.pixelCount || 0,
         eventPoint: beforeSecondStrokeEventPoint
       },
-      secondStrokeCoverage,
-      secondStrokeBandCoverage,
-      secondStrokeOffPathPaint,
-      validation
-    };
+	      secondStrokeCoverage,
+	      secondStrokeBandCoverage,
+	      secondStrokeOffPathPaint,
+	      rotatedPaintEdgeMetrics,
+	      visibleRotatedPaintEdge,
+	      validation
+	    };
   })()`;
 }
 
@@ -1356,6 +1677,47 @@ function runtimeAfterOrbitMacroChecks(result) {
     noNeighborRejectedOffPathPaintAfterMacro: Number(result?.secondStrokeOffPathPaint?.samples) >= 12
       && Number(result?.secondStrokeOffPathPaint?.neighborRejectedPaintedSamples) === 0,
     queueDrained: Number(result?.queueLength) === 0 && Number(result?.pendingBatches) === 0
+	  };
+	}
+
+function runtimeFrontRotateMacroChecks(result) {
+  const edgeResult = result?.visibleRotatedPaintEdge?.metrics || result?.rotatedPaintEdgeMetrics || {};
+  const metrics = edgeResult?.preferredMetrics || {};
+  const rowMetrics = edgeResult?.rowMetrics || {};
+  const columnMetrics = edgeResult?.columnMetrics || {};
+  const paintedSamples = Number(metrics.paintedSamples) || 0;
+  const visibleSamples = Number(metrics.visibleSamples) || 0;
+  const componentsWithPaint = Number(metrics.componentsWithPaint) || 0;
+  const interiorHoleRatio = Number(metrics.interiorHoleRatio) || 0;
+  const jaggedRatio = Number(metrics.jaggedRatio) || 0;
+  const maxTransitions = Number(metrics.maxTransitions) || 0;
+  const rowPainted = Number(rowMetrics.paintedSamples) || 0;
+  const columnPainted = Number(columnMetrics.paintedSamples) || 0;
+  return {
+    editorReady: result?.ready === true,
+    assetLoaded: result?.loaded === true,
+    macroLoaded: result?.macroLoaded === true,
+    macroPlayed: result?.macroPlayed === true,
+    macroHasAirbrushStroke: Number(result?.airbrushStrokeCount) >= 1,
+    paintLayerCreated: result?.layerAdded === true,
+    neighborEnabled: result?.neighborEnabled === true,
+    firstStrokeProjected: Number(result?.validation?.byPhase?.["macro-first"]?.projectionChanged) > 0,
+    orbitPlayedAfterPaint: Number(result?.validation?.byPhase?.["macro-orbit"]?.pointerDowns) > 0
+      || Number(result?.validation?.cameraChangedCalls) > 0,
+    queueDrained: Number(result?.queueLength) === 0 && Number(result?.pendingBatches) === 0,
+    finalViewSampledVisibleSurface: visibleSamples >= 40,
+    finalVisiblePaintViewFound: result?.visibleRotatedPaintEdge?.searched === true
+      && Number(result?.visibleRotatedPaintEdge?.best?.paintedSamples) >= 1,
+    finalViewHasRotatedPaint: paintedSamples >= 8
+      && componentsWithPaint >= 2
+      && Math.max(rowPainted, columnPainted) >= 8,
+    finalPaintRunMostlyContiguous: paintedSamples >= 8
+      && interiorHoleRatio <= 0.1,
+    finalPaintRunNotTriangleJagged: paintedSamples >= 8
+      && jaggedRatio <= 0.3
+      && maxTransitions <= 5,
+    noNeighborModeResetDuringMacro: !(result?.validation?.neighborModeSetCalls || [])
+      .some((call) => String(call?.phase || "") !== "setup")
   };
 }
 
@@ -1376,6 +1738,660 @@ function thirdLayerStrokeForPrepared(prepared, layerNumber) {
   };
 }
 
+function runtimeSideEdgeChecks(result) {
+  const metrics = result?.edgeMetrics || {};
+  const preferred = metrics.preferredMetrics || {};
+  const grazing = metrics.grazing || {};
+  const leak = result?.oppositeVisiblePaintLeak || {};
+  const visibleSamples = Number(metrics.visibleSamples) || 0;
+  const paintedSamples = Number(metrics.paintedSamples) || 0;
+  const paintedSampleFloor = Math.max(12, Math.floor(visibleSamples * 0.08));
+  return {
+    editorReady: result?.ready === true,
+    assetLoaded: result?.loaded === true,
+    paintRecordsAvailable: Number(result?.paintRecords) > 0,
+    neighborEnabled: result?.neighborEnabled === true,
+    paintLayerCreated: result?.layerAdded === true,
+    grazingCandidateFound: result?.candidateFound === true,
+    grazingCandidateNearCutoff: Number(result?.candidate?.viewNormalZ) > -0.12
+      && Number(result?.candidate?.viewNormalZ) < 0.32,
+    strokeProjected: Number(result?.projectionChanged) > 0,
+    strokeAddedAlpha: Number(result?.afterAlpha?.count) > Number(result?.beforeAlpha?.count),
+    edgeSampledVisibleSurface: visibleSamples >= 80,
+    edgeSampledPaintedSurface: paintedSamples >= paintedSampleFloor,
+    grazingBandHasPaint: Number(grazing.paintedSamples) >= 1,
+    grazingBandHasSoftAlpha: Number(grazing.softAlphaSamples) >= 1
+      || Number(grazing.softAlphaRatio) >= 0.5,
+    paintRunHasNoInteriorHoles: Number(preferred.interiorHoleSamples) === 0,
+    paintRunNotCombLike: Number(preferred.jaggedRatio) <= 0.2
+      && Number(preferred.maxTransitions) <= 2,
+    oppositeViewSampledVisibleSurface: Number(leak.visibleSamples) >= 40,
+    noOppositeVisiblePaintLeak: Number(leak.strongPaintedSamples) === 0
+      && Number(leak.paintedSamples) <= 2,
+    queueDrained: Number(result?.queueLength) === 0 && Number(result?.pendingBatches) === 0
+  };
+}
+
+function runtimeSideEdgeExpression(options = {}) {
+  const clothEdge = options.clothEdge === true;
+  return `(async () => {
+    const editor = window.modelCleanupEditor;
+    if (!editor) {
+      return { ready: false, error: "missing-editor" };
+    }
+    const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const flushPaint = async () => {
+      for (let index = 0; index < 20; index += 1) {
+        const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
+        if (pending && typeof pending.then === "function") {
+          await Promise.race([pending, delay(400)]);
+        }
+        if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
+          break;
+        }
+        await delay(25);
+      }
+      await delay(60);
+    };
+    const assets = [
+      {
+        key: "airbrush-runtime:test-walking-8",
+        name: "walking-8.fbx",
+        label: "walking-8",
+        extension: "fbx",
+        folder: "test",
+        path: "assets/models/animation-library/test/walking-8.fbx",
+        url: "./assets/models/animation-library/test/walking-8.fbx",
+        engine: true,
+        demo: true
+      },
+      {
+        key: "airbrush-runtime:etes-walking-8",
+        name: "walking-8.fbx",
+        label: "walking-8",
+        extension: "fbx",
+        folder: "etes",
+        path: "assets/models/animation-library/etes/walking-8.fbx",
+        url: "./assets/models/animation-library/etes/walking-8.fbx",
+        engine: true,
+        demo: true
+      }
+    ];
+    let loadedAsset = "";
+    let loadError = "";
+    for (const asset of assets) {
+      try {
+        await editor.loadAnimationLibraryAsset(asset);
+        loadedAsset = asset.path;
+        break;
+      } catch (error) {
+        loadError = error?.message || String(error);
+      }
+    }
+    if (!loadedAsset) {
+      return { ready: false, loaded: false, error: "asset-load-failed", loadError };
+    }
+    for (let index = 0; index < 8; index += 1) {
+      await waitFrame();
+    }
+    editor.render?.();
+    editor.setTool?.("airbrush");
+    editor.setTexturePaintNeighborMode?.(true, { status: false });
+    if (editor.textureBrushRadius) {
+      editor.textureBrushRadius.value = "38";
+    }
+    if (editor.textureBrushOpacity) {
+      editor.textureBrushOpacity.value = "0.42";
+    }
+    if (editor.textureBrushSpacing) {
+      editor.textureBrushSpacing.value = "1";
+    }
+    if (editor.textureBrushHardness) {
+      editor.textureBrushHardness.value = "0.35";
+    }
+    if (editor.textureBrushScatter) {
+      editor.textureBrushScatter.value = "0.35";
+    }
+    if (editor.texturePressureRadius) {
+      editor.texturePressureRadius.checked = false;
+    }
+    if (editor.texturePressureOpacity) {
+      editor.texturePressureOpacity.checked = false;
+    }
+    editor.updateRangeOutputs?.();
+    editor.textureAirbrushInvalidateBrushSettings?.();
+    editor.setCameraPreset?.("right");
+    editor.textureAirbrushCameraChanged?.();
+    for (let index = 0; index < 8; index += 1) {
+      await waitFrame();
+    }
+    editor.render?.();
+    const rect = editor.canvas?.getBoundingClientRect?.();
+    if (!rect?.width || !rect?.height) {
+      return { ready: false, loaded: Boolean(editor.model), error: "missing-canvas-rect" };
+    }
+    if (editor.canvas) {
+      editor.canvas.setPointerCapture = () => {};
+      editor.canvas.releasePointerCapture = () => {};
+    }
+    const eventAt = (clientX, clientY, buttons = 1) => ({
+      clientX,
+      clientY,
+      button: 0,
+      buttons,
+      pointerId: 933,
+      pointerType: "mouse",
+      pressure: 0.7,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      preventDefault() {},
+      stopPropagation() {},
+      stopImmediatePropagation() {}
+    });
+    const hitAt = (clientX, clientY) => editor.texturePaintHitForEvent?.(eventAt(clientX, clientY), "airbrush") || null;
+    const refreshCameraMatrices = () => {
+      editor.model?.updateMatrixWorld?.(true);
+      editor.camera?.updateMatrixWorld?.(true);
+      if (editor.camera?.matrixWorldInverse?.copy && editor.camera?.matrixWorld?.clone) {
+        editor.camera.matrixWorldInverse.copy(editor.camera.matrixWorld).invert();
+      }
+    };
+    const viewNormalForPaintHit = (paintHit) => {
+      const hit = paintHit?.hit || null;
+      const normal = hit?.face?.normal?.clone?.() || null;
+      if (!normal || !hit?.object?.matrixWorld || !editor.camera?.matrixWorldInverse) {
+        return null;
+      }
+      normal.transformDirection(hit.object.matrixWorld);
+      normal.transformDirection(editor.camera.matrixWorldInverse);
+      normal.normalize();
+      return { x: normal.x, y: normal.y, z: normal.z };
+    };
+    refreshCameraMatrices();
+    const candidates = [];
+    const targetClothEdge = ${clothEdge ? "true" : "false"};
+    const xFractions = targetClothEdge
+      ? Array.from({ length: 13 }, (_, index) => 0.4 + index * (0.26 / 12))
+      : Array.from({ length: 11 }, (_, index) => 0.28 + index * (0.46 / 10));
+    const yFractions = targetClothEdge
+      ? Array.from({ length: 13 }, (_, index) => 0.34 + index * (0.32 / 12))
+      : Array.from({ length: 13 }, (_, index) => 0.24 + index * (0.54 / 12));
+    for (const yFraction of yFractions) {
+      for (const xFraction of xFractions) {
+        const clientX = rect.left + rect.width * xFraction;
+        const clientY = rect.top + rect.height * yFraction;
+        const paintHit = hitAt(clientX, clientY);
+        if (!paintHit?.record || !paintHit?.hit) {
+          continue;
+        }
+        const viewNormal = viewNormalForPaintHit(paintHit);
+        if (!viewNormal) {
+          continue;
+        }
+        if (viewNormal.z <= -0.12 || viewNormal.z >= 0.42) {
+          continue;
+        }
+        const targetX = targetClothEdge ? 0.55 : 0.52;
+        const targetY = targetClothEdge ? 0.47 : 0.56;
+        const centerBias = Math.abs(xFraction - targetX) * 0.18 + Math.abs(yFraction - targetY) * 0.12;
+        const score = Math.abs(viewNormal.z - 0.08) + centerBias;
+        candidates.push({
+          clientX,
+          clientY,
+          xFraction,
+          yFraction,
+          viewNormal,
+          score,
+          paintHit
+        });
+      }
+    }
+    candidates.sort((left, right) => left.score - right.score);
+    const candidate = candidates[0] || null;
+    if (!candidate) {
+      return {
+        ready: false,
+        loaded: Boolean(editor.model),
+        loadedAsset,
+        paintRecords: editor.paintRecords?.length || 0,
+        candidateCount: candidates.length,
+        error: "missing-grazing-candidate"
+      };
+    }
+    const firstMaterial = editor.clonePaintMaterialForHit?.(candidate.paintHit.record, candidate.paintHit.hit)
+      || editor.texturePaintFirstLayerMaterial?.()
+      || null;
+    if (firstMaterial) {
+      editor.texturePaintActiveMaterial = firstMaterial;
+    }
+    const layerAdded = editor.addTexturePaintLayer?.() === true;
+    await waitFrame();
+    const materialForLayers = editor.texturePaintActiveMaterial || firstMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+    const alphaStats = () => {
+      editor.flushTexturePaintLayerGpuTargetsToCanvases?.({ composite: true });
+      let count = 0;
+      let sum = 0;
+      const materials = editor.textureAirbrushPaintableMaterials?.() || [];
+      for (const entry of materials) {
+        const stack = entry?.material?.userData?.texturePaintLayerStack || null;
+        for (const layer of (stack?.layers || [])) {
+          const canvas = layer?.canvas || null;
+          const context = canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+          if (!canvas || !context) {
+            continue;
+          }
+          const image = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          for (let index = 3; index < image.length; index += 4) {
+            const alpha = image[index];
+            if (alpha > 0) {
+              count += 1;
+              sum += alpha;
+            }
+          }
+        }
+      }
+      return { count, sum };
+    };
+    let layerImageCache = null;
+    const resetLayerImageCache = () => {
+      layerImageCache = new WeakMap();
+    };
+    const cachedLayerImage = (canvas, context) => {
+      if (!canvas || !context) {
+        return null;
+      }
+      if (!layerImageCache) {
+        resetLayerImageCache();
+      }
+      let cached = layerImageCache.get(canvas);
+      if (!cached) {
+        cached = {
+          width: canvas.width,
+          height: canvas.height,
+          data: context.getImageData(0, 0, canvas.width, canvas.height).data
+        };
+        layerImageCache.set(canvas, cached);
+      }
+      return cached;
+    };
+    const alphaAtHit = (paintHit) => {
+      const uv = paintHit?.hit?.uv || null;
+      const material = paintHit?.record && paintHit?.hit
+        ? editor.clonePaintMaterialForHit?.(paintHit.record, paintHit.hit) || materialForLayers
+        : materialForLayers;
+      const stack = material?.userData?.texturePaintLayerStack || null;
+      const layer = (stack?.layers || []).find((item) => item.id === stack?.activeLayerId) || null;
+      const canvas = layer?.canvas || null;
+      const context = canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+      if (!uv || !canvas || !context) {
+        return null;
+      }
+      const image = cachedLayerImage(canvas, context);
+      if (!image?.data) {
+        return null;
+      }
+      const centerX = Math.max(0, Math.min(image.width - 1, Math.floor(Number(uv.x || 0) * image.width)));
+      const centerY = Math.max(0, Math.min(image.height - 1, Math.floor((1 - Number(uv.y || 0)) * image.height)));
+      let alpha = 0;
+      for (let y = Math.max(0, centerY - 1); y <= Math.min(image.height - 1, centerY + 1); y += 1) {
+        for (let x = Math.max(0, centerX - 1); x <= Math.min(image.width - 1, centerX + 1); x += 1) {
+          alpha = Math.max(alpha, image.data[(y * image.width + x) * 4 + 3]);
+        }
+      }
+      return alpha;
+    };
+    const paintStroke = async (stroke) => {
+      editor.onPointerDown?.(eventAt(stroke.start.x, stroke.start.y, 1));
+      for (const point of stroke.points) {
+        editor.onPointerMove?.(eventAt(point.x, point.y, 1));
+        await waitFrame();
+      }
+      editor.onPointerUp?.(eventAt(stroke.end.x, stroke.end.y, 0));
+      await flushPaint();
+    };
+    const radiusPixels = Math.max(10, Math.min(42, Number(editor.textureBrushRadiusScreenPixels?.()) || 24));
+    const strokeWidth = Math.max(radiusPixels * 3.6, 76);
+    const strokeHeight = Math.max(radiusPixels * 2.2, 42);
+    const clampPoint = (x, y) => ({
+      x: Math.max(rect.left + 6, Math.min(rect.right - 6, x)),
+      y: Math.max(rect.top + 6, Math.min(rect.bottom - 6, y))
+    });
+    const stroke = {
+      start: clampPoint(candidate.clientX - strokeWidth * 0.5, candidate.clientY - strokeHeight * 0.12),
+      end: clampPoint(candidate.clientX + strokeWidth * 0.5, candidate.clientY + strokeHeight * 0.12)
+    };
+    stroke.points = Array.from({ length: 16 }, (_, index) => {
+      const t = (index + 1) / 16;
+      return clampPoint(
+        stroke.start.x + (stroke.end.x - stroke.start.x) * t,
+        stroke.start.y + (stroke.end.y - stroke.start.y) * t + Math.sin(t * Math.PI) * strokeHeight * 0.08
+      );
+    });
+	    const beforeAlpha = alphaStats();
+	    await paintStroke(stroke);
+	    const afterAlpha = alphaStats();
+	    resetLayerImageCache();
+	    refreshCameraMatrices();
+	    const strokePath = [stroke.start, ...stroke.points, stroke.end];
+	    const sampleStrokeCoverage = (x, y) => {
+	      const scatter = Math.max(0, Math.min(1, Number(editor.textureAirbrushScatter?.()) || 0.35));
+	      const hardness = Math.max(0, Math.min(1, Number(editor.textureAirbrushHardness?.()) || 0.35));
+	      let coverage = 0;
+	      for (let index = 1; index < strokePath.length; index += 1) {
+	        const start = strokePath[index - 1];
+	        const end = strokePath[index];
+	        const dx = end.x - start.x;
+	        const dy = end.y - start.y;
+	        const lengthSq = dx * dx + dy * dy;
+	        const t = lengthSq > 0.0001
+	          ? Math.max(0, Math.min(1, ((x - start.x) * dx + (y - start.y) * dy) / lengthSq))
+	          : 1;
+	        const closestX = start.x + dx * t;
+	        const closestY = start.y + dy * t;
+	        const distance = Math.hypot(x - closestX, y - closestY);
+	        const haloRadius = radiusPixels * (1 + scatter * 0.72);
+	        if (distance > haloRadius) {
+	          continue;
+	        }
+	        const hardRadius = radiusPixels * hardness;
+	        let segmentCoverage = 1;
+	        if (distance > hardRadius) {
+	          const fadeRadius = Math.max(1, haloRadius - hardRadius);
+	          const edge = Math.max(0, 1 - (distance - hardRadius) / fadeRadius);
+	          const exponent = 3.6 - hardness * 2.55 + scatter * 0.25;
+	          segmentCoverage = Math.min(1, Math.pow(edge, exponent));
+	        }
+	        coverage = Math.max(coverage, segmentCoverage);
+	      }
+	      return coverage;
+	    };
+	    const analyzePaintRuns = (rows) => {
+      let components = 0;
+      let componentsWithPaint = 0;
+      let paintedSamples = 0;
+      let visibleSamples = 0;
+      let interiorSamples = 0;
+      let interiorHoleSamples = 0;
+      let jaggedComponents = 0;
+      let maxTransitions = 0;
+      const jaggedExamples = [];
+      for (const row of rows) {
+        let component = [];
+        const flushComponent = () => {
+          if (!component.length) {
+            return;
+          }
+          components += 1;
+          visibleSamples += component.length;
+          const paintedIndexes = [];
+          for (let index = 0; index < component.length; index += 1) {
+            if (component[index].painted) {
+              paintedIndexes.push(index);
+            }
+          }
+          paintedSamples += paintedIndexes.length;
+          if (!paintedIndexes.length) {
+            component = [];
+            return;
+          }
+          componentsWithPaint += 1;
+          let transitions = 0;
+          for (let index = 1; index < component.length; index += 1) {
+            if (component[index].painted !== component[index - 1].painted) {
+              transitions += 1;
+            }
+          }
+          maxTransitions = Math.max(maxTransitions, transitions);
+          const firstPaint = paintedIndexes[0];
+          const lastPaint = paintedIndexes[paintedIndexes.length - 1];
+          let holes = 0;
+          let interior = 0;
+          for (let index = firstPaint; index <= lastPaint; index += 1) {
+            interior += 1;
+            if (!component[index].painted) {
+              holes += 1;
+            }
+          }
+          interiorSamples += interior;
+          interiorHoleSamples += holes;
+          if (transitions > 2 || holes > 0) {
+            jaggedComponents += 1;
+            if (jaggedExamples.length < 8) {
+              jaggedExamples.push({
+                length: component.length,
+                painted: paintedIndexes.length,
+                transitions,
+                holes,
+                firstPaint,
+                lastPaint,
+                pattern: component.map((sample) => sample.painted ? "#" : ".").join(""),
+                alphas: component.map((sample) => Math.round(Number(sample.alpha) || 0)),
+                normalZ: component.map((sample) => (
+                  Number.isFinite(Number(sample.viewNormalZ))
+                    ? Number(Number(sample.viewNormalZ).toFixed(3))
+                    : null
+                )),
+                brushCoverage: component.map((sample) => (
+                  Number.isFinite(Number(sample.brushCoverage))
+                    ? Number(Number(sample.brushCoverage).toFixed(3))
+                    : null
+                ))
+              });
+            }
+          }
+          component = [];
+        };
+        for (const sample of row) {
+          if (!sample.visible || sample.inBrush === false) {
+            flushComponent();
+            continue;
+          }
+          component.push(sample);
+        }
+        flushComponent();
+      }
+      return {
+        components,
+        componentsWithPaint,
+        visibleSamples,
+        paintedSamples,
+        interiorSamples,
+        interiorHoleSamples,
+        interiorHoleRatio: interiorSamples ? interiorHoleSamples / interiorSamples : 0,
+        jaggedComponents,
+        jaggedRatio: componentsWithPaint ? jaggedComponents / componentsWithPaint : 0,
+        maxTransitions,
+        jaggedExamples
+      };
+    };
+    const sampleEdgeMetrics = () => {
+      editor.render?.();
+      editor.flushTexturePaintLayerGpuTargetsToCanvases?.({ composite: true });
+      const columns = 22;
+      const rows = 26;
+      const sampleWidth = Math.max(strokeWidth * 1.35, radiusPixels * 5.5);
+      const sampleHeight = Math.max(strokeHeight * 3.4, radiusPixels * 7.5);
+      const xMin = Math.max(rect.left + 4, candidate.clientX - sampleWidth * 0.5);
+      const xMax = Math.min(rect.right - 4, candidate.clientX + sampleWidth * 0.5);
+      const yMin = Math.max(rect.top + 4, candidate.clientY - sampleHeight * 0.5);
+      const yMax = Math.min(rect.bottom - 4, candidate.clientY + sampleHeight * 0.5);
+      const rowSamples = [];
+      const columnSamples = Array.from({ length: columns }, () => []);
+      const flat = [];
+      for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+        const y = yMin + (yMax - yMin) * (rowIndex / Math.max(1, rows - 1));
+        const row = [];
+        for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
+          const x = xMin + (xMax - xMin) * (columnIndex / Math.max(1, columns - 1));
+          const paintHit = hitAt(x, y);
+          const viewNormal = viewNormalForPaintHit(paintHit);
+          const alpha = paintHit?.record && paintHit?.hit ? Number(alphaAtHit(paintHit)) || 0 : 0;
+          const brushCoverage = sampleStrokeCoverage(x, y);
+          const sample = {
+            visible: Boolean(paintHit?.record && paintHit?.hit),
+            painted: alpha > 6,
+            alpha,
+            viewNormalZ: Number(viewNormal?.z),
+            brushCoverage,
+            inBrush: brushCoverage > 0.08
+          };
+          row.push(sample);
+          columnSamples[columnIndex].push(sample);
+          flat.push(sample);
+        }
+        rowSamples.push(row);
+      }
+      const visibleSamples = flat.filter((sample) => sample.visible);
+      const paintedSamples = visibleSamples.filter((sample) => sample.painted);
+      const maxAlpha = visibleSamples.reduce((max, sample) => Math.max(max, sample.alpha), 0);
+      const softAlphaLimit = Math.max(12, maxAlpha * 0.86);
+      const grazingSamples = visibleSamples.filter((sample) => (
+        Number.isFinite(sample.viewNormalZ)
+        && sample.viewNormalZ > -0.12
+        && sample.viewNormalZ < 0.42
+      ));
+      const grazingPainted = grazingSamples.filter((sample) => sample.painted);
+      const grazingSoft = grazingPainted.filter((sample) => sample.alpha < softAlphaLimit);
+      const rowMetrics = analyzePaintRuns(rowSamples);
+      const columnMetrics = analyzePaintRuns(columnSamples);
+      const preferredMetrics = rowMetrics.interiorHoleRatio <= columnMetrics.interiorHoleRatio
+        ? rowMetrics
+        : columnMetrics;
+      return {
+        grid: {
+          columns,
+          rows,
+          xMin: Math.round(xMin),
+          xMax: Math.round(xMax),
+          yMin: Math.round(yMin),
+          yMax: Math.round(yMax)
+        },
+        maxAlpha,
+        softAlphaLimit,
+        visibleSamples: visibleSamples.length,
+        paintedSamples: paintedSamples.length,
+        rowMetrics,
+        columnMetrics,
+        preferredAxis: preferredMetrics === rowMetrics ? "row" : "column",
+        preferredMetrics,
+        grazing: {
+          visibleSamples: grazingSamples.length,
+          paintedSamples: grazingPainted.length,
+          softAlphaSamples: grazingSoft.length,
+          softAlphaRatio: grazingPainted.length ? grazingSoft.length / grazingPainted.length : 0,
+          alphaExamples: grazingPainted.slice(0, 20).map((sample) => sample.alpha),
+          normalExamples: grazingPainted.slice(0, 20).map((sample) => Number(sample.viewNormalZ.toFixed(3)))
+        }
+      };
+    };
+    const edgeMetrics = sampleEdgeMetrics();
+    const sampleOppositeVisiblePaintLeakMetrics = async () => {
+      editor.setCameraPreset?.("left");
+      editor.textureAirbrushCameraChanged?.();
+      for (let index = 0; index < 8; index += 1) {
+        await waitFrame();
+      }
+      refreshCameraMatrices();
+      editor.render?.();
+      editor.flushTexturePaintLayerGpuTargetsToCanvases?.({ composite: true });
+      resetLayerImageCache();
+      const columns = 24;
+      const rows = 30;
+      const xMin = rect.left + rect.width * 0.33;
+      const xMax = rect.left + rect.width * 0.68;
+      const yMin = rect.top + rect.height * 0.18;
+      const yMax = rect.top + rect.height * 0.82;
+      let visibleSamples = 0;
+      let paintedSamples = 0;
+      let strongPaintedSamples = 0;
+      let maxAlpha = 0;
+      const paintedExamples = [];
+      for (let rowIndex = 0; rowIndex < rows; rowIndex += 1) {
+        const y = yMin + (yMax - yMin) * (rowIndex / Math.max(1, rows - 1));
+        for (let columnIndex = 0; columnIndex < columns; columnIndex += 1) {
+          const x = xMin + (xMax - xMin) * (columnIndex / Math.max(1, columns - 1));
+          const paintHit = hitAt(x, y);
+          if (!paintHit?.record || !paintHit?.hit) {
+            continue;
+          }
+          visibleSamples += 1;
+          const viewNormal = viewNormalForPaintHit(paintHit);
+          const alpha = Number(alphaAtHit(paintHit)) || 0;
+          maxAlpha = Math.max(maxAlpha, alpha);
+          if (alpha > 6) {
+            paintedSamples += 1;
+            if (alpha > 24) {
+              strongPaintedSamples += 1;
+            }
+            if (paintedExamples.length < 10) {
+              paintedExamples.push({
+                x: Math.round(x),
+                y: Math.round(y),
+                alpha,
+                viewNormalZ: Number.isFinite(viewNormal?.z) ? Number(viewNormal.z.toFixed(3)) : null
+              });
+            }
+          }
+        }
+      }
+      editor.setCameraPreset?.("right");
+      editor.textureAirbrushCameraChanged?.();
+      for (let index = 0; index < 4; index += 1) {
+        await waitFrame();
+      }
+      refreshCameraMatrices();
+      editor.render?.();
+      return {
+        visibleSamples,
+        paintedSamples,
+        strongPaintedSamples,
+        maxAlpha,
+        paintedExamples
+      };
+    };
+    const oppositeVisiblePaintLeak = await sampleOppositeVisiblePaintLeakMetrics();
+    const shader = editor.textureAirbrushBrushShaderMaterial?.();
+    const materialStack = materialForLayers?.userData?.texturePaintLayerStack || null;
+    const activeLayer = (materialStack?.layers || []).find((layer) => layer.id === materialStack?.activeLayerId) || null;
+    return {
+      ready: true,
+      loaded: Boolean(editor.model),
+      loadedAsset,
+      paintRecords: editor.paintRecords?.length || 0,
+      activeTool: editor.activeTool,
+      neighborEnabled: editor.texturePaintNeighborModeEnabled?.() === true,
+      layerAdded,
+      activeLayerName: activeLayer?.name || "",
+      candidateFound: true,
+      candidateCount: candidates.length,
+      candidate: {
+        x: Math.round(candidate.clientX),
+        y: Math.round(candidate.clientY),
+        xFraction: Number(candidate.xFraction.toFixed(3)),
+        yFraction: Number(candidate.yFraction.toFixed(3)),
+        viewNormalZ: Number(candidate.viewNormal.z.toFixed(4)),
+        score: Number(candidate.score.toFixed(4))
+      },
+      radiusPixels,
+      stroke: {
+        start: { x: Math.round(stroke.start.x), y: Math.round(stroke.start.y) },
+        end: { x: Math.round(stroke.end.x), y: Math.round(stroke.end.y) }
+      },
+      beforeAlpha,
+      afterAlpha,
+      projectionChanged: afterAlpha.count - beforeAlpha.count,
+      edgeMetrics,
+      oppositeVisiblePaintLeak,
+      queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
+      pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
+      shaderHasVisibleEdgeSoftFade: /return pow\\(angleCoverage, 0\\.35\\)/.test(shader?.fragmentShader || "")
+    };
+  })()`;
+}
+
 function runtimeAfterOrbitNeighborExpression() {
   return `(async () => {
     const editor = window.modelCleanupEditor;
@@ -1388,7 +2404,7 @@ function runtimeAfterOrbitNeighborExpression() {
       for (let index = 0; index < 18; index += 1) {
         const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
         if (pending && typeof pending.then === "function") {
-          await pending;
+          await Promise.race([pending, delay(400)]);
         }
         if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
           break;
@@ -2068,7 +3084,7 @@ function runtimeLayerAfterUndoSetupExpression() {
       for (let index = 0; index < 12; index += 1) {
         const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
         if (pending && typeof pending.then === "function") {
-          await pending;
+          await Promise.race([pending, delay(400)]);
         }
         if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
           break;
@@ -2325,7 +3341,7 @@ function runtimeThirdLayerAddExpression(layerNumber) {
       for (let index = 0; index < 12; index += 1) {
         const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
         if (pending && typeof pending.then === "function") {
-          await pending;
+          await Promise.race([pending, delay(400)]);
         }
         if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
           break;
