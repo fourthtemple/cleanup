@@ -461,17 +461,25 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
             // until it suddenly discards and leaves a hard angular cutoff.
             float visibleSurfaceCoverage = 1.0;
             if (visibleSurfaceMatched && useVisibleNormalTexture) {
-              float grazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal) * edgeSoftness;
+              float fadeNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintFadeViewNormal);
+              float gateNormalGrazingEdgeAmount = visibleSurfaceGrazingEdgeAmount(paintGateViewNormal);
+              float grazingEdgeAmount = max(fadeNormalGrazingEdgeAmount, gateNormalGrazingEdgeAmount) * edgeSoftness;
               if (grazingEdgeAmount > 0.0) {
-                float softVisibleEdgeCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
+                float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
+                float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintGateViewNormal);
+                float softVisibleEdgeCoverage = min(fadeNormalCoverage, gateNormalCoverage);
                 // DO NOT PAINT ON NON CAMERA FACING SIDES.
                 // Soft visible-edge mode uses continuous angle falloff after
                 // the center fragment has already matched the frontmost
-                // depth/normal buffers. Do not mix local depth-sample coverage
-                // into this center-visible path: even a floored depth mask can
-                // imprint triangle/comb-shaped edge teeth on an already-visible
-                // airbrush stroke. The separate repair path below owns the tiny
-                // visibility-neighborhood check for real projection misses.
+                // depth/normal buffers. The alpha is capped by the geometric
+                // cutoff normal from the camera-facing side only, which makes
+                // the edge ease out before the hard cutoff instead of staying
+                // opaque until individual triangles disappear. Do not mix local
+                // depth-sample coverage into this center-visible path: even a
+                // floored depth mask can imprint triangle/comb-shaped edge
+                // teeth on an already-visible airbrush stroke. The separate
+                // repair path below owns the tiny visibility-neighborhood check
+                // for real projection misses.
                 // Hard mode sets softness to zero, keeping a crisp cutoff.
                 visibleSurfaceCoverage = mix(1.0, softVisibleEdgeCoverage, grazingEdgeAmount);
               }
@@ -498,9 +506,11 @@ export function installTextureAirbrushWebGlMaterialMethods(BirdWeightEditor, dep
               // stretches through a grazing UV island. Keep only clustered
               // Gaussian coverage, then cap it by the same front-facing angle
               // fade used for center-matched soft edges.
+              float fadeNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal);
+              float gateNormalCoverage = visibleSurfaceGrazingAngleCoverage(paintGateViewNormal);
               float clusteredEdgeCoverage = smoothstep(0.18, 0.72, rawEdgeCoverage);
               visibleSurfaceCoverage = clusteredEdgeCoverage
-                * visibleSurfaceGrazingAngleCoverage(paintFadeViewNormal)
+                * min(fadeNormalCoverage, gateNormalCoverage)
                 * edgeSoftness;
               visibleSurfaceMatched = visibleSurfaceCoverage > 0.0;
             }
