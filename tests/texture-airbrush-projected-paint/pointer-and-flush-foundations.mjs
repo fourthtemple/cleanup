@@ -320,6 +320,46 @@ test("editable texture requests bake active WebGL airbrush targets without losin
   assert.equal(editor.textureAirbrushGpuProxies.size, 0);
 });
 
+test("editable texture remains available after a layer composite replaces the visible map", () => {
+  class CloneEditor {}
+  installClonePaintMethods(CloneEditor, { THREE: {} });
+  const editor = new CloneEditor();
+  const baseCanvas = { width: 4, height: 4 };
+  const baseContext = {};
+  const layerCanvas = { width: 4, height: 4 };
+  const layerContext = {};
+  const cloneTexture = { name: "editable clone texture" };
+  const compositeTexture = { name: "material texture layer composite" };
+  const layerTexture = { name: "active paint layer texture" };
+  const material = {
+    map: compositeTexture,
+    userData: {
+      clonePaintCanvas: baseCanvas,
+      clonePaintContext: baseContext,
+      clonePaintTexture: cloneTexture
+    }
+  };
+  let layerTargetEditable = null;
+  const layerEditable = {
+    canvas: layerCanvas,
+    context: layerContext,
+    texture: layerTexture,
+    layerMode: true
+  };
+  editor.texturePaintEditableLayerTarget = (targetMaterial, editable) => {
+    assert.equal(targetMaterial, material);
+    layerTargetEditable = editable;
+    return layerEditable;
+  };
+
+  const editable = editor.editableClonePaintTexture(material);
+
+  assert.equal(layerTargetEditable.canvas, baseCanvas);
+  assert.equal(layerTargetEditable.context, baseContext);
+  assert.equal(layerTargetEditable.texture, cloneTexture);
+  assert.equal(editable, layerEditable);
+});
+
 test("airbrush texture strokes queue coalesced pointer samples without synchronous paint", () => {
   class PaintEditor {}
   installPaintToolMethods(PaintEditor, {});

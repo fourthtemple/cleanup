@@ -1463,11 +1463,11 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
         return null;
       }
       material.userData ||= {};
-      if (material.userData?.clonePaintCanvas && material.userData?.clonePaintContext && material.userData?.clonePaintTexture === material.map) {
+      if (material.userData?.clonePaintCanvas && material.userData?.clonePaintContext) {
         const editable = {
           canvas: material.userData.clonePaintCanvas,
           context: material.userData.clonePaintContext,
-          texture: material.map
+          texture: material.userData.clonePaintTexture || material.map
         };
         return this.texturePaintEditableLayerTarget?.(material, editable) || editable;
       }

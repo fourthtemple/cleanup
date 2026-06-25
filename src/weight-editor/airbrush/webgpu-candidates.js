@@ -17,6 +17,37 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
       if (!event || !this.model) {
         return [];
       }
+      const captureDebug = options.captureCandidateDebug === true || this.textureAirbrushCaptureCandidateDebug === true;
+      const debug = captureDebug
+        ? {
+            directHit: false,
+            directCandidate: false,
+            probeCount: 0,
+            intersectionCount: 0,
+            frontHitCount: 0,
+            candidates: 0,
+            rejects: new Map(),
+            rejectSamples: []
+          }
+        : null;
+      const debugReject = debug
+        ? (reason, detail = null) => {
+            debug.rejects.set(reason, (debug.rejects.get(reason) || 0) + 1);
+            if (debug.rejectSamples.length < 6) {
+              debug.rejectSamples.push({ reason, detail });
+            }
+          }
+        : null;
+      const finish = () => {
+        if (debug) {
+          debug.candidates = candidates.length;
+          this.textureAirbrushLastWebGpuCandidateDebug = {
+            ...debug,
+            rejects: Object.fromEntries(debug.rejects)
+          };
+        }
+        return candidates;
+      };
       const requiresVisibilityMask = options.visibleSurfaceMaskRequired === true
         || options.liveProjectedPaint === true
         || options.requireVisibilityMask === true;
@@ -41,32 +72,42 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
       };
 
       const directHit = this.texturePaintHitForEvent?.(event, "airbrush");
-      addCandidate(this.textureAirbrushWebGpuStrokeCandidateFromHit?.(
+      if (debug) {
+        debug.directHit = Boolean(directHit?.record && directHit?.hit);
+      }
+      const directCandidate = this.textureAirbrushWebGpuStrokeCandidateFromHit?.(
         directHit?.record,
         directHit?.hit,
         event,
-        options
-      ));
+        debugReject ? { ...options, debugReject } : options
+      );
+      if (debug) {
+        debug.directCandidate = Boolean(directCandidate);
+      }
+      addCandidate(directCandidate);
 
       if (!this.canvas || !this.camera || !this.raycaster) {
         if (requiresVisibilityMask) {
           textureAirbrushWebGpuAssignVisibilityMasks(candidates, options);
         }
-        return candidates;
+        return finish();
       }
       if (this.clonePaintTargets?.size && !requiresVisibilityMask) {
-        return candidates;
+        return finish();
       }
       const rect = this.canvas.getBoundingClientRect?.();
       const stroke = textureAirbrushScreenStrokeFromEvent(event, rect, options);
       if (!rect || !stroke) {
-        return candidates;
+        return finish();
       }
       const brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
       const probes = textureAirbrushProbePointsFromStroke(stroke, brushRadius);
+      if (debug) {
+        debug.probeCount = probes.length;
+      }
       const paintRecords = (this.textureAirbrushRecords?.() || this.paintRecords || []).filter((record) => record?.object);
       if (!paintRecords.length) {
-        return candidates;
+        return finish();
       }
       this.model.updateMatrixWorld?.(true);
       this.refreshSkinnedRaycastBounds?.();
@@ -80,7 +121,13 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
         this.pointer.y = -(probe.y / rect.height) * 2 + 1;
         this.raycaster.setFromCamera(this.pointer, this.camera);
         const intersections = this.raycaster.intersectObjects(paintObjects, false);
+        if (debug) {
+          debug.intersectionCount += intersections.length;
+        }
         for (const hit of textureAirbrushFrontIntersections(intersections)) {
+          if (debug) {
+            debug.frontHitCount += 1;
+          }
           const record = recordByObject.get(hit.object);
           const candidate = this.textureAirbrushWebGpuStrokeCandidateFromHit?.(
             record,
@@ -93,11 +140,18 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
               button: event.button ?? 0,
               buttons: event.buttons ?? 1
             },
-            {
-              ...options,
-              strokeStart: null,
-              strokeSegments: null
-            }
+            debugReject
+              ? {
+                  ...options,
+                  debugReject,
+                  strokeStart: null,
+                  strokeSegments: null
+                }
+              : {
+                  ...options,
+                  strokeStart: null,
+                  strokeSegments: null
+                }
           );
           addCandidate(candidate);
         }
@@ -105,7 +159,7 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
       if (requiresVisibilityMask) {
         textureAirbrushWebGpuAssignVisibilityMasks(candidates, options);
       }
-      return candidates;
+      return finish();
     }
   });
 }

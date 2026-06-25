@@ -1376,6 +1376,8 @@ function runtimeAfterOrbitMacroExpression() {
       return originalSetTexturePaintNeighborMode?.(enabled, options);
     };
     window.__airbrushRuntimeValidation = validation;
+    editor.textureAirbrushCaptureCandidateDebug = true;
+    editor.textureAirbrushLastWebGpuCandidateDebug = null;
 
     editor.setTool?.("airbrush");
     editor.setTexturePaintNeighborMode?.(true, { status: false });
@@ -2054,6 +2056,8 @@ function runtimeAfterOrbitNeighborExpression() {
       return changed;
     };
     window.__airbrushRuntimeValidation = validation;
+    editor.textureAirbrushCaptureCandidateDebug = true;
+    editor.textureAirbrushLastWebGpuCandidateDebug = null;
 
     editor.setTool?.("airbrush");
     editor.setTexturePaintNeighborMode?.(true, { status: false });
@@ -2330,6 +2334,7 @@ function runtimeAfterOrbitNeighborExpression() {
     }
     const secondAlphaDeltas = [];
     const secondCoverage = [];
+    const secondCandidateDebug = [];
     let totalSecondVisibleSamples = 0;
     let totalSecondPaintedSamples = 0;
     let previousAlpha = afterFirstAlpha;
@@ -2338,6 +2343,7 @@ function runtimeAfterOrbitNeighborExpression() {
       const seed = neighborSeedForStroke(stroke);
       const coverageBefore = strokeCoverage(stroke, seed);
       await paintStroke(stroke, "second-" + index, { flush: true });
+      secondCandidateDebug.push(editor.textureAirbrushLastWebGpuCandidateDebug || null);
       const nextAlpha = alphaStats();
       const coverageAfter = strokeCoverage(stroke, seed);
       secondAlphaDeltas.push(nextAlpha.count - previousAlpha.count);
@@ -2376,6 +2382,7 @@ function runtimeAfterOrbitNeighborExpression() {
         + (Number(validation.byPhase["orbit-switch"]?.projectionChanged) || 0),
       secondAlphaDelta: afterSecondAlpha.count - afterFirstAlpha.count,
       secondAlphaDeltas,
+      secondCandidateDebug,
       secondCoverage,
       secondPathCoverage: {
         visibleSamples: totalSecondVisibleSamples,

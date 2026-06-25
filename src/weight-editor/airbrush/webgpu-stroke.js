@@ -33,6 +33,48 @@ function clientEventFromPoint(point = null, sourceEvent = null) {
   };
 }
 
+function materialEditableDebug(material = null, editable = null) {
+  const userData = material?.userData || {};
+  const gpuEntry = userData.textureAirbrushGpuTarget || null;
+  const map = material?.map || null;
+  return {
+    hasMaterial: Boolean(material),
+    hasMap: Boolean(map),
+    mapName: map?.name || "",
+    mapImageType: map?.image?.constructor?.name || "",
+    mapImageWidth: map?.image?.width || map?.image?.naturalWidth || 0,
+    mapImageHeight: map?.image?.height || map?.image?.naturalHeight || 0,
+    hasCloneCanvas: Boolean(userData.clonePaintCanvas),
+    hasCloneContext: Boolean(userData.clonePaintContext),
+    cloneTextureMatchesMap: Boolean(userData.clonePaintTexture && userData.clonePaintTexture === map),
+    hasGpuEntry: Boolean(gpuEntry),
+    gpuEntryMatchesMap: Boolean(gpuEntry?.target?.texture && map === gpuEntry.target.texture),
+    gpuSourceName: gpuEntry?.sourceTexture?.name || "",
+    gpuSourceImageType: gpuEntry?.sourceTexture?.image?.constructor?.name || "",
+    gpuSourceImageWidth: gpuEntry?.sourceTexture?.image?.width || gpuEntry?.sourceTexture?.image?.naturalWidth || 0,
+    gpuSourceImageHeight: gpuEntry?.sourceTexture?.image?.height || gpuEntry?.sourceTexture?.image?.naturalHeight || 0,
+    hasEditable: Boolean(editable),
+    hasEditableCanvas: Boolean(editable?.canvas),
+    hasEditableContext: Boolean(editable?.context),
+    hasEditableTexture: Boolean(editable?.texture)
+  };
+}
+
+function hitDebug(record = null, hit = null) {
+  const uv = hit?.uv || null;
+  return {
+    hasRecord: Boolean(record),
+    objectName: record?.object?.name || hit?.object?.name || "",
+    hasHit: Boolean(hit),
+    hasUv: Boolean(uv),
+    uvX: Number.isFinite(uv?.x) ? uv.x : null,
+    uvY: Number.isFinite(uv?.y) ? uv.y : null,
+    distance: Number.isFinite(hit?.distance) ? hit.distance : null,
+    faceIndex: Number.isInteger(hit?.faceIndex) ? hit.faceIndex : null,
+    materialIndex: Number.isInteger(hit?.face?.materialIndex) ? hit.face.materialIndex : null
+  };
+}
+
 export function textureAirbrushWebGpuTextureRadiusPixels(editor = null, editable = null, options = {}) {
   const canvas = editable?.canvas || null;
   const maxTextureSize = Math.max(1, canvas?.width || 1, canvas?.height || 1);
@@ -74,11 +116,13 @@ export function textureAirbrushWebGpuStrokeEstimate(candidate = null) {
 export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, record = null, hit = null, event = null, options = {}) {
   const hitUv = hit?.uv || null;
   if (!record || !hitUv) {
+    options.debugReject?.("missing-record-or-uv", hitDebug(record, hit));
     return null;
   }
   const material = editor?.clonePaintMaterialForHit?.(record, hit);
   const editable = editor?.editableClonePaintTexture?.(material);
   if (!material || !editable?.canvas || !editable?.texture) {
+    options.debugReject?.("missing-material-or-editable", materialEditableDebug(material, editable));
     return null;
   }
 
@@ -94,6 +138,11 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     material,
     materialIndex
   ) === false) {
+    options.debugReject?.("neighbor-rejected", {
+      ...hitDebug(record, hit),
+      materialName: material?.name || "",
+      materialIndex
+    });
     return null;
   }
   const center = target?.vertices?.size
@@ -105,6 +154,10 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     )
     : editor?.clonePaintPixelFromUv?.(hitUv, editable.canvas, editable.texture, { wrap: true });
   if (!center || !Number.isFinite(center.x) || !Number.isFinite(center.y)) {
+    options.debugReject?.("missing-texture-center", {
+      ...hitDebug(record, hit),
+      editable: materialEditableDebug(material, editable)
+    });
     return null;
   }
 
