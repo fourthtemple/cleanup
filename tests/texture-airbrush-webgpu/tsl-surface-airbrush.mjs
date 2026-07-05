@@ -261,16 +261,16 @@ test("TSL surface airbrush evaluates coverage in captured hit-screen space", () 
   );
 });
 
-test("TSL surface airbrush copies the base before clipped raster writes", () => {
+test("TSL surface airbrush keeps a direct stroke-start base for mask composites", () => {
   const body = functionSource("copySurfaceBaseTexture");
+  const directBaseBody = functionSource("surfaceStrokeStartBaseTexture");
   const strokeBaseBody = functionSource("ensureSurfaceStrokeBaseTexture");
+  const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
   const copyMaterialBody = functionSource("createTextureCopyMaterial");
   const textureSettingsBody = functionSource("copyTextureSettings");
   assert.match(body, /typeof renderer\.copyTextureToTexture !== "function"/);
-  assert.match(body, /const safeLiveTargetCopy = Boolean\(/);
-  assert.match(body, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);
-  assert.match(body, /surfaceAirbrushTextureIsLiveTarget\(sourceTexture\)/);
-  assert.match(body, /!safeLiveTargetCopy && params\?\.has\("debugAirbrushNativeCopy"\) !== true/);
+  assert.doesNotMatch(body, /const safeLiveTargetCopy = Boolean\(/);
+  assert.match(body, /debugAirbrushNativeCopy/);
   assert.match(body, /texturePaintTslSurfaceLastBaseCopyError = "missing-copyTextureToTexture"/);
   assert.match(body, /texturePaintTslSurfaceLastBaseCopyError = "native-copy-disabled"/);
   assert.match(body, /const sourceNeedsFlip = textureNodeAppliesFlipY\(sourceTexture\)/);
@@ -279,6 +279,14 @@ test("TSL surface airbrush copies the base before clipped raster writes", () => 
   assert.match(body, /textureLikeSize\(sourceTexture\)/);
   assert.match(body, /renderer\.copyTextureToTexture\(sourceTexture, target\.texture\)/);
   assert.match(body, /return false/);
+  assert.match(directBaseBody, /function surfaceStrokeStartBaseTexture/);
+  assert.match(directBaseBody, /surfaceAirbrushTextureIsLiveTarget\(sourceTexture\)/);
+  assert.match(directBaseBody, /!surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);
+  assert.match(directBaseBody, /surfaceAirbrushStableTextureFromLiveTarget\(sourceTexture\) \|\| sourceTexture/);
+  assert.match(directBaseBody, /return sourceTexture/);
+  assert.match(runBody, /cache\.strokeBaseTexture = surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
+  assert.match(runBody, /texturePaintTslSurfaceLastStrokeBaseCopy = cache\.strokeBaseTexture === sourceTexture[\s\S]*?\? "direct-source"[\s\S]*?: "stable-source"/);
+  assert.doesNotMatch(runBody, /cache\.strokeBaseTexture = ensureSurfaceStrokeBaseTexture/);
   assert.match(strokeBaseBody, /cache\.strokeBaseTarget = createRenderTarget/);
   assert.match(strokeBaseBody, /surfaceAirbrushTextureIsLiveTarget\(sourceTexture\)/);
   assert.match(strokeBaseBody, /surfaceAirbrushStableTextureFromLiveTarget\(sourceTexture\)/);
@@ -803,7 +811,7 @@ test("TSL layer airbrush keeps empty layer writes in base texture coordinates", 
   assert.match(body, /const layerCoordinateReferenceTexture = layerMode[\s\S]*?layerBaseTexture \|\| materialOriginalMap \|\| material\.map \|\| editable\.texture/);
   assert.match(body, /let coordinateReferenceTexture = layerMode[\s\S]*?\(layerCoordinateReferenceTexture \|\| referenceTexture\)/);
   assert.match(body, /ensureSurfaceAirbrushCache\(editor, editable, coordinateReferenceTexture \|\| referenceTexture, width, height\)/);
-  assert.match(body, /ensureSurfaceStrokeBaseTexture\([\s\S]*?coordinateReferenceTexture \|\| referenceTexture,[\s\S]*?width,[\s\S]*?height/);
+  assert.match(body, /cache\.strokeBaseTexture = surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
   assert.match(body, /texturePaintTslSurfaceDisplayFlipY = \(coordinateReferenceTexture \|\| referenceTexture\)\?\.flipY === true/);
   assert.match(body, /renderSurfaceLayerComposite\([\s\S]*?displayBaseTexture \|\| coordinateReferenceTexture \|\| referenceTexture/);
   assert.match(body, /renderSurfaceLayerComposite\([\s\S]*?\{ alphaFallback: true \}/);
@@ -977,6 +985,7 @@ test("TSL live strokes use a max-blended stroke mask to cap opacity", () => {
   assert.match(body, /cache\.strokeBaseTexture = surfaceAirbrushTransparentTexture\(\)/);
   assert.match(body, /copiedBaseTexture = transparentBaseTexture[\s\S]*?\? false[\s\S]*?: copySurfaceBaseTexture\(renderer, baseTexture, target, cache\)/);
   assert.match(body, /clearedTransparentBaseTexture = clearRenderTargetTransparent\(renderer, target, cache\)/);
+  assert.match(body, /texturePaintTslSurfaceLastStrokeBaseCopy = cache\.strokeBaseTexture === sourceTexture[\s\S]*?\? "direct-source"[\s\S]*?: "stable-source"/);
   assert.match(compositeRunBody, /const clearTransparentBase = options\.emptyLayerSource === true/);
   assert.match(compositeRunBody, /clearRenderTargetTransparent\(renderer, target, cache\)/);
   assert.doesNotMatch(body, /const renderPaintSegments = blendOntoBaseTarget \? segments : paintSegments/);
@@ -1222,9 +1231,9 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.match(body, /tslSurfaceStrokeSourceOwner: Boolean\(strokeSourceOwner\),[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /tslSurfaceStrokeMaskCleared: false,[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /cache\.strokeBaseTexture = null/);
-  assert.match(body, /cache\.strokeBaseTexture = ensureSurfaceStrokeBaseTexture/);
+  assert.match(body, /cache\.strokeBaseTexture = surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
   assert.match(body, /const baseTexture = cache\.strokeBaseTexture \|\| sourceTexture/);
-  assert.doesNotMatch(strokeBaseBody, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)\) \{\s*return sourceTexture;/);
+  assert.match(strokeBaseBody, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);
   assert.doesNotMatch(body, /direct-paint-target/);
 });
 
@@ -1247,16 +1256,25 @@ test("TSL projected primary expands UV gutters instead of leaving seam gutters u
 test("TSL surface airbrush does not seed a new stroke from a stale live target", () => {
   assert.match(source, /function surfaceAirbrushCacheOwnsTexture/);
   assert.match(source, /function surfaceAirbrushStableTextureFromLiveTarget/);
+  assert.match(source, /function surfaceAirbrushDisplayedPaintSourceTexture/);
   assert.match(source, /function surfaceAirbrushReferenceTexture/);
   const ownsBody = functionSource("surfaceAirbrushCacheOwnsTexture");
+  const displayedSourceBody = functionSource("surfaceAirbrushDisplayedPaintSourceTexture");
   const originalMapBody = functionSource("surfaceEditableOriginalMap");
   const referenceBody = functionSource("surfaceAirbrushReferenceTexture");
   const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
   assert.match(ownsBody, /cache\.dilationTargets/);
   assert.match(ownsBody, /cache\.strokeBaseTarget\?\.texture === texture/);
   assert.match(originalMapBody, /textureAirbrushWebGpuCanvasMap/);
+  assert.match(displayedSourceBody, /texturePaintTslSurfaceDisplaySourceTexture/);
+  assert.match(displayedSourceBody, /materialUserData\.clonePaintTexture/);
+  assert.match(displayedSourceBody, /editable\?\.texture/);
+  assert.match(displayedSourceBody, /surfaceAirbrushTextureIsLiveTarget\(texture\)/);
+  assert.match(displayedSourceBody, /surfaceAirbrushCacheOwnsTexture\(cache, texture\)/);
   assert.doesNotMatch(originalMapBody, /hasOwnProperty\.call\(userData, "clonePaintOriginalMap"\)\) \{\s*return userData\.clonePaintOriginalMap \|\| null;/);
   assert.doesNotMatch(referenceBody, /displayIsCurrentCacheTarget/);
+  assert.match(referenceBody, /const displayedPaintSource = surfaceAirbrushDisplayedPaintSourceTexture\(material, editable, cache\)/);
+  assert.match(referenceBody, /for \(const texture of \[\s*displayedPaintSource,\s*originalMap,/);
   assert.match(referenceBody, /!surfaceAirbrushCacheOwnsTexture\(cache, displayTexture\)/);
   assert.match(referenceBody, /!surfaceAirbrushTextureIsLiveTarget\(displayTexture\)[\s\S]*?\? displayTexture[\s\S]*?: null/);
   assert.match(runBody, /surfaceAirbrushReferenceTexture\(material, editable, materialOriginalMap, cache\)/);

@@ -733,6 +733,28 @@ function surfaceAirbrushStableTextureFromLiveTarget(texture = null) {
   return null;
 }
 
+function surfaceAirbrushDisplayedPaintSourceTexture(material = null, editable = null, cache = null) {
+  if (!cache) {
+    return null;
+  }
+  const materialUserData = material?.userData || {};
+  const displayTexture = material?.map || null;
+  for (const texture of [
+    displayTexture?.userData?.texturePaintTslSurfaceDisplaySourceTexture,
+    materialUserData.clonePaintTexture,
+    editable?.texture
+  ]) {
+    if (
+      texture
+      && surfaceAirbrushTextureIsLiveTarget(texture)
+      && surfaceAirbrushCacheOwnsTexture(cache, texture)
+    ) {
+      return texture;
+    }
+  }
+  return null;
+}
+
 function surfaceAirbrushTextureAppearsBound(editor = null, texture = null) {
   if (!editor || !texture) {
     return surfaceAirbrushTextureIsLiveTarget(texture);
@@ -1871,9 +1893,11 @@ function surfaceEditableOriginalMap(material = null, editable = null, references
 function surfaceAirbrushReferenceTexture(material = null, editable = null, originalMap = null, cache = null) {
   const displayTexture = material?.map || editable?.texture || null;
   const editableTexture = editable?.texture || null;
+  const displayedPaintSource = surfaceAirbrushDisplayedPaintSourceTexture(material, editable, cache);
   const displayStableTexture = surfaceAirbrushStableTextureFromLiveTarget(displayTexture);
   const editableStableTexture = surfaceAirbrushStableTextureFromLiveTarget(editableTexture);
   for (const texture of [
+    displayedPaintSource,
     originalMap,
     displayStableTexture,
     editableStableTexture,
@@ -4232,16 +4256,10 @@ function copySurfaceBaseTexture(renderer = null, sourceTexture = null, target = 
     cache && (cache.texturePaintTslSurfaceLastBaseCopyError = "missing-copyTextureToTexture");
     return false;
   }
-  const params = typeof window !== "undefined"
-    ? new URLSearchParams(window.location?.search || "")
-    : null;
-  const safeLiveTargetCopy = Boolean(
-    cache
-    && surfaceAirbrushCacheOwnsTexture(cache, sourceTexture)
-    && surfaceAirbrushTextureIsLiveTarget(sourceTexture)
-    && sourceTexture !== target.texture
-  );
-  if (!safeLiveTargetCopy && params?.has("debugAirbrushNativeCopy") !== true) {
+  if (
+    typeof window === "undefined"
+    || !new URLSearchParams(window.location?.search || "").has("debugAirbrushNativeCopy")
+  ) {
     cache && (cache.texturePaintTslSurfaceLastBaseCopyError = "native-copy-disabled");
     return false;
   }
@@ -4272,6 +4290,16 @@ function copySurfaceBaseTexture(renderer = null, sourceTexture = null, target = 
     cache && (cache.texturePaintTslSurfaceLastBaseCopyError = String(error?.message || error || ""));
     return false;
   }
+}
+
+function surfaceStrokeStartBaseTexture(cache = null, sourceTexture = null) {
+  if (!sourceTexture) {
+    return null;
+  }
+  if (surfaceAirbrushTextureIsLiveTarget(sourceTexture) && !surfaceAirbrushCacheOwnsTexture(cache, sourceTexture)) {
+    return surfaceAirbrushStableTextureFromLiveTarget(sourceTexture) || sourceTexture;
+  }
+  return sourceTexture;
 }
 
 function ensureSurfaceStrokeBaseTexture(
@@ -7096,14 +7124,7 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
     : [];
   const prewarmBaseTexture = layerSourceEmpty
     ? surfaceAirbrushTransparentTexture()
-    : ensureSurfaceStrokeBaseTexture(
-        renderer,
-        cache,
-        sourceTexture,
-        coordinateReferenceTexture || referenceTexture,
-        width,
-        height
-      );
+    : surfaceStrokeStartBaseTexture(cache, sourceTexture);
   const prewarmTargetIndex = -1;
   const prewarmTarget = ensureSurfacePrewarmTarget(
     cache,
@@ -7679,14 +7700,10 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
         ? "transparent-layer"
         : "transparent-layer-continuation";
     } else {
-      cache.strokeBaseTexture = ensureSurfaceStrokeBaseTexture(
-        renderer,
-        cache,
-        sourceTexture,
-        coordinateReferenceTexture || referenceTexture,
-        width,
-        height
-      );
+      cache.strokeBaseTexture = surfaceStrokeStartBaseTexture(cache, sourceTexture);
+      cache.texturePaintTslSurfaceLastStrokeBaseCopy = cache.strokeBaseTexture === sourceTexture
+        ? "direct-source"
+        : "stable-source";
       cache.strokeBaseWasEmptyLayer = false;
       cache.strokeBaseEmptyLayerOwner = null;
     }
