@@ -678,10 +678,22 @@ function surfaceAirbrushCacheOwnsTexture(cache = null, texture = null) {
   if (cache.strokeMaskTarget?.texture === texture) {
     return true;
   }
+  if (cache.prewarmStrokeMaskTarget?.texture === texture) {
+    return true;
+  }
+  if (cache.prewarmTarget?.texture === texture) {
+    return true;
+  }
   if (cache.strokeCompositeTarget?.texture === texture) {
     return true;
   }
   if (cache.displayTarget?.texture === texture) {
+    return true;
+  }
+  if ((cache.displayTargets || []).some((target) => target?.texture === texture)) {
+    return true;
+  }
+  if (cache.prewarmDisplayTarget?.texture === texture) {
     return true;
   }
   if (cache.layerCompositeTarget?.texture === texture) {
@@ -694,6 +706,17 @@ function surfaceAirbrushCacheOwnsTexture(cache = null, texture = null) {
     return true;
   }
   return false;
+}
+
+function surfaceAirbrushCachePaintTargetIndex(cache = null, texture = null) {
+  if (!cache || !texture) {
+    return -1;
+  }
+  return (cache.targets || []).findIndex((target) => target?.texture === texture);
+}
+
+function surfaceAirbrushCanUseDirectStrokeBase(cache = null, texture = null) {
+  return surfaceAirbrushCachePaintTargetIndex(cache, texture) >= 0;
 }
 
 function markSurfaceAirbrushResourceRetired(resource = null) {
@@ -2260,26 +2283,70 @@ function bindSurfaceDisplayTextureMetadata(
   return true;
 }
 
-function ensureSurfaceDisplayTarget(cache = null, width = 1, height = 1, referenceTexture = null) {
+function ensureSurfaceDisplayTarget(cache = null, width = 1, height = 1, referenceTexture = null, options = {}) {
+  if (!cache) {
+    return null;
+  }
+  const avoidTextures = new Set(
+    (Array.isArray(options.avoidTextures) ? options.avoidTextures : [])
+      .filter(Boolean)
+  );
+  const targets = cache.displayTargets ||= [];
+  if (cache.displayTarget && !targets.includes(cache.displayTarget)) {
+    targets.push(cache.displayTarget);
+  }
+  for (let index = targets.length - 1; index >= 0; index -= 1) {
+    const target = targets[index];
+    if (!target?.texture || target.width !== width || target.height !== height) {
+      retireSurfaceAirbrushResource(cache, target);
+      targets.splice(index, 1);
+    }
+  }
+  let target = targets.find((candidate) => (
+    candidate?.texture && !avoidTextures.has(candidate.texture)
+  )) || null;
+  if (!target) {
+    if (targets.length < 4) {
+      target = createRenderTarget(width, height, referenceTexture);
+      targets.push(target);
+    } else {
+      target = targets.find((candidate) => candidate?.texture && !avoidTextures.has(candidate.texture))
+        || targets.find((candidate) => candidate?.texture)
+        || null;
+    }
+  }
+  if (!target?.texture) {
+    cache.displayTarget = null;
+    return null;
+  }
+  cache.displayTarget = target;
+  copyTextureSettings(target.texture, referenceTexture);
+  target.texture.name = "texture-paint-tsl-surface-airbrush-display";
+  target.texture.flipY = false;
+  bindSurfaceDisplayTextureMetadata(target.texture, null, referenceTexture, null);
+  return target;
+}
+
+function ensureSurfacePrewarmDisplayTarget(cache = null, width = 1, height = 1, referenceTexture = null) {
   if (!cache) {
     return null;
   }
   if (
-    !cache.displayTarget
-    || cache.displayTarget.width !== width
-    || cache.displayTarget.height !== height
+    !cache.prewarmDisplayTarget
+    || cache.prewarmDisplayTarget.width !== width
+    || cache.prewarmDisplayTarget.height !== height
   ) {
-    retireSurfaceAirbrushResource(cache, cache.displayTarget);
-    cache.displayTarget = createRenderTarget(width, height, referenceTexture);
+    retireSurfaceAirbrushResource(cache, cache.prewarmDisplayTarget);
+    cache.prewarmDisplayTarget = createRenderTarget(width, height, referenceTexture);
   } else {
-    copyTextureSettings(cache.displayTarget.texture, referenceTexture);
+    copyTextureSettings(cache.prewarmDisplayTarget.texture, referenceTexture);
   }
-  if (cache.displayTarget?.texture) {
-    cache.displayTarget.texture.name = "texture-paint-tsl-surface-airbrush-display";
-    cache.displayTarget.texture.flipY = false;
-    bindSurfaceDisplayTextureMetadata(cache.displayTarget.texture, null, referenceTexture, null);
+  if (cache.prewarmDisplayTarget?.texture) {
+    cache.prewarmDisplayTarget.texture.name = "texture-paint-tsl-surface-airbrush-prewarm-display";
+    cache.prewarmDisplayTarget.texture.flipY = false;
+    bindSurfaceDisplayTextureMetadata(cache.prewarmDisplayTarget.texture, null, referenceTexture, null);
   }
-  return cache.displayTarget?.texture ? cache.displayTarget : null;
+  return cache.prewarmDisplayTarget?.texture ? cache.prewarmDisplayTarget : null;
 }
 
 function renderSurfaceDisplayTexture(
@@ -2289,12 +2356,15 @@ function renderSurfaceDisplayTexture(
   referenceTexture = null,
   width = 1,
   height = 1,
-  originalMap = null
+  originalMap = null,
+  options = {}
 ) {
   if (!renderer || !cache || !sourceTexture || !cache.copyMaterial || !cache.copyScene) {
     return null;
   }
-  const target = ensureSurfaceDisplayTarget(cache, width, height, referenceTexture || sourceTexture);
+  const target = options.target || ensureSurfaceDisplayTarget(cache, width, height, referenceTexture || sourceTexture, {
+    avoidTextures: options.avoidTextures
+  });
   if (!target?.texture || !updateTextureCopyMaterial(cache.copyMaterial, sourceTexture)) {
     return null;
   }
@@ -3704,9 +3774,67 @@ function ensureSurfaceStrokeMaskTarget(cache = null, width = 1, height = 1) {
   return cache.strokeMaskTarget?.texture ? cache.strokeMaskTarget : null;
 }
 
-function clearSurfaceStrokeMaskTarget(renderer = null, cache = null) {
-  const target = cache?.strokeMaskTarget || null;
-  if (!renderer || !cache || !target) {
+function ensureSurfacePrewarmStrokeMaskTarget(cache = null, width = 1, height = 1) {
+  if (!cache) {
+    return null;
+  }
+  const targetWidth = Math.max(
+    1,
+    Math.round(Math.max(1, Math.floor(Number(width) || 1)) * Math.min(
+      1,
+      MAX_TSL_SURFACE_STROKE_MASK_SIZE / Math.max(1, Math.max(
+        Math.floor(Number(width) || 1),
+        Math.floor(Number(height) || 1)
+      ))
+    ))
+  );
+  const targetHeight = Math.max(
+    1,
+    Math.round(Math.max(1, Math.floor(Number(height) || 1)) * Math.min(
+      1,
+      MAX_TSL_SURFACE_STROKE_MASK_SIZE / Math.max(1, Math.max(
+        Math.floor(Number(width) || 1),
+        Math.floor(Number(height) || 1)
+      ))
+    ))
+  );
+  if (
+    !cache.prewarmStrokeMaskTarget
+    || cache.prewarmStrokeMaskTarget.width !== targetWidth
+    || cache.prewarmStrokeMaskTarget.height !== targetHeight
+    || cache.prewarmStrokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceWidth !== Math.max(1, Math.floor(Number(width) || 1))
+    || cache.prewarmStrokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceHeight !== Math.max(1, Math.floor(Number(height) || 1))
+  ) {
+    retireSurfaceAirbrushResource(cache, cache.prewarmStrokeMaskTarget);
+    cache.prewarmStrokeMaskTarget = createStrokeMaskTarget(width, height);
+    cache.prewarmStrokeMaskTarget.texture.name = "texture-paint-tsl-surface-airbrush-prewarm-stroke-mask";
+  }
+  return cache.prewarmStrokeMaskTarget?.texture ? cache.prewarmStrokeMaskTarget : null;
+}
+
+function ensureSurfacePrewarmTarget(cache = null, width = 1, height = 1, referenceTexture = null) {
+  if (!cache) {
+    return null;
+  }
+  if (
+    !cache.prewarmTarget
+    || cache.prewarmTarget.width !== width
+    || cache.prewarmTarget.height !== height
+  ) {
+    retireSurfaceAirbrushResource(cache, cache.prewarmTarget);
+    cache.prewarmTarget = createRenderTarget(width, height, referenceTexture);
+  } else {
+    copyTextureSettings(cache.prewarmTarget.texture, referenceTexture);
+  }
+  if (cache.prewarmTarget?.texture) {
+    cache.prewarmTarget.texture.name = "texture-paint-tsl-surface-airbrush-prewarm";
+    cache.prewarmTarget.texture.flipY = false;
+  }
+  return cache.prewarmTarget?.texture ? cache.prewarmTarget : null;
+}
+
+function clearSurfaceMaskTarget(renderer = null, target = null) {
+  if (!renderer || !target) {
     return false;
   }
   const previousTarget = typeof renderer.getRenderTarget === "function"
@@ -3731,8 +3859,19 @@ function clearSurfaceStrokeMaskTarget(renderer = null, cache = null) {
       renderer.setClearColor?.(previousClearColor, previousClearAlpha);
     }
   }
-  cache.strokeMaskInitialized = true;
   return true;
+}
+
+function clearSurfaceStrokeMaskTarget(renderer = null, cache = null) {
+  const cleared = clearSurfaceMaskTarget(renderer, cache?.strokeMaskTarget || null);
+  if (cleared && cache) {
+    cache.strokeMaskInitialized = true;
+  }
+  return cleared;
+}
+
+function clearSurfacePrewarmStrokeMaskTarget(renderer = null, cache = null) {
+  return clearSurfaceMaskTarget(renderer, cache?.prewarmStrokeMaskTarget || null);
 }
 
 function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, options = {}) {
@@ -4940,7 +5079,12 @@ function disposeSurfaceAirbrushCache(cache = null) {
   retireSurfaceAirbrushResource(cache, cache.uvOccupancyTarget);
   retireSurfaceAirbrushResource(cache, cache.visibleTarget);
   retireSurfaceAirbrushResource(cache, cache.maskTarget);
+  retireSurfaceAirbrushResource(cache, cache.displayTarget);
+  retireSurfaceAirbrushResources(cache, cache.displayTargets);
+  retireSurfaceAirbrushResource(cache, cache.prewarmDisplayTarget);
   retireSurfaceAirbrushResource(cache, cache.strokeMaskTarget);
+  retireSurfaceAirbrushResource(cache, cache.prewarmStrokeMaskTarget);
+  retireSurfaceAirbrushResource(cache, cache.prewarmTarget);
   retireSurfaceAirbrushResource(cache, cache.strokeCompositeTarget);
   retireSurfaceAirbrushResources(cache, cache.layerCompositeTargets);
   if (!cache.layerCompositeTargets?.includes?.(cache.layerCompositeTarget)) {
@@ -5284,11 +5428,15 @@ function ensureSurfaceAirbrushCache(editor = null, editable = null, referenceTex
     cache?.layerCompositeMesh?.material?.dispose?.();
     cache?.layerCompositeMaterial?.dispose?.();
     retireSurfaceAirbrushResource(cache, cache?.displayTarget);
+    retireSurfaceAirbrushResources(cache, cache?.displayTargets);
+    retireSurfaceAirbrushResource(cache, cache?.prewarmDisplayTarget);
     retireSurfaceAirbrushResources(cache, cache?.layerCompositeTargets);
     if (!cache?.layerCompositeTargets?.includes?.(cache?.layerCompositeTarget)) {
       retireSurfaceAirbrushResource(cache, cache?.layerCompositeTarget);
     }
     retireSurfaceAirbrushResource(cache, cache?.strokeMaskTarget);
+    retireSurfaceAirbrushResource(cache, cache?.prewarmStrokeMaskTarget);
+    retireSurfaceAirbrushResource(cache, cache?.prewarmTarget);
     retireSurfaceAirbrushResource(cache, cache?.strokeCompositeTarget);
     for (const entry of cache?.uvOccupancyMeshes || []) {
       entry.mesh?.geometry?.dispose?.();
@@ -5328,6 +5476,8 @@ function ensureSurfaceAirbrushCache(editor = null, editable = null, referenceTex
       strokeCompositeMaterial: null,
       strokeCompositeTarget: null,
       displayTarget: null,
+      displayTargets: [],
+      prewarmDisplayTarget: null,
       transparentClearScene: null,
       transparentClearMesh: null,
       transparentClearMaterial: null,
@@ -5336,6 +5486,8 @@ function ensureSurfaceAirbrushCache(editor = null, editable = null, referenceTex
       strokeBaseWasEmptyLayer: false,
       strokeBaseEmptyLayerOwner: null,
       strokeMaskTarget: null,
+      prewarmStrokeMaskTarget: null,
+      prewarmTarget: null,
       strokeMaskInitialized: false,
       projectedMesh: null,
       projectedMaterial: null,
@@ -7017,10 +7169,15 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
         width,
         height
       );
-  const prewarmTargetIndex = surfaceTargetIndexForBaseTexture(cache, prewarmBaseTexture);
-  const prewarmTarget = cache.targets?.[prewarmTargetIndex] || cache.targets?.[0] || null;
+  const prewarmTargetIndex = -1;
+  const prewarmTarget = ensureSurfacePrewarmTarget(
+    cache,
+    width,
+    height,
+    coordinateReferenceTexture || referenceTexture || prewarmBaseTexture
+  );
   const prewarmWriteTexture = prewarmTarget?.texture || prewarmBaseTexture;
-  const prewarmStrokeMaskTarget = ensureSurfaceStrokeMaskTarget(cache, width, height);
+  const prewarmStrokeMaskTarget = ensureSurfacePrewarmStrokeMaskTarget(cache, width, height);
   const prewarmRasterWriteTexture = prewarmStrokeMaskTarget?.texture || prewarmWriteTexture;
   const prewarmRasterWriteSize = textureLikeSize(prewarmRasterWriteTexture);
   const uvOccupancyTexture = ensureUvOccupancyMask(
@@ -7123,9 +7280,9 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
       if (cache.projectedMesh) {
         cache.projectedMesh.visible = false;
       }
-      const strokeMaskTarget = prewarmStrokeMaskTarget || ensureSurfaceStrokeMaskTarget(cache, width, height);
+      const strokeMaskTarget = prewarmStrokeMaskTarget || ensureSurfacePrewarmStrokeMaskTarget(cache, width, height);
       if (strokeMaskTarget?.texture) {
-        clearSurfaceStrokeMaskTarget(renderer, cache);
+        clearSurfacePrewarmStrokeMaskTarget(renderer, cache);
         renderer.setRenderTarget(strokeMaskTarget);
         renderer.autoClear = false;
       } else {
@@ -7193,13 +7350,20 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
           coordinateReferenceTexture || referenceTexture,
           width,
           height,
-          materialOriginalMap
+          materialOriginalMap,
+          {
+            target: ensureSurfacePrewarmDisplayTarget(
+              cache,
+              width,
+              height,
+              coordinateReferenceTexture || referenceTexture || (dilationResult || prewarmTarget).texture
+            )
+          }
 	        );
 	        renderedDisplayPass = Boolean(displayTarget?.texture);
-	      }
+      }
       if (strokeMaskTarget?.texture) {
-        clearSurfaceStrokeMaskTarget(renderer, cache);
-        cache.strokeMaskInitialized = false;
+        clearSurfacePrewarmStrokeMaskTarget(renderer, cache);
       }
 	    } finally {
       if (cache.projectedMesh && previousProjectedVisible !== undefined) {
@@ -7579,6 +7743,11 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       cache.texturePaintTslSurfaceLastStrokeBaseCopy = layerSourceEmpty
         ? "transparent-layer"
         : "transparent-layer-continuation";
+    } else if (surfaceAirbrushCanUseDirectStrokeBase(cache, sourceTexture)) {
+      cache.strokeBaseTexture = sourceTexture;
+      cache.strokeBaseWasEmptyLayer = false;
+      cache.strokeBaseEmptyLayerOwner = null;
+      cache.texturePaintTslSurfaceLastStrokeBaseCopy = "direct-paint-target";
     } else {
       cache.strokeBaseTexture = ensureSurfaceStrokeBaseTexture(
         renderer,
@@ -8052,7 +8221,10 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       referenceTexture || finalTarget.texture,
       width,
       height,
-      originalMap
+      originalMap,
+      {
+        avoidTextures: [previousMaterialMap]
+      }
     );
     if (displayTarget?.texture) {
       displayTexture = displayTarget.texture;

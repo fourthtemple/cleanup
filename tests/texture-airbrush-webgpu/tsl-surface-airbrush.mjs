@@ -266,6 +266,7 @@ test("TSL surface airbrush evaluates coverage in captured hit-screen space", () 
 test("TSL surface airbrush copies the base before clipped raster writes", () => {
   const body = functionSource("copySurfaceBaseTexture");
   const strokeBaseBody = functionSource("ensureSurfaceStrokeBaseTexture");
+  const directBaseBody = functionSource("surfaceAirbrushCanUseDirectStrokeBase");
   const copyMaterialBody = functionSource("createTextureCopyMaterial");
   const textureSettingsBody = functionSource("copyTextureSettings");
   assert.match(body, /typeof renderer\.copyTextureToTexture !== "function"/);
@@ -283,6 +284,7 @@ test("TSL surface airbrush copies the base before clipped raster writes", () => 
   assert.match(strokeBaseBody, /surfaceAirbrushStableTextureFromLiveTarget\(sourceTexture\)/);
   assert.match(strokeBaseBody, /copySurfaceBaseTexture\(renderer, sourceTexture, cache\.strokeBaseTarget, cache\)/);
   assert.match(strokeBaseBody, /texturePaintTslSurfaceLastStrokeBaseCopy = copiedBaseTexture \? "gpu-copy" : "shader-copy"/);
+  assert.match(directBaseBody, /surfaceAirbrushCachePaintTargetIndex\(cache, texture\) >= 0/);
   assert.match(textureSettingsBody, /targetTexture\.colorSpace = referenceTexture\.colorSpace/);
   assert.match(textureSettingsBody, /targetTexture\.flipY = false/);
   assert.match(textureSettingsBody, /texturePaintTslSurfaceDisplayFlipY = referenceTexture\.flipY === true/);
@@ -738,25 +740,56 @@ test("TSL surface airbrush prewarms the same seam-bleed live source raster", () 
   assert.match(body, /const layerCoordinateReferenceTexture = layerMode[\s\S]*?layerBaseTexture \|\| materialOriginalMap \|\| material\.map \|\| editable\.texture/);
   assert.match(body, /ensureSurfaceAirbrushCache\(editor, editable, coordinateReferenceTexture \|\| referenceTexture, width, height\)/);
   assert.match(body, /const prewarmBaseTexture = layerSourceEmpty[\s\S]*?surfaceAirbrushTransparentTexture\(\)[\s\S]*?: sourceTexture/);
-  assert.match(body, /const prewarmTargetIndex = surfaceTargetIndexForBaseTexture\(cache, prewarmBaseTexture\)/);
-  assert.match(body, /const prewarmTarget = cache\.targets\?\.\[prewarmTargetIndex\] \|\| cache\.targets\?\.\[0\] \|\| null/);
+  assert.match(body, /const prewarmTargetIndex = -1/);
+  assert.match(body, /const prewarmTarget = ensureSurfacePrewarmTarget\([\s\S]*?cache,[\s\S]*?width,[\s\S]*?height,[\s\S]*?coordinateReferenceTexture \|\| referenceTexture \|\| prewarmBaseTexture[\s\S]*?\)/);
   assert.match(body, /const prewarmWriteTexture = prewarmTarget\?\.texture \|\| prewarmBaseTexture/);
-  assert.match(body, /const prewarmStrokeMaskTarget = ensureSurfaceStrokeMaskTarget\(cache, width, height\)/);
+  assert.match(body, /const prewarmStrokeMaskTarget = ensureSurfacePrewarmStrokeMaskTarget\(cache, width, height\)/);
   assert.match(body, /const prewarmRasterWriteTexture = prewarmStrokeMaskTarget\?\.texture \|\| prewarmWriteTexture/);
   assert.match(body, /const usePrewarmSourceRasterClip = !layerMode && surfaceAirbrushSourceRasterClipEnabled\(\)/);
   assert.match(body, /const prewarmRasterClipPath = usePrewarmSourceRasterClip[\s\S]*?\? simplifiedSourceRasterClipSegments\(prewarmSegments, 18\)[\s\S]*?: \[\]/);
   assert.match(body, /ensureUvOccupancyMask\([\s\S]*?prewarmRasterWriteTexture,[\s\S]*?width,[\s\S]*?height/);
   assert.match(body, /const prewarmOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled\(\)/);
   assert.match(body, /ensureUvRasterMeshes\([\s\S]*?prewarmBaseTexture,[\s\S]*?\{\s*\.\.\.materialScopeOptions,[\s\S]*?originalMeshUvRaster: prewarmOriginalMeshUvRaster,[\s\S]*?sourceRasterGutterPixels: surfaceAirbrushSourceRasterGutterPixels\(\),[\s\S]*?sourceRasterClipSegments: prewarmRasterClipPath,[\s\S]*?sourceRasterClipHardness: finiteNumber\(options\.hardness,[\s\S]*?maskOnly: true,[\s\S]*?sourceRasterClipPaddingPixels: Math\.max\([\s\S]*?writeTexture: prewarmRasterWriteTexture,[\s\S]*?sampleTexture: prewarmBaseTexture[\s\S]*?\}/);
+  assert.match(body, /clearSurfacePrewarmStrokeMaskTarget\(renderer, cache\)/);
   assert.match(body, /renderSurfaceStrokeComposite\([\s\S]*?prewarmTarget,[\s\S]*?prewarmBaseTexture,[\s\S]*?strokeMaskTarget\.texture/);
-  assert.match(body, /cache\.strokeMaskInitialized = false/);
+  const prewarmMaskBlockStart = body.indexOf("const prewarmStrokeMaskTarget = ensureSurfacePrewarmStrokeMaskTarget");
+  const prewarmMaskBlockEnd = body.indexOf("const meshUvTriangleCount", prewarmMaskBlockStart);
+  assert.notEqual(prewarmMaskBlockStart, -1);
+  assert.notEqual(prewarmMaskBlockEnd, -1);
+  const prewarmMaskBlock = body.slice(prewarmMaskBlockStart, prewarmMaskBlockEnd);
+  assert.doesNotMatch(prewarmMaskBlock, /cache\.strokeMaskInitialized = false/);
+  assert.doesNotMatch(prewarmMaskBlock, /ensureSurfaceStrokeMaskTarget\(cache, width, height\)/);
+  assert.doesNotMatch(prewarmMaskBlock, /clearSurfaceStrokeMaskTarget\(renderer, cache\)/);
   assert.match(body, /sourceRasterClipSegments: prewarmRasterClipPath/);
+  const prewarmMaskBody = functionSource("ensureSurfacePrewarmStrokeMaskTarget");
+  assert.match(prewarmMaskBody, /cache\.prewarmStrokeMaskTarget/);
+  assert.match(prewarmMaskBody, /texture-paint-tsl-surface-airbrush-prewarm-stroke-mask/);
+  assert.doesNotMatch(prewarmMaskBody, /strokeMaskInitialized/);
+  const prewarmTargetBody = functionSource("ensureSurfacePrewarmTarget");
+  assert.match(prewarmTargetBody, /cache\.prewarmTarget/);
+  assert.match(prewarmTargetBody, /texture-paint-tsl-surface-airbrush-prewarm/);
+  const prewarmDisplayBody = functionSource("ensureSurfacePrewarmDisplayTarget");
+  assert.match(prewarmDisplayBody, /cache\.prewarmDisplayTarget/);
+  assert.match(prewarmDisplayBody, /texture-paint-tsl-surface-airbrush-prewarm-display/);
+  assert.match(body, /target: ensureSurfacePrewarmDisplayTarget\(/);
   const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
   assert.match(runBody, /const useOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled\(\)/);
   assert.doesNotMatch(runBody, /const useOriginalMeshUvRaster = layerMode[\s\S]*?\? false/);
   assert.match(runBody, /const rasterGutterScale = Math\.min\([\s\S]*?rasterWriteSize\.width \/ Math\.max\(1, width\)[\s\S]*?rasterWriteSize\.height \/ Math\.max\(1, height\)/);
   assert.match(runBody, /const sourceRasterGutterPixels = useStrokeMaskComposite[\s\S]*?Math\.ceil\(surfaceAirbrushSourceRasterGutterPixels\(\) \* rasterGutterScale\)[\s\S]*?: surfaceAirbrushSourceRasterGutterPixels\(\)/);
   assert.match(runBody, /sourceRasterGutterPixels,/);
+});
+
+test("TSL surface display targets are isolated from prewarm and previous material displays", () => {
+  const displayBody = functionSource("ensureSurfaceDisplayTarget");
+  const renderDisplayBody = functionSource("renderSurfaceDisplayTexture");
+  const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
+  assert.match(displayBody, /const avoidTextures = new Set/);
+  assert.match(displayBody, /cache\.displayTargets \|\|= \[\]/);
+  assert.match(displayBody, /!avoidTextures\.has\(candidate\.texture\)/);
+  assert.match(renderDisplayBody, /options\.target \|\| ensureSurfaceDisplayTarget/);
+  assert.match(renderDisplayBody, /avoidTextures: options\.avoidTextures/);
+  assert.match(runBody, /avoidTextures: \[previousMaterialMap\]/);
 });
 
 test("TSL surface render targets preserve layer alpha", () => {
@@ -1192,9 +1225,15 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.match(body, /tslSurfaceStrokeSourceOwner: Boolean\(strokeSourceOwner\),[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /tslSurfaceStrokeMaskCleared: false,[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /cache\.strokeBaseTexture = null/);
+  assert.match(body, /surfaceAirbrushCanUseDirectStrokeBase\(cache, sourceTexture\)/);
+  assert.match(body, /cache\.texturePaintTslSurfaceLastStrokeBaseCopy = "direct-paint-target"/);
   assert.match(body, /cache\.strokeBaseTexture = ensureSurfaceStrokeBaseTexture/);
   assert.match(body, /const baseTexture = cache\.strokeBaseTexture \|\| sourceTexture/);
   assert.doesNotMatch(strokeBaseBody, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)\) \{\s*return sourceTexture;/);
+  assert.doesNotMatch(
+    functionSource("surfaceAirbrushCanUseDirectStrokeBase"),
+    /surfaceAirbrushCacheOwnsTexture\(cache, texture\)/
+  );
 });
 
 test("TSL surface airbrush renders live segments instead of retaining a stale target", () => {
