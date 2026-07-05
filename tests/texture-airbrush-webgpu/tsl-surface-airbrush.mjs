@@ -431,7 +431,7 @@ test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
 test("TSL surface airbrush can gate ambiguous UV overlap texels", () => {
   assert.match(source, /const UV_OVERLAP_MASK_SIZE = 1024/);
   assert.match(source, /function surfaceAirbrushUvOverlapMaskEnabled/);
-  assert.match(source, /debugAirbrushUvOverlapMask/);
+  assert.match(source, /debugAirbrushNoUvOverlapMask/);
   assert.match(source, /function sourceObjectUvOverlapMaskTexture/);
   assert.match(source, /UV_OVERLAP_DISTANCE_THRESHOLD/);
   assert.match(source, /new THREE\.DataTexture/);
@@ -993,6 +993,9 @@ test("TSL live strokes use a max-blended stroke mask to cap opacity", () => {
   assert.match(body, /texturePaintTslSurfaceLastStrokeBaseCopy = cache\.strokeBaseTexture === sourceTexture[\s\S]*?\? "direct-source"[\s\S]*?: "stable-source"/);
   assert.match(compositeRunBody, /const clearTransparentBase = options\.emptyLayerSource === true/);
   assert.match(compositeRunBody, /clearRenderTargetTransparent\(renderer, target, cache\)/);
+  const compositeUpdateBody = functionSource("updateStrokeCompositeMaterial");
+  assert.match(compositeUpdateBody, /baseTexture\?\.flipY === true && !surfaceAirbrushTextureIsLiveTarget\(baseTexture\)/);
+  assert.match(compositeUpdateBody, /\|\| textureNodeAppliesFlipY\(baseTexture\)/);
   assert.doesNotMatch(body, /const renderPaintSegments = blendOntoBaseTarget \? segments : paintSegments/);
   assert.match(body, /tslSurfaceStrokeMask: useStrokeMaskComposite/);
   assert.match(body, /tslSurfaceBlendInPlace: blendOntoBaseTarget/);
@@ -1174,12 +1177,21 @@ test("TSL surface airbrush visible-depth prepass uses the same material scope", 
 test("TSL original-mesh UV raster evaluates normals in the editor camera view", () => {
   const body = functionSource("createSurfaceMaterial");
   const updateBody = functionSource("updateSurfaceMaterial");
+  const projectionBody = functionSource("ensureSurfaceProjectionAttributes");
+  const meshBody = functionSource("ensureUvRasterMeshes");
   const originalMeshBranch = body.slice(body.indexOf("if (originalMeshUvRaster)"));
   assert.match(body, /normalWorldGeometry/);
   assert.match(body, /originalMeshUvRaster,/);
   assert.match(updateBody, /state\.sourceSampleFlipY\.value = state\.originalMeshUvRaster === true[\s\S]*?\? 0[\s\S]*?: textureNodeAppliesFlipY\(shaderSourceTexture\) \? 1 : 0/);
-  assert.match(originalMeshBranch, /const editorView = editorViewMatrix\.mul\(worldPosition\)\.xyz\.toVar\(\)/);
-  assert.match(originalMeshBranch, /paintNormal\.assign\(normalWorldGeometry\.transformDirection\(editorViewMatrix\)\)/);
+  assert.match(projectionBody, /rasterGeometry\.setAttribute\("paintView", viewAttribute\)/);
+  assert.match(projectionBody, /rasterGeometry\.setAttribute\("paintScreen", screenAttribute\)/);
+  assert.match(projectionBody, /rasterGeometry\.setAttribute\("paintNormal", normalAttribute\)/);
+  assert.match(meshBody, /ensureSurfaceProjectionAttributes\(entry, cache\.editor \|\| null\)/);
+  assert.match(originalMeshBranch, /paintView\.assign\(attribute\("paintView", "vec3"\)\)/);
+  assert.match(originalMeshBranch, /paintScreen\.assign\(attribute\("paintScreen", "vec3"\)\)/);
+  assert.match(originalMeshBranch, /paintNormal\.assign\(attribute\("paintNormal", "vec3"\)\)/);
+  assert.match(originalMeshBranch, /paintComponent\.assign\(float\(0\)\)/);
+  assert.doesNotMatch(originalMeshBranch, /modelWorldMatrix\.mul\(vec4\(positionLocal, 1\)\)/);
   assert.doesNotMatch(originalMeshBranch, /paintNormal\.assign\(normalViewGeometry\)/);
 });
 

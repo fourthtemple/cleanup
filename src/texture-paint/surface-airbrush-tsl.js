@@ -336,9 +336,9 @@ function surfaceAirbrushSourceRasterGutterPixels() {
 }
 
 function surfaceAirbrushUvOverlapMaskEnabled() {
-  return (
+  return !(
     typeof window !== "undefined"
-    && new URLSearchParams(window.location?.search || "").has("debugAirbrushUvOverlapMask")
+    && new URLSearchParams(window.location?.search || "").has("debugAirbrushNoUvOverlapMask")
   );
 }
 
@@ -4139,7 +4139,10 @@ function updateStrokeCompositeMaterial(
   );
   state.blendOnly.value = options.blendOnly === true ? 1 : 0;
   state.emptyLayerSource.value = options.emptyLayerSource === true ? 1 : 0;
-  state.baseFlipY.value = textureNodeAppliesFlipY(baseTexture) ? 1 : 0;
+  state.baseFlipY.value = (
+    (baseTexture?.flipY === true && !surfaceAirbrushTextureIsLiveTarget(baseTexture))
+    || textureNodeAppliesFlipY(baseTexture)
+  ) ? 1 : 0;
   state.maskFlipY.value = maskTexture?.userData?.texturePaintTslSurfaceAirbrushStrokeMask === true
     ? 0
     : textureNodeAppliesFlipY(maskTexture) ? 1 : 0;
@@ -5088,6 +5091,7 @@ function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
   const vertexCount = Math.max(0, Math.floor(Number(position.count) || 0));
   let viewAttribute = rasterGeometry.getAttribute?.("paintView") || null;
   let screenAttribute = rasterGeometry.getAttribute?.("paintScreen") || null;
+  let normalAttribute = rasterGeometry.getAttribute?.("paintNormal") || null;
   if (!viewAttribute || viewAttribute.count !== vertexCount) {
     viewAttribute = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
     rasterGeometry.setAttribute("paintView", viewAttribute);
@@ -5096,20 +5100,27 @@ function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
     screenAttribute = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
     rasterGeometry.setAttribute("paintScreen", screenAttribute);
   }
+  if (!normalAttribute || normalAttribute.count !== vertexCount) {
+    normalAttribute = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
+    rasterGeometry.setAttribute("paintNormal", normalAttribute);
+  }
   const projectionKey = surfaceProjectionFrameKey(editor, [sourceObject]);
   if (
     projectionKey
     && entry.texturePaintTslSurfaceProjectionKey === projectionKey
     && viewAttribute.count === vertexCount
     && screenAttribute.count === vertexCount
+    && normalAttribute.count === vertexCount
   ) {
     return true;
   }
   const viewArray = viewAttribute.array;
   const screenArray = screenAttribute.array;
+  const normalArray = normalAttribute.array;
   for (let index = 0; index < vertexCount; index += 1) {
     const world = worldPositionForVertex(sourceObject, sourceGeometry, index);
     const screen = screenPointForWorld(editor, world);
+    const normal = viewNormalForVertex(sourceObject, sourceGeometry, index, editor);
     const offset = index * 3;
     if (screen) {
       viewArray[offset] = finiteNumber(screen.viewX, 0);
@@ -5118,6 +5129,9 @@ function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
       screenArray[offset] = finiteNumber(screen.x, -1000000);
       screenArray[offset + 1] = finiteNumber(screen.y, -1000000);
       screenArray[offset + 2] = finiteNumber(screen.z, 0);
+      normalArray[offset] = finiteNumber(normal?.x, 0);
+      normalArray[offset + 1] = finiteNumber(normal?.y, 0);
+      normalArray[offset + 2] = finiteNumber(normal?.z, 1);
     } else {
       viewArray[offset] = 0;
       viewArray[offset + 1] = 0;
@@ -5125,10 +5139,14 @@ function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
       screenArray[offset] = -1000000;
       screenArray[offset + 1] = -1000000;
       screenArray[offset + 2] = 0;
+      normalArray[offset] = 0;
+      normalArray[offset + 1] = 0;
+      normalArray[offset + 2] = -1;
     }
   }
   viewAttribute.needsUpdate = true;
   screenAttribute.needsUpdate = true;
+  normalAttribute.needsUpdate = true;
   entry.texturePaintTslSurfaceProjectionKey = projectionKey;
   return true;
 }
@@ -5314,6 +5332,7 @@ function ensureUvRasterMeshes(
     }
     if (useOriginalMeshUvRaster) {
       syncUvRasterMeshFromSource(entry.mesh, sourceObject);
+      ensureSurfaceProjectionAttributes(entry, cache.editor || null);
     } else if (!ensureSourceUvRasterGeometry(
       entry,
       cache.editor || null,
@@ -6059,19 +6078,10 @@ function createSurfaceMaterial(
         atlasUv.x,
         mix(atlasUv.y, float(1).sub(atlasUv.y), sourceSampleFlipY)
       ).toVar();
-      const worldPosition = modelWorldMatrix.mul(vec4(positionLocal, 1)).toVar();
-      const editorView = editorViewMatrix.mul(worldPosition).xyz.toVar();
-      const clipPosition = editorProjectionMatrix.mul(vec4(editorView, 1)).toVar();
-      const invClipW = float(1).div(max(abs(clipPosition.w), 0.0001)).toVar();
-      const ndc = clipPosition.xyz.mul(invClipW).toVar();
       paintUv.assign(sampleUv);
-      paintView.assign(editorView);
-      paintScreen.assign(vec3(
-        ndc.x.add(1).mul(0.5).mul(editorViewportSize.x),
-        float(1).sub(ndc.y.add(1).mul(0.5)).mul(editorViewportSize.y),
-        ndc.z
-      ));
-      paintNormal.assign(normalWorldGeometry.transformDirection(editorViewMatrix));
+      paintView.assign(attribute("paintView", "vec3"));
+      paintScreen.assign(attribute("paintScreen", "vec3"));
+      paintNormal.assign(attribute("paintNormal", "vec3"));
       paintBarycentric.assign(vec3(1, 0, 0));
       paintComponent.assign(float(0));
       return vec4(
