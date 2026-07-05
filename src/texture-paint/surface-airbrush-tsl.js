@@ -28,9 +28,12 @@ const TSL_SURFACE_DILATION_SAMPLE_RADII = [1, 2, 4, 8, 16];
 const SURFACE_AIRBRUSH_RETIRED_RESOURCE_LIMIT = 48;
 const SURFACE_AIRBRUSH_RETIRE_FALLBACK_MS = 3000;
 const SURFACE_AIRBRUSH_RETIRE_MIN_AGE_MS = 5000;
-const SOFT_FACING_NORMAL_BACK_FEATHER = 0.0;
+const SOFT_FACING_NORMAL_BACK_FEATHER = 0.45;
 const SOFT_FACING_NORMAL_FRONT_FEATHER = 0.12;
 const VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS = 0.18;
+const VISIBLE_SURFACE_DEPTH_GATE_MIN_RADIUS = 0.45;
+const VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE = 0.38;
+const VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE = 0.55;
 
 const _scratchUv = new THREE.Vector2();
 const _scratchWorld = new THREE.Vector3();
@@ -5848,8 +5851,34 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
       If(i.lessThan(segmentCount), () => {
         const start = segmentStarts.element(i);
         const end = segmentEnds.element(i);
+        const viewStart = segmentViewStarts.element(i);
+        const viewEnd = segmentViewEnds.element(i);
         const segmentComponent = segmentComponents.element(i);
         const radius = max(start.w, 0.0001);
+        const viewRadius = max(max(viewStart.w, viewEnd.w), 0.0001).toVar();
+        const visibleDepthRadius = max(
+          VISIBLE_SURFACE_DEPTH_GATE_MIN_RADIUS,
+          viewRadius.mul(VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE)
+        ).toVar();
+        const visibleDepthFeather = max(
+          0.0001,
+          visibleDepthRadius.mul(VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE)
+        ).toVar();
+        const visibleDepthFade = clamp(
+          max(visibleDelta.sub(visibleDepthRadius), 0.0).div(visibleDepthFeather),
+          0.0,
+          1.0
+        ).toVar();
+        const visibleDepthSmoothFade = visibleDepthFade
+          .mul(visibleDepthFade)
+          .mul(float(3).sub(visibleDepthFade.mul(2)))
+          .toVar();
+        const visibleDepthCoverage = float(1).sub(visibleDepthSmoothFade).toVar();
+        const visibleGateCoverage = visibleActive
+          .mul(visibleSampleValid)
+          .greaterThan(0.5)
+          .select(visibleDepthCoverage, float(1))
+          .toVar();
         const haloRadius = radius.mul(float(1).add(scatter.mul(0.15))).toVar();
         const segmentVector = end.xy.sub(start.xy).toVar();
         const lengthSq = max(dot(segmentVector, segmentVector), 0.000001);
@@ -5892,6 +5921,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const sampleCoverage = baseSampleCoverage
           .mul(componentGate)
           .mul(normalGate)
+          .mul(visibleGateCoverage)
           .toVar();
         coverage.assign(max(coverage, sampleCoverage));
       });
@@ -6159,8 +6189,34 @@ function createSurfaceMaterial(
       If(i.lessThan(segmentCount), () => {
         const start = segmentStarts.element(i);
         const end = segmentEnds.element(i);
+        const viewStart = segmentViewStarts.element(i);
+        const viewEnd = segmentViewEnds.element(i);
         const segmentComponent = segmentComponents.element(i);
         const radius = max(start.w, 0.0001);
+        const viewRadius = max(max(viewStart.w, viewEnd.w), 0.0001).toVar();
+        const visibleDepthRadius = max(
+          VISIBLE_SURFACE_DEPTH_GATE_MIN_RADIUS,
+          viewRadius.mul(VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE)
+        ).toVar();
+        const visibleDepthFeather = max(
+          0.0001,
+          visibleDepthRadius.mul(VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE)
+        ).toVar();
+        const visibleDepthFade = clamp(
+          max(visibleDelta.sub(visibleDepthRadius), 0.0).div(visibleDepthFeather),
+          0.0,
+          1.0
+        ).toVar();
+        const visibleDepthSmoothFade = visibleDepthFade
+          .mul(visibleDepthFade)
+          .mul(float(3).sub(visibleDepthFade.mul(2)))
+          .toVar();
+        const visibleDepthCoverage = float(1).sub(visibleDepthSmoothFade).toVar();
+        const visibleGateCoverage = visibleActive
+          .mul(visibleSampleValid)
+          .greaterThan(0.5)
+          .select(visibleDepthCoverage, float(1))
+          .toVar();
         const haloRadius = radius.mul(float(1).add(scatter.mul(0.15))).toVar();
         const segmentVector = end.xy.sub(start.xy).toVar();
         const lengthSq = max(dot(segmentVector, segmentVector), 0.000001);
@@ -6194,6 +6250,7 @@ function createSurfaceMaterial(
         const gatedCoverage = surfaceFieldCoverage
           .mul(componentGate)
           .mul(normalGate)
+          .mul(visibleGateCoverage)
           .toVar();
         const sourceCoverage = originalMeshUvRaster
           ? gatedCoverage
@@ -8010,8 +8067,22 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
   const visibleEdgeMode = String(options.visibleEdgeMode || "soft").toLowerCase() === "hard"
     ? "hard"
     : "soft";
-  const needsVisibleSurfaceTexture = false;
-  const visibleTarget = null;
+  const needsVisibleSurfaceTexture = !useProjectedPrimary
+    && debugParams?.has("debugAirbrushNoVisibleSurface") !== true
+    && sourceObjects.length > 0;
+  const visibleTarget = needsVisibleSurfaceTexture
+    ? renderVisibleSurfaceTarget(
+        renderer,
+        cache,
+        sourceObjects,
+        editor,
+        editable,
+        editableTextures,
+        sourceObject,
+        materialIndex,
+        materialScopeOptions
+      )
+    : null;
   markPrepTiming("visibleSurface");
   const visibleTexture = visibleTarget?.texture || null;
   const uvOccupancyTexture = !useProjectedPrimary
