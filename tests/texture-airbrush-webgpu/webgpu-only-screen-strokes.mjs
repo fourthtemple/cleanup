@@ -1048,13 +1048,16 @@ test("large direct WebGPU screen strokes drain the first live paint queue during
     assert.equal(scheduledFrameFlushes, 0);
     assert.equal(flushOptions.length, 0);
     assert.equal(timers.length, 1);
-    assert.equal(timers[0].delayMs, 16);
+    assert.equal(timers[0].delayMs, 4);
 
     timers[0].callback();
 
     assert.equal(flushOptions.length, 1);
     assert.equal(flushOptions[0].immediateWebGpuFlush, true);
-    assert.equal(flushOptions[0].maxBatches, 1);
+    assert.equal(flushOptions[0].maxBatches, 4);
+    assert.equal(flushOptions[0].maxBatchSegments, 48);
+    assert.equal(flushOptions[0].maxSegments, 128);
+    assert.equal(flushOptions[0].maxBatchMs, 8);
     assert.equal(flushOptions[0].maxImmediateWebGpuFlushBatches, 8);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
@@ -1541,8 +1544,9 @@ test("scheduled large WebGPU brush flush does not add a first-frame throttle", (
   assert.equal(rafCalls, 1);
   assert.deepEqual(timeoutDelays, []);
   assert.equal(flushOptions.length, 1);
-  assert.equal(flushOptions[0].maxBatchMs, 3);
-  assert.equal(flushOptions[0].maxBatchSegments, 16);
+  assert.equal(flushOptions[0].maxBatchMs, 8);
+  assert.equal(flushOptions[0].maxBatchSegments, 48);
+  assert.equal(flushOptions[0].maxSegments, 128);
 });
 
 test("large WebGPU Neighbor live flush drains a full stroke within the WebGPU frame budget", () => {

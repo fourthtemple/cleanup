@@ -13,7 +13,7 @@ import {
   TEXTURE_AIRBRUSH_SOFT_HALO_SCALE
 } from "../weight-editor/airbrush/math.js";
 
-const MAX_TSL_SURFACE_SEGMENTS = Math.min(16, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
+const MAX_TSL_SURFACE_SEGMENTS = Math.min(48, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
 const MAX_TSL_SURFACE_STROKE_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
 const MAX_TSL_SURFACE_STROKE_MASK_SIZE = 4096;
 const UV_GUTTER_PIXELS = 0;
@@ -6218,6 +6218,11 @@ function updateSurfaceMaterial(
   if (state.projectedPaintGutterOnly) {
     state.projectedPaintGutterOnly.value = options.projectedPaintGutterOnly === false ? 0 : 1;
   }
+  const componentGateEnabled = Boolean(
+    options.neighborPaintSeed?.enabled === true
+    || options.neighborPaintKey
+    || options.largeLiveNeighborPaint === true
+  );
   state.segmentCount.value = Math.max(0, Math.min(MAX_TSL_SURFACE_SEGMENTS, segments.length));
   for (let index = 0; index < MAX_TSL_SURFACE_SEGMENTS; index += 1) {
     const segment = segments[index] || null;
@@ -6259,8 +6264,8 @@ function updateSurfaceMaterial(
       }
     }
     if (component) {
-      const componentStart = finiteComponentId(segment?.componentStart);
-      const componentEnd = finiteComponentId(segment?.componentEnd);
+      const componentStart = componentGateEnabled ? finiteComponentId(segment?.componentStart) : -1;
+      const componentEnd = componentGateEnabled ? finiteComponentId(segment?.componentEnd) : -1;
       component.set(
         componentStart >= 0 ? componentStart + 1 : 0,
         componentEnd >= 0 ? componentEnd + 1 : 0,

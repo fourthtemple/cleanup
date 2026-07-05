@@ -617,7 +617,7 @@ test("TSL surface airbrush keeps scoped projected triangles opt-in instead of th
   assert.match(body, /const useStrokeMaskComposite = !useProjectedPrimary/);
   assert.match(body, /const newlyAppendedPaintSegments = Array\.isArray\(cache\.lastSurfaceStrokeAppendSegments\)/);
   assert.match(body, /const renderPaintSegments = useStrokeMaskComposite[\s\S]*?newlyAppendedPaintSegments[\s\S]*?: paintSegments/);
-  assert.match(source, /const MAX_TSL_SURFACE_SEGMENTS = Math\.min\(16, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS\)/);
+  assert.match(source, /const MAX_TSL_SURFACE_SEGMENTS = Math\.min\(48, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS\)/);
   assert.match(source, /const MAX_TSL_SURFACE_STROKE_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS/);
   assert.match(source, /function chunkSurfaceSegmentsForShader/);
   assert.match(body, /const filteredProjectedTriangles = filterProjectedTrianglesForScreenBrush\(rawProjectedTriangles, renderPaintSegments, options\)/);
