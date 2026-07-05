@@ -701,7 +701,7 @@ test("TSL surface airbrush skips duplicate live batches before projected geometr
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
   const duplicateIndex = body.indexOf("const duplicateCoveredSegmentsBeforeReset = !surfaceStrokeOwnerChanged(cache, strokeSourceOwner)");
   const projectedIndex = body.indexOf("cachedMeshUvProjectedTriangles(cache, editor, candidate, width, height)");
-  const newStrokeIndex = body.indexOf("const startsNewSurfaceStroke = surfaceStrokeStartsNewStroke(cache, strokeSourceOwner, candidate, options, segments)");
+  const newStrokeIndex = body.indexOf("const startsNewSurfaceStroke = surfaceStrokeStartsNewStroke(cache, strokeSourceOwner, candidate, options, segments, strokeStyleKey)");
   assert.ok(newStrokeIndex > -1, "new-stroke detection should be computed before duplicate skipping");
   assert.ok(duplicateIndex > -1, "duplicate segment detection should be present");
   assert.ok(projectedIndex > -1, "projected mesh collection should still be present");
@@ -876,8 +876,11 @@ test("TSL layer invalidation preserves static UV raster caches between strokes",
   assert.match(cacheBody, /editableOrTexture\?\.isMaterial !== true/);
   assert.doesNotMatch(cacheBody, /texturePaintTslSurfaceAirbrushCacheSet\?\.clear\?\.\(\)/);
   assert.match(pointerDownBody, /this\.texturePaintTslSurfaceAirbrushInvalidate\?\.\(\)/);
+  assert.match(pointerDownBody, /this\.texturePaintStrokePoint = null/);
+  assert.match(pointerDownBody, /this\.textureAirbrushResetStrokeSpacing\?\.\(\)/);
   assert.match(resetBody, /cache\.currentTexture = null/);
   assert.match(resetBody, /cache\.strokeBaseTexture = null/);
+  assert.match(resetBody, /cache\.strokeStyleKey = ""/);
   assert.match(resetBody, /cache\.strokeMaskInitialized = false/);
   assert.doesNotMatch(resetBody, /uvOccupancyKey/);
   assert.doesNotMatch(resetBody, /surfaceMeshes/);
@@ -1032,6 +1035,9 @@ test("TSL live strokes use a max-blended stroke mask to cap opacity", () => {
   assert.match(compositeBody, /const mask = maskTextureNode\.sample\(maskUv\)\.toVar\(\)/);
   assert.match(compositeBody, /const alpha = clamp\(mask\.a, 0\.0, 1\.0\)/);
   assert.match(compositeBody, /emptyLayer\.and\(alpha\.lessThanEqual\(TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD\)\)\.discard\(\)/);
+  assert.match(compositeBody, /const baseLayerPremul = \(layerOnly \? baseColor\.rgb : baseColor\.rgb\.mul\(baseColor\.a\)\)\.toVar\(\)/);
+  assert.match(compositeBody, /\.add\(baseLayerPremul\.mul\(oneMinusAlpha\)\)/);
+  assert.doesNotMatch(compositeBody, /\.add\(baseColor\.rgb\.mul\(baseColor\.a\)\.mul\(oneMinusAlpha\)\)/);
   assert.doesNotMatch(compositeBody, /const alpha = clamp\(max\(max\(mask\.r, mask\.g\), mask\.a\), 0\.0, 1\.0\)/);
   assert.match(compositeBody, /transparent: true/);
   assert.match(compositeBody, /blending: layerOnly \? THREE\.NoBlending : THREE\.CustomBlending/);
@@ -1255,6 +1261,14 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   const appendBody = functionSource("appendSurfaceStrokeSegments");
   const strokeBaseBody = functionSource("ensureSurfaceStrokeBaseTexture");
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
+  assert.match(source, /function surfaceStrokeStyleKey/);
+  assert.match(source, /function surfaceStrokeStyleChanged/);
+  assert.match(newStrokeBody, /if \(surfaceStrokeStyleChanged\(cache, styleKey\)\) \{\s*return true;\s*\}/);
+  assert.ok(
+    newStrokeBody.indexOf("if (surfaceStrokeStyleChanged(cache, styleKey))")
+      < newStrokeBody.indexOf("const explicitReset = candidate?.strokeReset === true"),
+    "brush style changes must reset before same-owner continuation"
+  );
   assert.match(newStrokeBody, /const explicitReset = candidate\?\.strokeReset === true/);
   assert.ok(
     newStrokeBody.indexOf("const explicitReset = candidate?.strokeReset === true")
@@ -1275,13 +1289,16 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
     /return Array\.isArray\(cache\?\.surfaceStrokeSegments\) && cache\.surfaceStrokeSegments\.length > 0;/
   );
   assert.doesNotMatch(newStrokeBody, /return false;\s*$/);
-  assert.match(appendBody, /const startsNewStroke = surfaceStrokeStartsNewStroke\(cache, owner, candidate, options, segments\)/);
+  assert.match(appendBody, /const startsNewStroke = surfaceStrokeStartsNewStroke\(cache, owner, candidate, options, segments, styleKey\)/);
   assert.match(appendBody, /if \(!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered\(cache, segments\)\) \{/);
   assert.ok(
-    appendBody.indexOf("const startsNewStroke = surfaceStrokeStartsNewStroke(cache, owner, candidate, options, segments)")
+    appendBody.indexOf("const startsNewStroke = surfaceStrokeStartsNewStroke(cache, owner, candidate, options, segments, styleKey)")
       < appendBody.indexOf("if (!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered(cache, segments))"),
     "append path must honor stroke reset before duplicate skipping"
   );
+  assert.match(appendBody, /cache\.strokeStyleKey = styleKey/);
+  assert.match(body, /const strokeStyleKey = surfaceStrokeStyleKey\(candidate, options\)/);
+  assert.match(body, /const strokeStyleChangedAtRunStart = surfaceStrokeStyleChanged\(cache, strokeStyleKey\)/);
   assert.match(body, /const duplicateCoveredSegmentsBeforeReset = !surfaceStrokeOwnerChanged\(cache, strokeSourceOwner\)\s*\n\s*&& !startsNewSurfaceStroke\s*\n\s*&& surfaceStrokeSegmentsAlreadyCovered\(cache, segments\)/);
   assert.match(body, /const strokeOwnerChangedAtRunStart = surfaceStrokeOwnerChanged\(cache, strokeSourceOwner\)/);
   assert.match(body, /const strokeResetRequestedAtRunStart = surfaceStrokeResetRequested\(candidate, options\)/);
@@ -1291,6 +1308,8 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.match(body, /tslSurfaceStrokeResetRequested: strokeResetRequestedAtRunStart/);
   assert.match(body, /tslSurfaceStrokeSourceOwner: Boolean\(strokeSourceOwner\)/);
   assert.match(body, /tslSurfaceStrokeOwnerChanged: strokeOwnerChangedAtRunStart/);
+  assert.match(body, /tslSurfaceStrokeStyleChanged: strokeStyleChangedAtRunStart/);
+  assert.match(body, /tslSurfaceStrokeStyleKey: strokeStyleKey/);
   assert.match(body, /tslSurfaceDuplicateCoveredSegments: duplicateCoveredSegments/);
   assert.match(body, /tslSurfaceStrokeMaskCleared: strokeMaskCleared/);
   assert.match(body, /tslSurfaceStartsNewStroke: startsNewSurfaceStroke,[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
@@ -1298,6 +1317,7 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.match(body, /tslSurfaceStrokeMaskCleared: false,[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /cache\.strokeBaseTexture = null/);
   assert.match(body, /cache\.strokeBaseTexture = surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
+  assert.match(body, /const continuingEmptyLayerStroke = Boolean\(\s*layerMode\s*&& !startsNewSurfaceStroke\s*&& cache\.strokeBaseWasEmptyLayer === true/);
   assert.match(body, /const baseTexture = cache\.strokeBaseTexture \|\| sourceTexture/);
   assert.match(strokeBaseBody, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);
   assert.doesNotMatch(body, /direct-paint-target/);

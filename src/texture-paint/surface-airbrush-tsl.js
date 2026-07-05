@@ -1,6 +1,7 @@
 import * as THREE from "../../node_modules/three/build/three.webgpu.js";
 import { TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS } from "../weight-editor/airbrush/constants.js";
 import {
+  clampByte,
   TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,
   TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER,
   TEXTURE_AIRBRUSH_CORE_HARDNESS_SCALE,
@@ -1955,6 +1956,7 @@ function resetSurfaceAirbrushDynamicState(cache = null) {
   cache.strokeBaseTexture = null;
   cache.strokeBaseWasEmptyLayer = false;
   cache.strokeBaseEmptyLayerOwner = null;
+  cache.strokeStyleKey = "";
   cache.strokeMaskInitialized = false;
   return true;
 }
@@ -4065,9 +4067,10 @@ function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, o
     const emptyLayer = emptyLayerSource.greaterThan(0.5).toVar();
     emptyLayer.and(alpha.lessThanEqual(TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD)).discard();
     const oneMinusAlpha = float(1).sub(alpha).toVar();
+    const baseLayerPremul = (layerOnly ? baseColor.rgb : baseColor.rgb.mul(baseColor.a)).toVar();
     const compositedLayerAlpha = clamp(alpha.add(baseColor.a.mul(oneMinusAlpha)), 0.0, 1.0).toVar();
     const compositedLayerPremul = brushColor.rgb.mul(alpha)
-      .add(baseColor.rgb.mul(baseColor.a).mul(oneMinusAlpha))
+      .add(baseLayerPremul.mul(oneMinusAlpha))
       .toVar();
     const compositedLayerRgb = compositedLayerAlpha.greaterThan(0.0001)
       .select(compositedLayerPremul.div(max(compositedLayerAlpha, 0.0001)), brushColor.rgb)
@@ -5669,6 +5672,7 @@ function ensureSurfaceAirbrushCache(editor = null, editable = null, referenceTex
       strokeBaseTarget: null,
       strokeBaseWasEmptyLayer: false,
       strokeBaseEmptyLayerOwner: null,
+      strokeStyleKey: "",
       strokeMaskTarget: null,
       prewarmStrokeMaskTarget: null,
       prewarmTarget: null,
@@ -6810,6 +6814,32 @@ function surfaceStrokeOwnerChanged(cache = null, owner = null) {
     : cache?.strokeSourceOwner != null;
 }
 
+function surfaceStrokeStyleKey(candidate = null, options = {}) {
+  const color = options.color || candidate?.options?.color || candidate?.color || null;
+  const colorKey = color
+    ? [
+        clampByte(color.r),
+        clampByte(color.g),
+        clampByte(color.b)
+      ].join(",")
+    : "";
+  return [
+    colorKey,
+    Math.round(finiteNumber(options.radiusPixels, candidate?.radiusPixels ?? 0) * 100),
+    Math.round(finiteNumber(options.opacity, candidate?.opacity ?? 1) * 10000),
+    Math.round(finiteNumber(options.hardness, candidate?.hardness ?? 0) * 10000),
+    Math.round(finiteNumber(options.scatter, candidate?.scatter ?? 0) * 10000),
+    Math.round(finiteNumber(options.spacing, candidate?.spacing ?? 1) * 100),
+    String(options.visibleEdgeMode || candidate?.options?.visibleEdgeMode || candidate?.visibleEdgeMode || "soft"),
+    options.erase === true || candidate?.erase === true ? "erase" : "paint",
+    options.layerMode === true || candidate?.layerMode === true ? "layer" : "texture"
+  ].join("|");
+}
+
+function surfaceStrokeStyleChanged(cache = null, styleKey = "") {
+  return Boolean(styleKey && cache?.strokeStyleKey && cache.strokeStyleKey !== styleKey);
+}
+
 function surfaceStrokeSegmentsAreContinuous(previousSegment = null, firstSegment = null) {
   const previousEnd = finitePoint(previousSegment?.end);
   const firstStart = finitePoint(firstSegment?.start);
@@ -6899,9 +6929,12 @@ function surfaceStrokeUncoveredSegments(existing = [], segments = []) {
   return firstUncoveredIndex > 0 ? segments.slice(firstUncoveredIndex) : segments;
 }
 
-function surfaceStrokeStartsNewStroke(cache = null, owner = null, candidate = null, options = {}, segments = []) {
+function surfaceStrokeStartsNewStroke(cache = null, owner = null, candidate = null, options = {}, segments = [], styleKey = surfaceStrokeStyleKey(candidate, options)) {
   const ownerChanged = surfaceStrokeOwnerChanged(cache, owner);
   if (ownerChanged) {
+    return true;
+  }
+  if (surfaceStrokeStyleChanged(cache, styleKey)) {
     return true;
   }
   const explicitReset = candidate?.strokeReset === true || candidate?.options?.strokeReset === true || options.strokeReset === true;
@@ -6934,11 +6967,11 @@ function surfaceStrokeStartsNewStroke(cache = null, owner = null, candidate = nu
   return Array.isArray(cache?.surfaceStrokeSegments) && cache.surfaceStrokeSegments.length > 0;
 }
 
-function appendSurfaceStrokeSegments(cache = null, segments = [], owner = null, sourceTexture = null, candidate = null, options = {}) {
+function appendSurfaceStrokeSegments(cache = null, segments = [], owner = null, sourceTexture = null, candidate = null, options = {}, styleKey = surfaceStrokeStyleKey(candidate, options)) {
   if (!cache || !Array.isArray(segments) || !segments.length || !sourceTexture) {
     return segments;
   }
-  const startsNewStroke = surfaceStrokeStartsNewStroke(cache, owner, candidate, options, segments);
+  const startsNewStroke = surfaceStrokeStartsNewStroke(cache, owner, candidate, options, segments, styleKey);
   if (!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered(cache, segments)) {
     cache.lastSurfaceStrokeAppendSegments = [];
     return cache.surfaceStrokeSegments;
@@ -6950,6 +6983,9 @@ function appendSurfaceStrokeSegments(cache = null, segments = [], owner = null, 
     cache.strokeSourceOwner = owner || null;
     cache.previousSurfaceStrokeSegment = null;
     cache.strokeResetOwner = owner || null;
+  }
+  if (styleKey) {
+    cache.strokeStyleKey = styleKey;
   }
   if (!owner && !startsNewStroke) {
     cache.previousSurfaceStrokeSegment = null;
@@ -7048,6 +7084,8 @@ function exposeSurfaceRunDebug(stats = null) {
     strokeResetRequested: stats.tslSurfaceStrokeResetRequested === true,
     strokeSourceOwner: stats.tslSurfaceStrokeSourceOwner === true,
     strokeOwnerChanged: stats.tslSurfaceStrokeOwnerChanged === true,
+    strokeStyleChanged: stats.tslSurfaceStrokeStyleChanged === true,
+    strokeStyleKey: stats.tslSurfaceStrokeStyleKey || "",
     duplicateCoveredSegments: stats.tslSurfaceDuplicateCoveredSegments === true,
     strokeMaskCleared: stats.tslSurfaceStrokeMaskCleared === true,
     cachedTextureStillBound: stats.tslSurfaceCachedTextureStillBound === true,
@@ -7726,7 +7764,9 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     || candidate?.webGpuStrokeSourceOwner
     || candidate?.options?.webGpuStrokeSourceOwner
     || null;
-  const startsNewSurfaceStroke = surfaceStrokeStartsNewStroke(cache, strokeSourceOwner, candidate, options, segments);
+  const strokeStyleKey = surfaceStrokeStyleKey(candidate, options);
+  const strokeStyleChangedAtRunStart = surfaceStrokeStyleChanged(cache, strokeStyleKey);
+  const startsNewSurfaceStroke = surfaceStrokeStartsNewStroke(cache, strokeSourceOwner, candidate, options, segments, strokeStyleKey);
   const strokeOwnerChangedAtRunStart = surfaceStrokeOwnerChanged(cache, strokeSourceOwner);
   const strokeResetRequestedAtRunStart = surfaceStrokeResetRequested(candidate, options);
   const duplicateCoveredSegmentsBeforeReset = !surfaceStrokeOwnerChanged(cache, strokeSourceOwner)
@@ -7811,6 +7851,8 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       tslSurfaceStrokeResetRequested: strokeResetRequestedAtRunStart,
       tslSurfaceStrokeSourceOwner: Boolean(strokeSourceOwner),
       tslSurfaceStrokeOwnerChanged: strokeOwnerChangedAtRunStart,
+      tslSurfaceStrokeStyleChanged: strokeStyleChangedAtRunStart,
+      tslSurfaceStrokeStyleKey: strokeStyleKey,
       tslSurfaceDuplicateCoveredSegments: duplicateCoveredSegments,
       tslSurfaceStrokeMaskCleared: false,
       tslSurfaceStrokeMask: cache.strokeMaskInitialized === true,
@@ -7950,6 +7992,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     const ownerChangedForBase = surfaceStrokeOwnerChanged(cache, strokeSourceOwner);
     const continuingEmptyLayerStroke = Boolean(
       layerMode
+      && !startsNewSurfaceStroke
       && cache.strokeBaseWasEmptyLayer === true
       && !ownerChangedForBase
       && cache.strokeBaseTexture === surfaceAirbrushTransparentTexture()
@@ -7972,7 +8015,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     }
   }
   markPrepTiming("strokeBase");
-  const paintSegments = appendSurfaceStrokeSegments(cache, segments, strokeSourceOwner, sourceTexture, candidate, options);
+  const paintSegments = appendSurfaceStrokeSegments(cache, segments, strokeSourceOwner, sourceTexture, candidate, options, strokeStyleKey);
   markPrepTiming("appendSegments");
   const meshProjectedTriangles = (enableProjectedGutters && !useCandidateProjectedGutters)
     || (preferProjectedPrimary && !useCandidateProjectedPrimary)
@@ -8541,6 +8584,8 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     tslSurfaceStrokeResetRequested: strokeResetRequestedAtRunStart,
     tslSurfaceStrokeSourceOwner: Boolean(strokeSourceOwner),
     tslSurfaceStrokeOwnerChanged: strokeOwnerChangedAtRunStart,
+    tslSurfaceStrokeStyleChanged: strokeStyleChangedAtRunStart,
+    tslSurfaceStrokeStyleKey: strokeStyleKey,
     tslSurfaceDuplicateCoveredSegments: duplicateCoveredSegments,
     tslSurfaceStrokeMaskCleared: strokeMaskCleared,
     tslSurfaceStrokeMask: useStrokeMaskComposite,

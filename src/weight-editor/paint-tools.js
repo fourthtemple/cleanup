@@ -596,6 +596,8 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           this.prewarmTextureAirbrushAfterCameraChange?.();
         }
         this.texturePaintTslSurfaceAirbrushInvalidate?.();
+        this.texturePaintStrokePoint = null;
+        this.textureAirbrushResetStrokeSpacing?.();
         this.textureAirbrushResetStrokeBrushState?.();
         this.textureAirbrushResetStrokePressureState?.();
         this.textureAirbrushResetInputSamplingState?.();
