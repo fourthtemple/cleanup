@@ -859,6 +859,100 @@ function scheduleAfterSurfaceAirbrushGpuIdle(editor = null, callback = null) {
   return true;
 }
 
+function surfaceCompileTargetKey(target = null) {
+  const texture = target?.texture || null;
+  return [
+    texture?.name || target?.name || "screen",
+    Math.max(0, Math.floor(Number(target?.width || texture?.image?.width) || 0)),
+    Math.max(0, Math.floor(Number(target?.height || texture?.image?.height) || 0)),
+    texture?.format ?? ""
+  ].join(":");
+}
+
+function surfaceSceneMaterialKey(scene = null) {
+  const keys = [];
+  scene?.traverse?.((node) => {
+    for (const material of materialArray(node?.material)) {
+      keys.push([
+        material?.uuid || material?.id || material?.name || "material",
+        material?.type || "",
+        material?.version ?? 0,
+        material?.needsUpdate === true ? 1 : 0
+      ].join(":"));
+    }
+  });
+  return keys.join("|");
+}
+
+function scheduleSurfaceAirbrushCompileAsync(
+  editor = null,
+  renderer = null,
+  cache = null,
+  scene = null,
+  camera = null,
+  target = null,
+  label = "surface"
+) {
+  if (
+    !editor
+    || !renderer
+    || !cache
+    || !scene
+    || !camera
+    || typeof renderer.compileAsync !== "function"
+  ) {
+    return false;
+  }
+  const key = [
+    String(label || "surface"),
+    surfaceCompileTargetKey(target),
+    surfaceSceneMaterialKey(scene)
+  ].join("|");
+  cache.asyncCompileStates ||= new Map();
+  const existing = cache.asyncCompileStates.get(key);
+  if (existing === true || existing?.pending === true) {
+    return false;
+  }
+  const previousTarget = typeof renderer.getRenderTarget === "function"
+    ? renderer.getRenderTarget()
+    : null;
+  let promise = null;
+  try {
+    renderer.setRenderTarget(target || null);
+    promise = renderer.compileAsync(scene, camera);
+  } catch (error) {
+    cache.texturePaintTslSurfaceLastCompileError = String(error?.message || error || "");
+    return false;
+  } finally {
+    renderer.setRenderTarget(previousTarget);
+  }
+  if (!promise || typeof promise.then !== "function") {
+    return false;
+  }
+  const state = {
+    pending: true,
+    label: String(label || "surface"),
+    startedAt: surfaceAirbrushNowMs()
+  };
+  cache.asyncCompileStates.set(key, state);
+  editor.texturePaintTslSurfaceAirbrushCompilePromises ||= new Set();
+  editor.texturePaintTslSurfaceAirbrushCompilePromises.add(promise);
+  promise.then(() => {
+    state.pending = false;
+    state.completedAt = surfaceAirbrushNowMs();
+    cache.asyncCompileStates.set(key, true);
+    cache.texturePaintTslSurfaceLastCompileError = "";
+  }, (error) => {
+    state.pending = false;
+    state.error = String(error?.message || error || "");
+    cache.texturePaintTslSurfaceLastCompileError = state.error;
+    cache.asyncCompileStates.delete(key);
+  }).finally(() => {
+    editor.texturePaintTslSurfaceAirbrushCompilePromises?.delete?.(promise);
+  });
+  return true;
+}
+
 function scheduleSurfaceAirbrushParkedResourceReap(editor = null) {
   if (!editor || editor.texturePaintTslSurfaceAirbrushParkedResourceReapScheduled === true) {
     return false;
@@ -2362,7 +2456,7 @@ function ensureSurfaceDisplayTarget(cache = null, width = 1, height = 1, referen
   cache.displayTarget = target;
   copyTextureSettings(target.texture, referenceTexture);
   target.texture.name = "texture-paint-tsl-surface-airbrush-display";
-  target.texture.flipY = false;
+  target.texture.flipY = referenceTexture?.flipY === true;
   bindSurfaceDisplayTextureMetadata(target.texture, null, referenceTexture, null);
   return target;
 }
@@ -2383,7 +2477,7 @@ function ensureSurfacePrewarmDisplayTarget(cache = null, width = 1, height = 1, 
   }
   if (cache.prewarmDisplayTarget?.texture) {
     cache.prewarmDisplayTarget.texture.name = "texture-paint-tsl-surface-airbrush-prewarm-display";
-    cache.prewarmDisplayTarget.texture.flipY = false;
+    cache.prewarmDisplayTarget.texture.flipY = referenceTexture?.flipY === true;
     bindSurfaceDisplayTextureMetadata(cache.prewarmDisplayTarget.texture, null, referenceTexture, null);
   }
   return cache.prewarmDisplayTarget?.texture ? cache.prewarmDisplayTarget : null;
@@ -2421,7 +2515,7 @@ function renderSurfaceDisplayTexture(
     renderer.setRenderTarget(previousTarget);
     renderer.autoClear = previousAutoClear;
   }
-  target.texture.flipY = false;
+  target.texture.flipY = referenceTexture?.flipY === true;
   bindSurfaceDisplayTextureMetadata(target.texture, sourceTexture, referenceTexture, originalMap);
   return target;
 }
@@ -2469,7 +2563,7 @@ function ensureSurfaceLayerCompositeTarget(cache = null, width = 1, height = 1, 
   cache.layerCompositeTarget = target;
   copyTextureSettings(target.texture, referenceTexture);
   target.texture.name = "texture-paint-tsl-surface-airbrush-layer-display";
-  target.texture.flipY = false;
+  target.texture.flipY = referenceTexture?.flipY === true;
   bindSurfaceDisplayTextureMetadata(target.texture, null, referenceTexture, null);
   if (!cache.layerCompositeScene) {
     cache.layerCompositeScene = new THREE.Scene();
@@ -2537,7 +2631,7 @@ function renderSurfaceLayerComposite(
     renderer.setRenderTarget(previousTarget);
     renderer.autoClear = previousAutoClear;
   }
-  target.texture.flipY = false;
+  target.texture.flipY = referenceTexture?.flipY === true;
   bindSurfaceDisplayTextureMetadata(target.texture, layerTexture, referenceTexture, surfaceAirbrushStableTextureFromLiveTarget(safeBaseTexture));
   return target;
 }
@@ -5832,6 +5926,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
     sourceTextureNode,
     visibleTextureNode,
     visibleSurfaceEnabled,
+    originalMeshUvRaster,
     editorViewMatrix: null,
     editorProjectionMatrix,
     editorViewportSize,
@@ -6147,6 +6242,7 @@ function createSurfaceMaterial(
     uvOccupancyTextureNode,
     uvOccupancyTexture: uvOccupancyTexture || null,
     visibleSurfaceEnabled,
+    originalMeshUvRaster,
     editorViewMatrix,
     editorProjectionMatrix,
     editorViewportSize,
@@ -6290,7 +6386,9 @@ function updateSurfaceMaterial(
   const previousUvOccupancyTexture = state.uvOccupancyTextureNode?.value || null;
   state.sourceTextureNode.value = shaderSourceTexture;
   if (state.sourceSampleFlipY) {
-    state.sourceSampleFlipY.value = textureNodeAppliesFlipY(shaderSourceTexture) ? 1 : 0;
+    state.sourceSampleFlipY.value = state.originalMeshUvRaster === true
+      ? 0
+      : textureNodeAppliesFlipY(shaderSourceTexture) ? 1 : 0;
   }
   if (state.visibleTextureNode) {
     state.visibleTextureNode.value = shaderVisibleTexture;
@@ -7266,6 +7364,14 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
   let renderedCompilePass = false;
   let renderedDilationPass = false;
   let renderedDisplayPass = false;
+  let queuedAsyncCompilePasses = 0;
+  const schedulePrewarmCompilePass = (scene = null, camera = null, target = null, label = "") => {
+    if (scheduleSurfaceAirbrushCompileAsync(editor, renderer, cache, scene, camera, target, label)) {
+      queuedAsyncCompilePasses += 1;
+      return true;
+    }
+    return false;
+  };
   if (options.renderCompilePass === true && prewarmTarget) {
     const previousTarget = typeof renderer.getRenderTarget === "function"
       ? renderer.getRenderTarget()
@@ -7281,13 +7387,16 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
         clearSurfacePrewarmStrokeMaskTarget(renderer, cache);
         renderer.setRenderTarget(strokeMaskTarget);
         renderer.autoClear = false;
+        schedulePrewarmCompilePass(cache.scene, cache.camera, strokeMaskTarget, "prewarm-surface-mask");
       } else {
         updateTextureCopyMaterial(cache.copyMaterial, prewarmBaseTexture);
         renderer.setRenderTarget(prewarmTarget);
         renderer.autoClear = true;
         renderer.clear?.();
+        schedulePrewarmCompilePass(cache.copyScene, cache.camera, prewarmTarget, "prewarm-base-copy");
         renderer.render(cache.copyScene, cache.camera);
         renderer.autoClear = false;
+        schedulePrewarmCompilePass(cache.scene, cache.camera, prewarmTarget, "prewarm-surface");
       }
       renderer.autoClear = false;
       renderer.render(cache.scene, cache.camera);
@@ -7303,6 +7412,12 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
             blendOnly: Boolean(layerMode),
             emptyLayerSource: layerSourceEmpty
           }
+        );
+        schedulePrewarmCompilePass(
+          cache.strokeCompositeScene,
+          cache.camera,
+          prewarmTarget,
+          "prewarm-stroke-composite"
         );
       }
       renderedCompilePass = true;
@@ -7347,8 +7462,26 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
 	            avoidTextures: surfaceLayerCompositeAvoidTextures(material, editable)
 	          }
         );
+        schedulePrewarmCompilePass(
+          cache.layerCompositeScene,
+          cache.layerCompositeCamera,
+          layerDisplay,
+          "prewarm-layer-display"
+        );
         renderedDisplayPass = Boolean(layerDisplay?.texture);
       } else {
+        const prewarmDisplayTarget = ensureSurfacePrewarmDisplayTarget(
+          cache,
+          width,
+          height,
+          coordinateReferenceTexture || referenceTexture || (dilationResult || prewarmTarget).texture
+        );
+        schedulePrewarmCompilePass(
+          cache.copyScene,
+          cache.camera,
+          prewarmDisplayTarget,
+          "prewarm-display-copy"
+        );
         const displayTarget = renderSurfaceDisplayTexture(
           renderer,
           cache,
@@ -7358,12 +7491,7 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
           height,
           materialOriginalMap,
           {
-            target: ensureSurfacePrewarmDisplayTarget(
-              cache,
-              width,
-              height,
-              coordinateReferenceTexture || referenceTexture || (dilationResult || prewarmTarget).texture
-            )
+            target: prewarmDisplayTarget
           }
 	        );
 	        renderedDisplayPass = Boolean(displayTarget?.texture);
@@ -7408,7 +7536,8 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
     renderedCompilePass,
     renderedVisibleSurface: Boolean(visibleTexture),
     renderedDilationPass,
-    renderedDisplayPass
+    renderedDisplayPass,
+    queuedAsyncCompilePasses
   });
 }
 

@@ -776,7 +776,9 @@ test("TSL surface airbrush prewarms the same seam-bleed live source raster", () 
   const prewarmDisplayBody = functionSource("ensureSurfacePrewarmDisplayTarget");
   assert.match(prewarmDisplayBody, /cache\.prewarmDisplayTarget/);
   assert.match(prewarmDisplayBody, /texture-paint-tsl-surface-airbrush-prewarm-display/);
-  assert.match(body, /target: ensureSurfacePrewarmDisplayTarget\(/);
+  assert.match(body, /const prewarmDisplayTarget = ensureSurfacePrewarmDisplayTarget\(/);
+  assert.match(body, /schedulePrewarmCompilePass\([\s\S]*?cache\.copyScene,[\s\S]*?cache\.camera,[\s\S]*?prewarmDisplayTarget,[\s\S]*?"prewarm-display-copy"/);
+  assert.match(body, /target: prewarmDisplayTarget/);
   const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
   assert.match(runBody, /const useOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled\(\)/);
   assert.doesNotMatch(runBody, /const useOriginalMeshUvRaster = layerMode[\s\S]*?\? false/);
@@ -792,8 +794,10 @@ test("TSL surface display targets are isolated from prewarm and previous materia
   assert.match(displayBody, /const avoidTextures = new Set/);
   assert.match(displayBody, /cache\.displayTargets \|\|= \[\]/);
   assert.match(displayBody, /!avoidTextures\.has\(candidate\.texture\)/);
+  assert.match(displayBody, /target\.texture\.flipY = referenceTexture\?\.flipY === true/);
   assert.match(renderDisplayBody, /options\.target \|\| ensureSurfaceDisplayTarget/);
   assert.match(renderDisplayBody, /avoidTextures: options\.avoidTextures/);
+  assert.match(renderDisplayBody, /target\.texture\.flipY = referenceTexture\?\.flipY === true/);
   assert.match(runBody, /avoidTextures: \[previousMaterialMap\]/);
 });
 
@@ -1169,8 +1173,11 @@ test("TSL surface airbrush visible-depth prepass uses the same material scope", 
 
 test("TSL original-mesh UV raster evaluates normals in the editor camera view", () => {
   const body = functionSource("createSurfaceMaterial");
+  const updateBody = functionSource("updateSurfaceMaterial");
   const originalMeshBranch = body.slice(body.indexOf("if (originalMeshUvRaster)"));
   assert.match(body, /normalWorldGeometry/);
+  assert.match(body, /originalMeshUvRaster,/);
+  assert.match(updateBody, /state\.sourceSampleFlipY\.value = state\.originalMeshUvRaster === true[\s\S]*?\? 0[\s\S]*?: textureNodeAppliesFlipY\(shaderSourceTexture\) \? 1 : 0/);
   assert.match(originalMeshBranch, /const editorView = editorViewMatrix\.mul\(worldPosition\)\.xyz\.toVar\(\)/);
   assert.match(originalMeshBranch, /paintNormal\.assign\(normalWorldGeometry\.transformDirection\(editorViewMatrix\)\)/);
   assert.doesNotMatch(originalMeshBranch, /paintNormal\.assign\(normalViewGeometry\)/);
