@@ -4232,10 +4232,16 @@ function copySurfaceBaseTexture(renderer = null, sourceTexture = null, target = 
     cache && (cache.texturePaintTslSurfaceLastBaseCopyError = "missing-copyTextureToTexture");
     return false;
   }
-  if (
-    typeof window === "undefined"
-    || !new URLSearchParams(window.location?.search || "").has("debugAirbrushNativeCopy")
-  ) {
+  const params = typeof window !== "undefined"
+    ? new URLSearchParams(window.location?.search || "")
+    : null;
+  const safeLiveTargetCopy = Boolean(
+    cache
+    && surfaceAirbrushCacheOwnsTexture(cache, sourceTexture)
+    && surfaceAirbrushTextureIsLiveTarget(sourceTexture)
+    && sourceTexture !== target.texture
+  );
+  if (!safeLiveTargetCopy && params?.has("debugAirbrushNativeCopy") !== true) {
     cache && (cache.texturePaintTslSurfaceLastBaseCopyError = "native-copy-disabled");
     return false;
   }

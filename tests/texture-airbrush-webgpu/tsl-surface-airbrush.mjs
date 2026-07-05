@@ -267,7 +267,10 @@ test("TSL surface airbrush copies the base before clipped raster writes", () => 
   const copyMaterialBody = functionSource("createTextureCopyMaterial");
   const textureSettingsBody = functionSource("copyTextureSettings");
   assert.match(body, /typeof renderer\.copyTextureToTexture !== "function"/);
-  assert.match(body, /debugAirbrushNativeCopy/);
+  assert.match(body, /const safeLiveTargetCopy = Boolean\(/);
+  assert.match(body, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);
+  assert.match(body, /surfaceAirbrushTextureIsLiveTarget\(sourceTexture\)/);
+  assert.match(body, /!safeLiveTargetCopy && params\?\.has\("debugAirbrushNativeCopy"\) !== true/);
   assert.match(body, /texturePaintTslSurfaceLastBaseCopyError = "missing-copyTextureToTexture"/);
   assert.match(body, /texturePaintTslSurfaceLastBaseCopyError = "native-copy-disabled"/);
   assert.match(body, /const sourceNeedsFlip = textureNodeAppliesFlipY\(sourceTexture\)/);
