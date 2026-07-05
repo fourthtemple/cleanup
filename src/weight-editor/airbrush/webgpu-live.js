@@ -1835,6 +1835,95 @@ function candidateUsesTslSurfaceDescriptor(candidate = null) {
     && candidate.options.visibilityMaskTriangles.length > 0;
 }
 
+function screenPathPointClose(left = null, right = null, tolerance = 1.25) {
+  const a = finitePoint(left);
+  const b = finitePoint(right);
+  if (!a || !b) {
+    return false;
+  }
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return dx * dx + dy * dy <= tolerance * tolerance;
+}
+
+function screenProjectedPathContainsQueuedPath(nextSegments = [], queuedSegments = []) {
+  const next = Array.isArray(nextSegments) ? nextSegments : [];
+  const queued = Array.isArray(queuedSegments) ? queuedSegments : [];
+  if (!next.length || !queued.length || next.length < queued.length) {
+    return false;
+  }
+  const queuedFirst = queued[0] || null;
+  const queuedLast = queued.at(-1) || null;
+  const nextFirst = next[0] || null;
+  if (!screenPathPointClose(nextFirst?.start, queuedFirst?.start)) {
+    return false;
+  }
+  const queuedLastEnd = queuedLast?.end || queuedLast?.start;
+  return next.some((segment) => screenPathPointClose(segment?.end || segment?.start, queuedLastEnd));
+}
+
+function sameLiveSurfaceQueueTarget(batch = null, candidate = null, context = {}) {
+  if (!batch || !candidate) {
+    return false;
+  }
+  const candidateLayerMode = candidate.layerMode === true || candidate.options?.layerMode === true;
+  const candidateErase = candidate.erase === true || candidate.options?.erase === true;
+  const batchLayerMode = batch.layerMode === true || batch.options?.layerMode === true;
+  const batchErase = batch.erase === true || batch.options?.erase === true;
+  return Boolean(
+    batch.record === candidate.record
+    && batch.material === candidate.material
+    && batch.editable === candidate.editable
+    && batch.materialIndex === candidate.materialIndex
+    && batch.styleKey === context.styleKey
+    && (batch.strokeUndo || null) === (context.strokeUndo || null)
+    && (batch.webGpuStrokeSourceOwner || null) === (context.strokeSourceOwner || null)
+    && batchLayerMode === candidateLayerMode
+    && batchErase === candidateErase
+  );
+}
+
+function staleQueuedTslSurfaceBatch(batch = null, candidate = null, context = {}) {
+  if (!candidateUsesTslSurfaceDescriptor(candidate) || !candidateUsesTslSurfaceDescriptor(batch)) {
+    return false;
+  }
+  if (!sameLiveSurfaceQueueTarget(batch, candidate, context)) {
+    return false;
+  }
+  const nextScreenSegments = Array.isArray(candidate?.options?.screenProjectedStrokeSegments)
+    ? candidate.options.screenProjectedStrokeSegments
+    : [];
+  const queuedScreenSegments = Array.isArray(batch?.options?.screenProjectedStrokeSegments)
+    ? batch.options.screenProjectedStrokeSegments
+    : [];
+  return screenProjectedPathContainsQueuedPath(nextScreenSegments, queuedScreenSegments);
+}
+
+function pruneStaleQueuedTslSurfaceBatches(editor = null, candidate = null, context = {}) {
+  const queue = editor?.textureAirbrushQueuedWebGpuStrokes || [];
+  if (!queue.length || !candidateUsesTslSurfaceDescriptor(candidate)) {
+    return 0;
+  }
+  const kept = [];
+  let removed = 0;
+  for (const batch of queue) {
+    if (staleQueuedTslSurfaceBatch(batch, candidate, context)) {
+      removed += 1;
+    } else {
+      kept.push(batch);
+    }
+  }
+  if (removed > 0) {
+    editor.textureAirbrushQueuedWebGpuStrokes = kept;
+    debugLiveWebGpuAirbrush("queue-pruned-stale-tsl-surface", {
+      removed,
+      remaining: kept.length,
+      screenProjectedStrokeSegments: candidate.options?.screenProjectedStrokeSegments?.length || 0
+    });
+  }
+  return removed;
+}
+
 function scopedProjectedPaintRegionsForSegment(candidate = null, segment = null) {
   if (!candidateUsesProjectedPaintRegions(candidate)) {
     return null;
@@ -3341,8 +3430,14 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
       const strokeUndo = candidate.strokeUndo || webGpuActiveStrokeUndo(this) || null;
       const strokeSourceOwner = webGpuCandidateStrokeSourceOwner(this, candidate, strokeUndo, undoKey);
       const strokeUndoKeys = webGpuStrokeUndoKeys(strokeUndo) || activeStrokeWebGpuUndoKeys(this);
+      const styleKey = webGpuQueuedCandidateStyleKey(candidate);
       const queuedSegments = candidateStrokeSegments(candidate);
       const chunks = webGpuCandidateSegmentChunks(candidate, queuedSegments);
+      pruneStaleQueuedTslSurfaceBatches(this, candidate, {
+        styleKey,
+        strokeUndo,
+        strokeSourceOwner
+      });
       let totalEstimate = 0;
       const {
         paintBounds: _candidatePaintBounds,

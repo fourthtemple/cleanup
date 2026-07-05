@@ -6258,6 +6258,86 @@ test("installed airbrush WebGPU live path merges screen-projected stroke segment
   );
 });
 
+test("installed airbrush WebGPU live queue replaces stale TSL surface full-path batches", () => {
+  class TestEditor {}
+  installTextureAirbrushWebGpuMethods(TestEditor);
+  const editor = new TestEditor();
+  const material = { uuid: "material-live-queue-tsl-replace" };
+  const record = { id: "record-live-queue-tsl-replace" };
+  const editable = {
+    texture: { uuid: "texture-live-queue-tsl-replace" },
+    canvas: { width: 1024, height: 1024 }
+  };
+  const triangle = {
+    a: { x: 20, y: 24 },
+    b: { x: 80, y: 24 },
+    c: { x: 20, y: 84 },
+    screenA: { x: 100, y: 100 },
+    screenB: { x: 160, y: 100 },
+    screenC: { x: 100, y: 160 }
+  };
+  const firstScreenSegment = {
+    start: { x: 100, y: 128 },
+    end: { x: 124, y: 128 },
+    radiusPixels: 36
+  };
+  const secondScreenSegment = {
+    start: { x: 124, y: 128 },
+    end: { x: 156, y: 128 },
+    radiusPixels: 36
+  };
+  const baseOptions = {
+    liveProjectedPaint: true,
+    screenStrokePaint: true,
+    visibilityMaskMode: "samples",
+    radiusPixels: 36,
+    opacity: 0.5,
+    hardness: 0.25,
+    scatter: 0.35,
+    strength: 1,
+    color: { r: 0, g: 255, b: 80 },
+    useVisibilityMask: true,
+    visibleSurfaceMaskReady: true,
+    fullProjectedSurfaceRenderTriangles: true,
+    visibilityMaskTriangles: [triangle]
+  };
+  const makeCandidate = (screenSegments, x = 48) => ({
+    record,
+    material,
+    materialIndex: 0,
+    editable,
+    center: { x, y: 48 },
+    radiusPixels: 36,
+    strokeSegments: [{ start: { x, y: 48 }, end: { x: x + 16, y: 48 } }],
+    estimate: 10,
+    options: {
+      ...baseOptions,
+      screenProjectedStrokeSegments: screenSegments,
+      strokeSegments: [{ start: { x, y: 48 }, end: { x: x + 16, y: 48 } }]
+    }
+  });
+
+  editor.textureAirbrushQueueWebGpuStrokeCandidate(makeCandidate([firstScreenSegment]), {
+    scheduleFlush: false
+  });
+  assert.equal(editor.textureAirbrushQueuedWebGpuStrokes.length, 1);
+  const staleBatch = editor.textureAirbrushQueuedWebGpuStrokes[0];
+
+  editor.textureAirbrushQueueWebGpuStrokeCandidate(makeCandidate([
+    firstScreenSegment,
+    secondScreenSegment
+  ], 256), {
+    scheduleFlush: false
+  });
+
+  assert.equal(editor.textureAirbrushQueuedWebGpuStrokes.length, 1);
+  assert.notEqual(editor.textureAirbrushQueuedWebGpuStrokes[0], staleBatch);
+  assert.deepEqual(
+    editor.textureAirbrushQueuedWebGpuStrokes[0].options.screenProjectedStrokeSegments.map((segment) => segment.end.x),
+    [124, 156]
+  );
+});
+
 test("installed airbrush WebGPU live path keeps screen-projected radius in screen pixels", () => {
   class TestEditor {}
   installTextureAirbrushWebGpuMethods(TestEditor);

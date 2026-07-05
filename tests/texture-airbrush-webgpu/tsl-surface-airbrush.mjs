@@ -1212,19 +1212,28 @@ test("TSL original-mesh UV raster evaluates normals in the editor camera view", 
   const projectionBody = functionSource("ensureSurfaceProjectionAttributes");
   const meshBody = functionSource("ensureUvRasterMeshes");
   const originalMeshBranch = body.slice(body.indexOf("if (originalMeshUvRaster)"));
+  const originalMeshOnlyBranch = originalMeshBranch.slice(
+    0,
+    originalMeshBranch.indexOf('paintUv.assign(attribute("sourceUv", "vec2"))')
+  );
   assert.match(body, /normalWorldGeometry/);
   assert.match(body, /originalMeshUvRaster,/);
   assert.match(updateBody, /state\.sourceSampleFlipY\.value = state\.originalMeshUvRaster === true[\s\S]*?\? 0[\s\S]*?: textureNodeAppliesFlipY\(shaderSourceTexture\) \? 1 : 0/);
   assert.match(projectionBody, /rasterGeometry\.setAttribute\("paintView", viewAttribute\)/);
   assert.match(projectionBody, /rasterGeometry\.setAttribute\("paintScreen", screenAttribute\)/);
   assert.match(projectionBody, /rasterGeometry\.setAttribute\("paintNormal", normalAttribute\)/);
+  assert.doesNotMatch(projectionBody, /rasterGeometry\.setAttribute\("paintComponent"/);
+  assert.match(projectionBody, /sourceObjectComponentKey\(editor, sourceObject\)/);
+  assert.match(projectionBody, /screenArray\[offset \+ 2\] = componentId >= 0 \? componentId \+ 1 : 0/);
   assert.match(meshBody, /ensureSurfaceProjectionAttributes\(entry, cache\.editor \|\| null\)/);
-  assert.match(originalMeshBranch, /paintView\.assign\(attribute\("paintView", "vec3"\)\)/);
-  assert.match(originalMeshBranch, /paintScreen\.assign\(attribute\("paintScreen", "vec3"\)\)/);
-  assert.match(originalMeshBranch, /paintNormal\.assign\(attribute\("paintNormal", "vec3"\)\)/);
-  assert.match(originalMeshBranch, /paintComponent\.assign\(float\(0\)\)/);
-  assert.doesNotMatch(originalMeshBranch, /modelWorldMatrix\.mul\(vec4\(positionLocal, 1\)\)/);
-  assert.doesNotMatch(originalMeshBranch, /paintNormal\.assign\(normalViewGeometry\)/);
+  assert.match(originalMeshOnlyBranch, /paintView\.assign\(attribute\("paintView", "vec3"\)\)/);
+  assert.match(originalMeshOnlyBranch, /paintScreen\.assign\(attribute\("paintScreen", "vec3"\)\)/);
+  assert.match(originalMeshOnlyBranch, /paintNormal\.assign\(attribute\("paintNormal", "vec3"\)\)/);
+  assert.match(originalMeshOnlyBranch, /paintComponent\.assign\(paintScreen\.z\)/);
+  assert.doesNotMatch(originalMeshOnlyBranch, /paintComponent\.assign\(attribute\("paintComponent", "float"\)\)/);
+  assert.doesNotMatch(originalMeshOnlyBranch, /paintComponent\.assign\(float\(0\)\)/);
+  assert.doesNotMatch(originalMeshOnlyBranch, /modelWorldMatrix\.mul\(vec4\(positionLocal, 1\)\)/);
+  assert.doesNotMatch(originalMeshOnlyBranch, /paintNormal\.assign\(normalViewGeometry\)/);
 });
 
 test("TSL surface airbrush exposes the source raster mode in debug summaries", () => {

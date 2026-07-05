@@ -5115,7 +5115,11 @@ function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
     normalAttribute = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
     rasterGeometry.setAttribute("paintNormal", normalAttribute);
   }
-  const projectionKey = surfaceProjectionFrameKey(editor, [sourceObject]);
+  const componentState = sourceObjectComponentState(editor, sourceObject);
+  const frameProjectionKey = surfaceProjectionFrameKey(editor, [sourceObject]);
+  const projectionKey = frameProjectionKey
+    ? [frameProjectionKey, sourceObjectComponentKey(editor, sourceObject)].join("|")
+    : "";
   if (
     projectionKey
     && entry.texturePaintTslSurfaceProjectionKey === projectionKey
@@ -5132,6 +5136,7 @@ function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
     const world = worldPositionForVertex(sourceObject, sourceGeometry, index);
     const screen = screenPointForWorld(editor, world);
     const normal = viewNormalForVertex(sourceObject, sourceGeometry, index, editor);
+    const componentId = finiteComponentId(componentState?.componentIds?.[index]);
     const offset = index * 3;
     if (screen) {
       viewArray[offset] = finiteNumber(screen.viewX, 0);
@@ -5139,7 +5144,7 @@ function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
       viewArray[offset + 2] = finiteNumber(screen.viewZ, 0);
       screenArray[offset] = finiteNumber(screen.x, -1000000);
       screenArray[offset + 1] = finiteNumber(screen.y, -1000000);
-      screenArray[offset + 2] = finiteNumber(screen.z, 0);
+      screenArray[offset + 2] = componentId >= 0 ? componentId + 1 : 0;
       normalArray[offset] = finiteNumber(normal?.x, 0);
       normalArray[offset + 1] = finiteNumber(normal?.y, 0);
       normalArray[offset + 2] = finiteNumber(normal?.z, 1);
@@ -5149,7 +5154,7 @@ function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
       viewArray[offset + 2] = 1000000;
       screenArray[offset] = -1000000;
       screenArray[offset + 1] = -1000000;
-      screenArray[offset + 2] = 0;
+      screenArray[offset + 2] = componentId >= 0 ? componentId + 1 : 0;
       normalArray[offset] = 0;
       normalArray[offset + 1] = 0;
       normalArray[offset + 2] = -1;
@@ -6123,7 +6128,7 @@ function createSurfaceMaterial(
       paintScreen.assign(attribute("paintScreen", "vec3"));
       paintNormal.assign(attribute("paintNormal", "vec3"));
       paintBarycentric.assign(vec3(1, 0, 0));
-      paintComponent.assign(float(0));
+      paintComponent.assign(paintScreen.z);
       return vec4(
         atlasUv.x.mul(2).sub(1),
         float(1).sub(atlasUv.y.mul(2)),

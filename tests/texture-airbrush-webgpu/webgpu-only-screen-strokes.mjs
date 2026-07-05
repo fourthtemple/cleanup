@@ -164,6 +164,48 @@ test("continuous WebGPU screen strokes collapse accumulated path duplicates befo
   );
 });
 
+test("continuous WebGPU screen strokes merge full paths without backtracking to stale curve points", () => {
+  class ScreenEditor {}
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  installEditorDefaults(editor);
+  const paintCalls = [];
+  editor.textureAirbrushWebGpuDevice = () => ({ label: "native-webgpu-device" });
+  editor.textureAirbrushResolveBackend = () => ({ backend: "webgpu", webGpuStatus: "ready" });
+  editor.textureAirbrushWebGpuPaintFromEvent = (event, options = {}) => {
+    paintCalls.push({ event, options });
+    return 1;
+  };
+  const p0 = { clientX: 10, clientY: 20 };
+  const p1 = { clientX: 20, clientY: 20 };
+  const p2 = { clientX: 30, clientY: 20 };
+  const p3 = { clientX: 42, clientY: 20 };
+  const payload = strokePayload({
+    clientX: p3.clientX,
+    clientY: p3.clientY,
+    strokeStart: p0,
+    curvePoints: [p1, p2],
+    continuousStrokePoints: [p0, p1, p2, p3]
+  });
+  editor.textureAirbrushContinuousScreenStrokePath = {
+    key: `${payload.styleKey}|no-undo|0|paint`,
+    strokeUndo: null,
+    points: [p0, p1, p2]
+  };
+  editor.textureAirbrushScreenStrokeQueue = [payload];
+
+  assert.equal(editor.flushTextureAirbrushScreenStroke({ live: true }), 1);
+  assert.equal(paintCalls.length, 1);
+  assert.deepEqual(
+    paintCalls[0].options.strokeSegments.map((segment) => [segment.start, segment.end]),
+    [
+      [p0, p1],
+      [p1, p2],
+      [p2, p3]
+    ]
+  );
+});
+
 test("default airbrush install does not add legacy WebGL backend methods", () => {
   class AppEditor {}
   installTextureAirbrushWebGpuMethods(AppEditor, { THREE: {} });

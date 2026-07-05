@@ -177,6 +177,60 @@ function appendUniqueClientPoint(points = [], point = null) {
   return true;
 }
 
+function appendContinuousClientPoint(points = [], point = null) {
+  const clone = cloneClientPoint(point);
+  if (!clone) {
+    return false;
+  }
+  if (!points.length) {
+    points.push(clone);
+    return true;
+  }
+  if (sameClientPoint(points.at(-1), clone)) {
+    return true;
+  }
+  if (points.length >= 2 && sameClientPoint(points.at(-2), clone)) {
+    points.pop();
+    return true;
+  }
+  points.push(clone);
+  return true;
+}
+
+function appendContinuousClientPoints(points = [], incoming = []) {
+  let appended = false;
+  for (const point of Array.isArray(incoming) ? incoming : []) {
+    appended = appendContinuousClientPoint(points, point) || appended;
+  }
+  return appended;
+}
+
+function mergeContinuousStrokePoints(existing = [], incoming = []) {
+  const points = normalizedContinuousStrokePoints(existing);
+  const incomingPoints = normalizedContinuousStrokePoints(incoming);
+  if (!incomingPoints.length) {
+    return points;
+  }
+  if (!points.length) {
+    appendContinuousClientPoints(points, incomingPoints);
+    return points;
+  }
+  const last = points.at(-1);
+  let resumeIndex = -1;
+  for (let index = incomingPoints.length - 1; index >= 0; index -= 1) {
+    if (sameClientPoint(incomingPoints[index], last)) {
+      resumeIndex = index;
+      break;
+    }
+  }
+  if (resumeIndex >= 0) {
+    appendContinuousClientPoints(points, incomingPoints.slice(resumeIndex + 1));
+    return points;
+  }
+  appendContinuousClientPoints(points, incomingPoints);
+  return points;
+}
+
 function payloadCurvePoints(payload = null, extraPoints = []) {
   const points = [];
   appendUniqueClientPoint(points, payload?.strokeStart);
@@ -208,7 +262,7 @@ function rememberPayloadCurvePoints(payload = null, extraPoints = []) {
 function normalizedContinuousStrokePoints(points = []) {
   const output = [];
   for (const point of Array.isArray(points) ? points : []) {
-    appendUniqueClientPoint(output, point);
+    appendContinuousClientPoint(output, point);
   }
   return output;
 }
@@ -2890,19 +2944,20 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const points = startsNewPath
         ? []
         : normalizedContinuousStrokePoints(existing.points);
-      for (const point of payloadCurvePoints(payload)) {
-        appendUniqueClientPoint(points, point);
-      }
+      const incomingContinuousPoints = continuousStrokePointsForPayload(payload);
+      const mergedPoints = incomingContinuousPoints.length >= 2
+        ? mergeContinuousStrokePoints(points, incomingContinuousPoints)
+        : mergeContinuousStrokePoints(points, payloadCurvePoints(payload));
       const maxPoints = Math.max(2, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS + 1);
-      if (points.length > maxPoints) {
-        points.splice(0, points.length - maxPoints);
+      if (mergedPoints.length > maxPoints) {
+        mergedPoints.splice(0, mergedPoints.length - maxPoints);
       }
       this.textureAirbrushContinuousScreenStrokePath = {
         key,
         strokeUndo: payload.strokeUndo || null,
-        points
+        points: mergedPoints
       };
-      return applyContinuousStrokePointsToPayload(payload, points);
+      return applyContinuousStrokePointsToPayload(payload, mergedPoints);
     },
 
     textureAirbrushResetStrokeSpacing() {
