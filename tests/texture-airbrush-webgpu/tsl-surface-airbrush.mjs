@@ -57,23 +57,22 @@ test("TSL surface airbrush keeps the final brush field surface-continuous", () =
   assert.doesNotMatch(body, /const depthSoftPermission/);
   assert.doesNotMatch(body, /const visibleHardPermission/);
   assert.doesNotMatch(source, /VISIBLE_SURFACE_DEPTH_GATE_/);
-  assert.doesNotMatch(body, /visibleBehindDepth|visibleDepthGate|visibleDepthCoverage/);
+  assert.doesNotMatch(body, /visibleBehindDepth|visibleDepthGate|visibleDepthCoverage|visibleGateCoverage/);
   assert.doesNotMatch(body, /visiblePermission|visibleSoftPermission/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(0\.85\)/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(0\.9\)/);
   assert.doesNotMatch(body, /mix\(visibleSoftPermission, visibleHardPermission, hardVisibleEdge\)/);
   assert.doesNotMatch(body, /visibleOccluded/);
   assert.doesNotMatch(body, /strokeNormalGate|strokeNormalRamp|strokeNormalCoverage|strokeNormalPresence/);
-  assert.match(body, /const viewStart = segmentViewStarts\.element\(i\)/);
-  assert.match(body, /const viewEnd = segmentViewEnds\.element\(i\)/);
-  assert.match(body, /const hasViewField = viewStart\.w\.greaterThan\(0\.0001\)\.and\(viewEnd\.w\.greaterThan\(0\.0001\)\)/);
+  assert.doesNotMatch(body, /segmentViewStarts\.element\(i\)/);
+  assert.doesNotMatch(body, /segmentViewEnds\.element\(i\)/);
+  assert.doesNotMatch(body, /const hasViewField =/);
   assert.doesNotMatch(body, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
   assert.doesNotMatch(body, /const viewDistanceCoverage = viewEdgeCoverage\.toVar\(\)/);
-  assert.match(body, /const viewDepthDelta = abs\(editorView\.z\.sub\(viewClosest\.z\)\)\.toVar\(\)/);
-  assert.match(body, /SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_SCALE/);
-  assert.match(body, /SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_SCALE/);
-  assert.match(body, /const viewDepthCoverage = float\(1\)\.sub\(viewDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(body, /const viewCoverage = viewDepthCoverage\.toVar\(\)/);
+  assert.doesNotMatch(body, /const viewDepthDelta = abs\(editorView\.z\.sub\(viewClosest\.z\)\)\.toVar\(\)/);
+  assert.doesNotMatch(source, /SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_SCALE/);
+  assert.doesNotMatch(source, /SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_SCALE/);
+  assert.doesNotMatch(body, /const visibleDepthFade =/);
   assert.doesNotMatch(body, /normalCompatibility/);
   assert.doesNotMatch(body, /surfacePlanePermission/);
   assert.doesNotMatch(body, /normalPlane/);
@@ -84,10 +83,9 @@ test("TSL surface airbrush keeps the final brush field surface-continuous", () =
   assert.doesNotMatch(body, /const screenOnlyCoverage = visibleActive\.greaterThan\(0\.5\)/);
   assert.doesNotMatch(body, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(body, /min\(screenCoverage, viewCoverage\)/);
-  assert.match(body, /const brushFieldCoverage = hasViewField[\s\S]*?\.select\(screenCoverage\.mul\(viewCoverage\), screenCoverage\)[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
   assert.match(body, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
   assert.match(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
-  assert.doesNotMatch(body, /\.mul\(visibleDepthCoverage\)/);
   assert.doesNotMatch(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthPermission\)/);
   assert.doesNotMatch(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(bridgePermission\)/);
   assert.doesNotMatch(body, /const surfaceCoverage = surfaceFieldCoverage[\s\S]*?viewDistancePermission/);
@@ -193,7 +191,7 @@ test("TSL projected gutter interpolation uses standard area barycentrics", () =>
   assert.doesNotMatch(body, /1 - u - v/);
 });
 
-test("TSL surface airbrush blocks visible screen-only fallback from painting hidden surfaces", () => {
+test("TSL surface airbrush keeps screen coverage independent of visible-depth masks", () => {
   const surfaceBody = functionSource("createSurfaceMaterial");
   const projectedBody = functionSource("createProjectedSurfaceMaterial");
   assert.doesNotMatch(surfaceBody, /viewDistancePermission/);
@@ -201,13 +199,13 @@ test("TSL surface airbrush blocks visible screen-only fallback from painting hid
   assert.doesNotMatch(surfaceBody, /depthPermission/);
   assert.doesNotMatch(surfaceBody, /depthHardPermission/);
   assert.doesNotMatch(surfaceBody, /const screenOnlyCoverage = visibleActive\.greaterThan\(0\.5\)/);
-  assert.match(surfaceBody, /const viewEnd = segmentViewEnds\.element\(i\)/);
+  assert.doesNotMatch(surfaceBody, /segmentViewEnds\.element\(i\)/);
   assert.doesNotMatch(surfaceBody, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
-  assert.match(surfaceBody, /const viewCoverage = viewDepthCoverage\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /visibleGateCoverage|visibleDepthCoverage/);
   assert.doesNotMatch(surfaceBody, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(surfaceBody, /const componentPermission = hasComponentGate/);
   assert.doesNotMatch(surfaceBody, /normalCompatibility|surfacePlanePermission/);
-  assert.match(surfaceBody, /const brushFieldCoverage = hasViewField[\s\S]*?\.select\(screenCoverage\.mul\(viewCoverage\), screenCoverage\)[\s\S]*?\.toVar\(\)/);
+  assert.match(surfaceBody, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
   assert.match(surfaceBody, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
   assert.match(surfaceBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
   assert.doesNotMatch(surfaceBody, /visibleCoverage|visiblePermission|visibleSoftPermission/);
@@ -229,13 +227,13 @@ test("TSL surface airbrush blocks visible screen-only fallback from painting hid
   assert.match(projectedBody, /gutterOnly[\s\S]*?\.select\(insideOriginalTriangle\.or\(noCoverage\), noCoverage\)/);
   assert.match(projectedBody, /discardFragment\.discard\(\)/);
   assert.doesNotMatch(projectedBody, /const screenOnlyCoverage = visibleActive\.greaterThan\(0\.5\)/);
-  assert.match(projectedBody, /const viewEnd = segmentViewEnds\.element\(i\)/);
+  assert.doesNotMatch(projectedBody, /segmentViewEnds\.element\(i\)/);
   assert.doesNotMatch(projectedBody, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
-  assert.match(projectedBody, /const viewCoverage = viewDepthCoverage\.toVar\(\)/);
+  assert.doesNotMatch(projectedBody, /visibleGateCoverage|visibleDepthCoverage/);
   assert.doesNotMatch(projectedBody, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(projectedBody, /const componentPermission = hasComponentGate/);
   assert.doesNotMatch(projectedBody, /normalCompatibility|surfacePlanePermission/);
-  assert.match(projectedBody, /const brushFieldCoverage = hasViewField[\s\S]*?\.select\(screenCoverage\.mul\(viewCoverage\), screenCoverage\)[\s\S]*?\.toVar\(\)/);
+  assert.match(projectedBody, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
   assert.doesNotMatch(projectedBody, /viewRadiusRaw\.greaterThan\(0\.0001\)[\s\S]*?\.select\(mix\(viewCoverage/);
   assert.doesNotMatch(projectedBody, /screenCoverage\.mul\(surfaceGate\)/);
 });
@@ -266,7 +264,6 @@ test("TSL surface airbrush evaluates coverage in captured hit-screen space", () 
 test("TSL surface airbrush copies the base before clipped raster writes", () => {
   const body = functionSource("copySurfaceBaseTexture");
   const strokeBaseBody = functionSource("ensureSurfaceStrokeBaseTexture");
-  const directBaseBody = functionSource("surfaceAirbrushCanUseDirectStrokeBase");
   const copyMaterialBody = functionSource("createTextureCopyMaterial");
   const textureSettingsBody = functionSource("copyTextureSettings");
   assert.match(body, /typeof renderer\.copyTextureToTexture !== "function"/);
@@ -284,7 +281,7 @@ test("TSL surface airbrush copies the base before clipped raster writes", () => 
   assert.match(strokeBaseBody, /surfaceAirbrushStableTextureFromLiveTarget\(sourceTexture\)/);
   assert.match(strokeBaseBody, /copySurfaceBaseTexture\(renderer, sourceTexture, cache\.strokeBaseTarget, cache\)/);
   assert.match(strokeBaseBody, /texturePaintTslSurfaceLastStrokeBaseCopy = copiedBaseTexture \? "gpu-copy" : "shader-copy"/);
-  assert.match(directBaseBody, /surfaceAirbrushCachePaintTargetIndex\(cache, texture\) >= 0/);
+  assert.doesNotMatch(strokeBaseBody, /direct-paint-target/);
   assert.match(textureSettingsBody, /targetTexture\.colorSpace = referenceTexture\.colorSpace/);
   assert.match(textureSettingsBody, /targetTexture\.flipY = false/);
   assert.match(textureSettingsBody, /texturePaintTslSurfaceDisplayFlipY = referenceTexture\.flipY === true/);
@@ -309,8 +306,8 @@ test("TSL surface airbrush feathers normal cutoff for soft strokes and hard-cuts
   assert.doesNotMatch(source, /SURFACE_NORMAL_COMPATIBILITY_FULL/);
   assert.match(source, /const VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS = 0\.18/);
   assert.doesNotMatch(source, /VISIBLE_SURFACE_DEPTH_RADIUS|VISIBLE_SURFACE_DEPTH_FEATHER_RADIUS/);
-  assert.match(source, /const SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_SCALE = 0\.08/);
-  assert.match(source, /const SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_SCALE = 0\.08/);
+  assert.doesNotMatch(source, /SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_SCALE/);
+  assert.doesNotMatch(source, /SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_SCALE/);
   assert.doesNotMatch(body, /strokeNormalGate|strokeNormalRamp|strokeNormalCoverage|strokeNormalPresence/);
   assert.doesNotMatch(body, /strokeFacingSign/);
   assert.doesNotMatch(body, /mix\(float\(1\), strokeFacingSign, normalPresence\)/);
@@ -332,8 +329,8 @@ test("TSL surface airbrush feathers normal cutoff for soft strokes and hard-cuts
   assert.match(projectedBody, /const visibleFacingSampleZ = visibleSample\.g\.mul\(2\.0\)\.sub\(1\.0\)\.toVar\(\)/);
   assert.match(projectedBody, /const visibleNormalRescue = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?visibleDelta\.lessThanEqual\(VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS\)/);
   assert.doesNotMatch(source, /VISIBLE_SURFACE_DEPTH_GATE_/);
-  assert.doesNotMatch(body, /visibleBehindDepth|visibleDepthGate|visibleDepthCoverage/);
-  assert.doesNotMatch(projectedBody, /visibleBehindDepth|visibleDepthGate|visibleDepthCoverage/);
+  assert.doesNotMatch(body, /visibleBehindDepth|visibleDepthGate|visibleDepthCoverage|visibleGateCoverage/);
+  assert.doesNotMatch(projectedBody, /visibleBehindDepth|visibleDepthGate|visibleDepthCoverage|visibleGateCoverage/);
   assert.doesNotMatch(body, /visibleRadius|visibleFeatherRadius/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(0\.85\)/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(0\.9\)/);
@@ -382,23 +379,20 @@ test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
     [...body.matchAll(/radius\.mul\(float\(1\)\.add\(scatter\.mul\(0\.15\)\)\)\.toVar\(\)/g)].length >= 1,
     "screen brush halo should keep scatter visible without doubling the configured brush radius"
   );
-  assert.ok(
-    [...body.matchAll(/viewRadius\.mul\(float\(1\)\.add\(scatter\.mul\(0\.15\)\)\)\.toVar\(\)/g)].length >= 1,
-    "view brush halo should match the screen-space outer radius"
-  );
+  assert.doesNotMatch(body, /viewRadius\.mul\(float\(1\)\.add\(scatter\.mul\(0\.15\)\)\)\.toVar\(\)/);
   assert.doesNotMatch(body, /softness\.mul\(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE\)/);
   assert.doesNotMatch(body, /scatter\.mul\(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE\)/);
   assert.doesNotMatch(body, /tailAlpha|tailCoverage|tailSmooth/);
   assert.match(body, /const fadeRadius = max\(haloRadius\.sub\(coreRadius\), 0\.0001\)/);
   assert.match(body, /const edgeCoverage = max\(0\.0, float\(1\)\.sub\(smoothEdge\)\)\.toVar\(\)/);
   assert.match(body, /const screenCoverage = edgeCoverage\.toVar\(\)/);
-  assert.match(body, /const viewEnd = segmentViewEnds\.element\(i\)/);
+  assert.doesNotMatch(body, /segmentViewEnds\.element\(i\)/);
   assert.doesNotMatch(body, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
   assert.doesNotMatch(body, /const viewDistanceCoverage = viewEdgeCoverage\.toVar\(\)/);
   assert.doesNotMatch(body, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(body, /const componentPermission = hasComponentGate/);
   assert.doesNotMatch(body, /normalCompatibility|surfacePlanePermission/);
-  assert.match(body, /const brushFieldCoverage = hasViewField[\s\S]*?\.select\(screenCoverage\.mul\(viewCoverage\), screenCoverage\)[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
   assert.match(body, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
   assert.match(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
   assert.doesNotMatch(body, /visibleCoverage|visiblePermission|visibleSoftPermission/);
@@ -1095,7 +1089,8 @@ test("TSL surface brush coverage respects connected-component gated segments", (
   const surfaceBody = functionSource("createSurfaceMaterial");
   for (const materialBody of [projectedBody, surfaceBody]) {
     assert.match(materialBody, /const segmentComponent = segmentComponents\.element\(i\)/);
-    assert.match(materialBody, /const componentGate = paintComponent\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.x\)\)\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.y\)\)\.lessThan\(0\.5\)/);
+    assert.match(materialBody, /const connectedComponentGate = paintComponent\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.x\)\)\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.y\)\)\.lessThan\(0\.5\)/);
+    assert.match(materialBody, /const componentGate = visibleActive\.greaterThan\(0\.5\)[\s\S]*?\.select\(float\(1\), connectedComponentGate\)[\s\S]*?\.toVar\(\)/);
     assert.match(materialBody, /\.mul\(componentGate\)[\s\S]*?\.mul\(normalGate\)/);
   }
 });
@@ -1110,11 +1105,10 @@ test("TSL surface airbrush does not stencil soft strokes through the visible-dep
   assert.match(updateBody, /state\.visibleSurfaceEnabled\.value = options\.debugVisibleSurfaceDepth === true && visibleTexture \? 1 : 0/);
   assert.match(updateBody, /state\.visibleNormalEdge\.value = debugParams\?\.has\("debugAirbrushNoNormalGate"\) === true[\s\S]*?\? 0[\s\S]*?: visibleEdgeMode === "hard" \|\| visibleEdgeMode === "soft" \? 1 : 0/);
   assert.match(body, /debugVisibleSurfaceDepth: needsVisibleSurfaceTexture/);
-  assert.match(materialBody, /const viewDepthCoverage = float\(1\)\.sub\(viewDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(materialBody, /const brushFieldCoverage = hasViewField[\s\S]*?\.select\(screenCoverage\.mul\(viewCoverage\), screenCoverage\)[\s\S]*?\.toVar\(\)/);
-  assert.doesNotMatch(materialBody, /visibleDepthGate|visibleDepthCoverage|visibleBehindDepth/);
+  assert.doesNotMatch(materialBody, /visibleDepthCoverage|visibleDepthSmoothFade|visibleDepthFade|visibleGateCoverage/);
+  assert.match(materialBody, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
+  assert.doesNotMatch(materialBody, /visibleDepthGate|visibleBehindDepth/);
   assert.match(materialBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
-  assert.doesNotMatch(materialBody, /\.mul\(visibleDepthCoverage\)/);
   assert.doesNotMatch(materialBody, /visiblePermission|visibleSoftPermission/);
   assert.doesNotMatch(materialBody, /strokeNormalGate|strokeNormalRamp|strokeNormalCoverage|strokeNormalPresence/);
   assert.doesNotMatch(materialBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthPermission\)/);
@@ -1225,15 +1219,10 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.match(body, /tslSurfaceStrokeSourceOwner: Boolean\(strokeSourceOwner\),[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /tslSurfaceStrokeMaskCleared: false,[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /cache\.strokeBaseTexture = null/);
-  assert.match(body, /surfaceAirbrushCanUseDirectStrokeBase\(cache, sourceTexture\)/);
-  assert.match(body, /cache\.texturePaintTslSurfaceLastStrokeBaseCopy = "direct-paint-target"/);
   assert.match(body, /cache\.strokeBaseTexture = ensureSurfaceStrokeBaseTexture/);
   assert.match(body, /const baseTexture = cache\.strokeBaseTexture \|\| sourceTexture/);
   assert.doesNotMatch(strokeBaseBody, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)\) \{\s*return sourceTexture;/);
-  assert.doesNotMatch(
-    functionSource("surfaceAirbrushCanUseDirectStrokeBase"),
-    /surfaceAirbrushCacheOwnsTexture\(cache, texture\)/
-  );
+  assert.doesNotMatch(body, /direct-paint-target/);
 });
 
 test("TSL surface airbrush renders live segments instead of retaining a stale target", () => {

@@ -30,10 +30,6 @@ const SURFACE_AIRBRUSH_RETIRE_MIN_AGE_MS = 5000;
 const SOFT_FACING_NORMAL_BACK_FEATHER = 0.0;
 const SOFT_FACING_NORMAL_FRONT_FEATHER = 0.12;
 const VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS = 0.18;
-const SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_SCALE = 0.08;
-const SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_MIN = 0.9;
-const SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_SCALE = 0.08;
-const SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_MIN = 0.45;
 
 const _scratchUv = new THREE.Vector2();
 const _scratchWorld = new THREE.Vector3();
@@ -706,17 +702,6 @@ function surfaceAirbrushCacheOwnsTexture(cache = null, texture = null) {
     return true;
   }
   return false;
-}
-
-function surfaceAirbrushCachePaintTargetIndex(cache = null, texture = null) {
-  if (!cache || !texture) {
-    return -1;
-  }
-  return (cache.targets || []).findIndex((target) => target?.texture === texture);
-}
-
-function surfaceAirbrushCanUseDirectStrokeBase(cache = null, texture = null) {
-  return surfaceAirbrushCachePaintTargetIndex(cache, texture) >= 0;
 }
 
 function markSurfaceAirbrushResourceRetired(resource = null) {
@@ -5695,38 +5680,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const smoothEdge = shapedEdge.mul(shapedEdge).mul(float(3).sub(shapedEdge.mul(2))).toVar();
         const edgeCoverage = max(0.0, float(1).sub(smoothEdge)).toVar();
         const screenCoverage = edgeCoverage.toVar();
-        const viewStart = segmentViewStarts.element(i);
-        const viewEnd = segmentViewEnds.element(i);
-        const viewRadius = max(viewStart.w, 0.0001);
-        const hasViewField = viewStart.w.greaterThan(0.0001).and(viewEnd.w.greaterThan(0.0001));
-        const viewHaloRadius = viewRadius.mul(float(1).add(scatter.mul(0.15))).toVar();
-        const viewVector = viewEnd.xyz.sub(viewStart.xyz).toVar();
-        const viewLengthSq = max(dot(viewVector, viewVector), 0.000001);
-        const viewT = clamp(dot(editorView.sub(viewStart.xyz), viewVector).div(viewLengthSq), 0.0, 1.0).toVar();
-        const viewClosest = viewStart.xyz.add(viewVector.mul(viewT));
-        const viewDepthDelta = abs(editorView.z.sub(viewClosest.z)).toVar();
-        const viewDepthRadius = max(
-          SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_MIN,
-          viewRadius.mul(SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_SCALE)
-        ).toVar();
-        const viewDepthFeather = max(
-          SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_MIN,
-          viewRadius.mul(SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_SCALE)
-        ).toVar();
-        const viewDepthFade = clamp(
-          viewDepthDelta.sub(viewDepthRadius).div(max(viewDepthFeather, 0.0001)),
-          0.0,
-          1.0
-        ).toVar();
-        const viewDepthSmoothFade = viewDepthFade
-          .mul(viewDepthFade)
-          .mul(float(3).sub(viewDepthFade.mul(2)))
-          .toVar();
-        const viewDepthCoverage = float(1).sub(viewDepthSmoothFade).toVar();
-        const viewCoverage = viewDepthCoverage.toVar();
-        const brushFieldCoverage = hasViewField
-          .select(screenCoverage.mul(viewCoverage), screenCoverage)
-          .toVar();
+        const brushFieldCoverage = screenCoverage.toVar();
         const surfaceFieldCoverage = brushFieldCoverage.toVar();
         const gatedCoverage = surfaceFieldCoverage.toVar();
         const insideOriginalTriangle = min(
@@ -5737,11 +5691,14 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const baseSampleCoverage = projectedPaintGutterOnly.greaterThan(0.5)
           .select(gutterCoverage, gatedCoverage)
           .toVar();
-        const componentGate = paintComponent.lessThan(0.5)
+        const connectedComponentGate = paintComponent.lessThan(0.5)
           .or(segmentComponent.x.lessThan(0.5).and(segmentComponent.y.lessThan(0.5)))
           .or(abs(paintComponent.sub(segmentComponent.x)).lessThan(0.5))
           .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
           .select(float(1), float(0))
+          .toVar();
+        const componentGate = visibleActive.greaterThan(0.5)
+          .select(float(1), connectedComponentGate)
           .toVar();
         const sampleCoverage = baseSampleCoverage
           .mul(componentGate)
@@ -6044,44 +6001,16 @@ function createSurfaceMaterial(
         const smoothEdge = shapedEdge.mul(shapedEdge).mul(float(3).sub(shapedEdge.mul(2))).toVar();
         const edgeCoverage = max(0.0, float(1).sub(smoothEdge)).toVar();
         const screenCoverage = edgeCoverage.toVar();
-        const viewStart = segmentViewStarts.element(i);
-        const viewEnd = segmentViewEnds.element(i);
-        const viewRadius = max(viewStart.w, 0.0001);
-        const hasViewField = viewStart.w.greaterThan(0.0001).and(viewEnd.w.greaterThan(0.0001));
-        const viewHaloRadius = viewRadius.mul(float(1).add(scatter.mul(0.15))).toVar();
-        const viewVector = viewEnd.xyz.sub(viewStart.xyz).toVar();
-        const viewLengthSq = max(dot(viewVector, viewVector), 0.000001);
-        const viewT = clamp(dot(editorView.sub(viewStart.xyz), viewVector).div(viewLengthSq), 0.0, 1.0).toVar();
-        const viewClosest = viewStart.xyz.add(viewVector.mul(viewT));
-        const viewDepthDelta = abs(editorView.z.sub(viewClosest.z)).toVar();
-        const viewDepthRadius = max(
-          SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_MIN,
-          viewRadius.mul(SURFACE_AIRBRUSH_VIEW_DEPTH_RADIUS_SCALE)
-        ).toVar();
-        const viewDepthFeather = max(
-          SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_MIN,
-          viewRadius.mul(SURFACE_AIRBRUSH_VIEW_DEPTH_FEATHER_SCALE)
-        ).toVar();
-        const viewDepthFade = clamp(
-          viewDepthDelta.sub(viewDepthRadius).div(max(viewDepthFeather, 0.0001)),
-          0.0,
-          1.0
-        ).toVar();
-        const viewDepthSmoothFade = viewDepthFade
-          .mul(viewDepthFade)
-          .mul(float(3).sub(viewDepthFade.mul(2)))
-          .toVar();
-        const viewDepthCoverage = float(1).sub(viewDepthSmoothFade).toVar();
-        const viewCoverage = viewDepthCoverage.toVar();
-        const brushFieldCoverage = hasViewField
-          .select(screenCoverage.mul(viewCoverage), screenCoverage)
-          .toVar();
+        const brushFieldCoverage = screenCoverage.toVar();
         const surfaceFieldCoverage = brushFieldCoverage.toVar();
-        const componentGate = paintComponent.lessThan(0.5)
+        const connectedComponentGate = paintComponent.lessThan(0.5)
           .or(segmentComponent.x.lessThan(0.5).and(segmentComponent.y.lessThan(0.5)))
           .or(abs(paintComponent.sub(segmentComponent.x)).lessThan(0.5))
           .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
           .select(float(1), float(0))
+          .toVar();
+        const componentGate = visibleActive.greaterThan(0.5)
+          .select(float(1), connectedComponentGate)
           .toVar();
         const gatedCoverage = surfaceFieldCoverage
           .mul(componentGate)
@@ -7743,11 +7672,6 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       cache.texturePaintTslSurfaceLastStrokeBaseCopy = layerSourceEmpty
         ? "transparent-layer"
         : "transparent-layer-continuation";
-    } else if (surfaceAirbrushCanUseDirectStrokeBase(cache, sourceTexture)) {
-      cache.strokeBaseTexture = sourceTexture;
-      cache.strokeBaseWasEmptyLayer = false;
-      cache.strokeBaseEmptyLayerOwner = null;
-      cache.texturePaintTslSurfaceLastStrokeBaseCopy = "direct-paint-target";
     } else {
       cache.strokeBaseTexture = ensureSurfaceStrokeBaseTexture(
         renderer,
@@ -7875,10 +7799,10 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     ? "hard"
     : "soft";
   const needsVisibleSurfaceTexture = false;
-	  const visibleTarget = null;
+  const visibleTarget = null;
   markPrepTiming("visibleSurface");
-	  const visibleTexture = visibleTarget?.texture || null;
-	  const uvOccupancyTexture = !useProjectedPrimary
+  const visibleTexture = visibleTarget?.texture || null;
+  const uvOccupancyTexture = !useProjectedPrimary
     ? ensureUvOccupancyMask(
         renderer,
         cache,
@@ -7891,10 +7815,10 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
         sourceObject,
         materialIndex,
         materialScopeOptions
-	      )
-	    : null;
+      )
+    : null;
   markPrepTiming("uvOccupancy");
-	  let surfaceMeshEntries = [];
+  let surfaceMeshEntries = [];
   if (useProjectedPrimary) {
     for (const entry of cache.surfaceMeshes || []) {
       if (entry?.mesh) {
