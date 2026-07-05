@@ -1080,6 +1080,7 @@ test("TSL layer-mode strokes stay on the active paint layer GPU target", () => {
 
 test("TSL layer-mode live display keeps lower layer composites as underlays", () => {
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
+  const prewarmBody = functionSource("texturePaintPrewarmTslSurfaceAirbrush");
   const underlayBody = functionSource("surfaceLayerDisplayUnderlayTexture");
   const targetBody = functionSource("ensureSurfaceLayerCompositeTarget");
   const compositeBody = functionSource("renderSurfaceLayerComposite");
@@ -1093,7 +1094,13 @@ test("TSL layer-mode live display keeps lower layer composites as underlays", ()
   assert.match(targetBody, /const avoidTextures = new Set/);
   assert.match(targetBody, /cache\.layerCompositeTargets \|\|= \[\]/);
   assert.match(targetBody, /!avoidTextures\.has\(candidate\.texture\)/);
+  assert.match(source, /const MAX_TSL_SURFACE_LAYER_COMPOSITE_TARGETS = 4/);
+  assert.match(targetBody, /targets\.length < MAX_TSL_SURFACE_LAYER_COMPOSITE_TARGETS/);
+  assert.match(targetBody, /const reusableIndex = targets\.findIndex\(\(candidate\) => candidate\?\.texture && !avoidTextures\.has\(candidate\.texture\)\)/);
+  assert.doesNotMatch(targetBody, /targets\.find\(\(candidate\) => candidate\?\.texture\) \|\| null/);
   assert.match(compositeBody, /avoidTextures: \[baseTexture, layerTexture\]/);
+  assert.match(prewarmBody, /const prewarmLayerDisplayBaseTexture = surfaceLayerDisplayUnderlayTexture\(/);
+  assert.match(prewarmBody, /prewarmLayerDisplayBaseTexture \|\| layerBaseTexture \|\| coordinateReferenceTexture \|\| referenceTexture/);
 });
 
 test("TSL surface brush coverage respects connected-component gated segments", () => {

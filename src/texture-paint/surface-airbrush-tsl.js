@@ -16,6 +16,7 @@ import {
 const MAX_TSL_SURFACE_SEGMENTS = Math.min(48, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
 const MAX_TSL_SURFACE_STROKE_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
 const MAX_TSL_SURFACE_STROKE_MASK_SIZE = 4096;
+const MAX_TSL_SURFACE_LAYER_COMPOSITE_TARGETS = 4;
 const UV_GUTTER_PIXELS = 0;
 const UV_SEAM_BLEED_PIXELS = 8;
 const UV_OVERLAP_MASK_SIZE = 1024;
@@ -2418,11 +2419,17 @@ function ensureSurfaceLayerCompositeTarget(cache = null, width = 1, height = 1, 
     candidate?.texture && !avoidTextures.has(candidate.texture)
   )) || null;
   if (!target) {
-    if (targets.length < 2) {
+    if (targets.length < MAX_TSL_SURFACE_LAYER_COMPOSITE_TARGETS) {
       target = createRenderTarget(width, height, referenceTexture);
       targets.push(target);
     } else {
-      target = targets.find((candidate) => candidate?.texture) || null;
+      const reusableIndex = targets.findIndex((candidate) => candidate?.texture && !avoidTextures.has(candidate.texture));
+      if (reusableIndex >= 0) {
+        target = targets[reusableIndex];
+      } else {
+        target = createRenderTarget(width, height, referenceTexture);
+        targets.push(target);
+      }
     }
   }
   if (!target?.texture) {
@@ -7286,16 +7293,23 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
 	        }
 	        prewarmLayerTarget = prewarmTarget;
 	      }
-      if (layerMode) {
-        const layerDisplay = renderSurfaceLayerComposite(
-          renderer,
-          cache,
-	          layerBaseTexture || coordinateReferenceTexture || referenceTexture,
-	          prewarmLayerTarget.texture,
-	          layerBaseTexture || coordinateReferenceTexture || referenceTexture,
-	          width,
-	          height,
-          editable.layer?.opacity ?? 1
+	      if (layerMode) {
+	        const prewarmLayerDisplayBaseTexture = surfaceLayerDisplayUnderlayTexture(
+	          editor,
+	          material,
+	          editable,
+	          materialOriginalMap,
+	          layerBaseTexture || coordinateReferenceTexture || referenceTexture
+	        );
+	        const layerDisplay = renderSurfaceLayerComposite(
+	          renderer,
+	          cache,
+		          prewarmLayerDisplayBaseTexture || layerBaseTexture || coordinateReferenceTexture || referenceTexture,
+		          prewarmLayerTarget.texture,
+		          prewarmLayerDisplayBaseTexture || layerBaseTexture || coordinateReferenceTexture || referenceTexture,
+		          width,
+		          height,
+	          editable.layer?.opacity ?? 1
         );
         renderedDisplayPass = Boolean(layerDisplay?.texture);
       } else {
