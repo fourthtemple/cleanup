@@ -2126,6 +2126,36 @@ function surfaceLayerDisplayUnderlayTexture(editor = null, material = null, edit
     || null;
 }
 
+function surfaceLayerCompositeAvoidTextures(material = null, editable = null) {
+  const textures = [];
+  const addTexture = (texture = null) => {
+    if (texture && !textures.includes(texture)) {
+      textures.push(texture);
+    }
+  };
+  const addTarget = (target = null) => addTexture(target?.texture || null);
+  addTexture(material?.map || null);
+  const materialUserData = material?.userData || {};
+  for (const entry of [
+    materialUserData.texturePaintCompositeGpuTarget,
+    materialUserData.texturePaintTslSurfaceAirbrushTarget
+  ]) {
+    addTarget(entry?.target || null);
+    addTarget(entry?.displayTarget || null);
+    addTarget(entry?.liveCompositeTarget || null);
+    addTexture(entry?.liveCompositeBaseTexture || null);
+  }
+  const stack = editable?.layerStack || materialUserData.texturePaintLayerStack || null;
+  for (const layer of stack?.layers || []) {
+    const entry = layer?.gpuTarget || null;
+    addTarget(entry?.target || null);
+    addTarget(entry?.displayTarget || null);
+    addTarget(entry?.liveCompositeTarget || null);
+    addTexture(entry?.liveCompositeBaseTexture || null);
+  }
+  return textures;
+}
+
 function surfaceLayerCanvasIsEmpty(layer = null) {
   const canvas = layer?.canvas || null;
   const context = canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
@@ -2475,7 +2505,11 @@ function renderSurfaceLayerComposite(
     return null;
   }
   const target = ensureSurfaceLayerCompositeTarget(cache, width, height, referenceTexture || baseTexture, {
-    avoidTextures: [baseTexture, layerTexture]
+    avoidTextures: [
+      baseTexture,
+      layerTexture,
+      ...(Array.isArray(options.avoidTextures) ? options.avoidTextures : [])
+    ]
   });
   const safeBaseTexture = baseTexture === target?.texture
     ? (
@@ -4242,7 +4276,10 @@ function updateLayerCompositeMaterial(
     state.alphaFallback.value = options.alphaFallback === true ? 1 : 0;
   }
   if (state.baseFlipY) {
-    state.baseFlipY.value = baseTexture?.flipY === true ? 1 : 0;
+    state.baseFlipY.value = (
+      baseTexture?.flipY === true
+      || baseTexture?.userData?.texturePaintTslSurfaceAirbrushDisplayTexture === true
+    ) ? 1 : 0;
   }
   if (state.layerFlipY) {
     state.layerFlipY.value = textureNodeAppliesFlipY(layerTexture) ? 1 : 0;
@@ -7309,7 +7346,10 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
 		          prewarmLayerDisplayBaseTexture || layerBaseTexture || coordinateReferenceTexture || referenceTexture,
 		          width,
 		          height,
-	          editable.layer?.opacity ?? 1
+	          editable.layer?.opacity ?? 1,
+	          {
+	            avoidTextures: surfaceLayerCompositeAvoidTextures(material, editable)
+	          }
         );
         renderedDisplayPass = Boolean(layerDisplay?.texture);
       } else {

@@ -826,6 +826,7 @@ test("TSL layer airbrush keeps empty layer writes in base texture coordinates", 
   assert.match(compositeBody, /const layerRgb = sourceAlpha\.greaterThan\(0\.0001\)[\s\S]*?layer\.rgb\.div\(max\(sourceAlpha, 0\.0001\)\)/);
   assert.match(updateCompositeBody, /state\.alphaScale\.value = clamp01\(options\.alphaScale \?\? 1\)/);
   assert.match(updateCompositeBody, /state\.alphaFallback\.value = options\.alphaFallback === true \? 1 : 0/);
+  assert.match(updateCompositeBody, /baseTexture\?\.userData\?\.texturePaintTslSurfaceAirbrushDisplayTexture === true/);
 });
 
 test("texture paint reset disposes layer GPU state and invalidates TSL surface cache", () => {
@@ -1082,6 +1083,7 @@ test("TSL layer-mode live display keeps lower layer composites as underlays", ()
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
   const prewarmBody = functionSource("texturePaintPrewarmTslSurfaceAirbrush");
   const underlayBody = functionSource("surfaceLayerDisplayUnderlayTexture");
+  const avoidBody = functionSource("surfaceLayerCompositeAvoidTextures");
   const targetBody = functionSource("ensureSurfaceLayerCompositeTarget");
   const compositeBody = functionSource("renderSurfaceLayerComposite");
   assert.match(body, /surfaceLayerDisplayUnderlayTexture\(/);
@@ -1098,9 +1100,16 @@ test("TSL layer-mode live display keeps lower layer composites as underlays", ()
   assert.match(targetBody, /targets\.length < MAX_TSL_SURFACE_LAYER_COMPOSITE_TARGETS/);
   assert.match(targetBody, /const reusableIndex = targets\.findIndex\(\(candidate\) => candidate\?\.texture && !avoidTextures\.has\(candidate\.texture\)\)/);
   assert.doesNotMatch(targetBody, /targets\.find\(\(candidate\) => candidate\?\.texture\) \|\| null/);
-  assert.match(compositeBody, /avoidTextures: \[baseTexture, layerTexture\]/);
+  assert.match(compositeBody, /avoidTextures: \[[\s\S]*?baseTexture,[\s\S]*?layerTexture,[\s\S]*?\.\.\.\(Array\.isArray\(options\.avoidTextures\) \? options\.avoidTextures : \[\]\)/);
   assert.match(prewarmBody, /const prewarmLayerDisplayBaseTexture = surfaceLayerDisplayUnderlayTexture\(/);
   assert.match(prewarmBody, /prewarmLayerDisplayBaseTexture \|\| layerBaseTexture \|\| coordinateReferenceTexture \|\| referenceTexture/);
+  assert.match(prewarmBody, /avoidTextures: surfaceLayerCompositeAvoidTextures\(material, editable\)/);
+  assert.match(avoidBody, /addTexture\(material\?\.map \|\| null\)/);
+  assert.match(avoidBody, /materialUserData\.texturePaintCompositeGpuTarget/);
+  assert.match(avoidBody, /materialUserData\.texturePaintTslSurfaceAirbrushTarget/);
+  assert.match(avoidBody, /for \(const layer of stack\?\.layers \|\| \[\]\)/);
+  assert.match(avoidBody, /addTarget\(entry\?\.displayTarget \|\| null\)/);
+  assert.match(avoidBody, /addTarget\(entry\?\.liveCompositeTarget \|\| null\)/);
 });
 
 test("TSL surface brush coverage respects connected-component gated segments", () => {
