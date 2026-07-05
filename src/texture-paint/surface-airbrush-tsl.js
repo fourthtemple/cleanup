@@ -6843,6 +6843,11 @@ function surfaceStrokeSegmentsAreContinuous(previousSegment = null, firstSegment
   if (!previousSegment || !firstSegment || !previousEnd || !firstStart) {
     return false;
   }
+  const previousComponent = finiteComponentId(previousSegment?.componentEnd ?? previousSegment?.componentStart);
+  const firstComponent = finiteComponentId(firstSegment?.componentStart ?? firstSegment?.componentEnd);
+  if (previousComponent >= 0 && firstComponent >= 0 && previousComponent !== firstComponent) {
+    return false;
+  }
   const radius = Math.max(
     finiteNumber(previousSegment.radius, finiteNumber(previousSegment.radiusPixels, 0)),
     finiteNumber(previousSegment.radiusPixels, 0),

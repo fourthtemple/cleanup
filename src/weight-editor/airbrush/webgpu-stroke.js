@@ -4415,9 +4415,7 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     && options.useTslSurfaceAirbrush !== false
     && options.liveProjectedPaint === true
     && editor?.renderer?.isWebGPURenderer === true
-    && editor?.renderer?.backend?.isWebGPUBackend === true
-    && options.neighborPaintSeed?.enabled !== true
-    && options.largeLiveNeighborPaint !== true;
+    && editor?.renderer?.backend?.isWebGPUBackend === true;
   const useTslSourceMeshVisibilitySeed = skipProjectedSeamStrokeSegmentsForTslSurface;
   const visibilityTriangleLimitForSurfaceSeed = useTslSourceMeshVisibilitySeed
     ? Math.max(32, Math.min(
@@ -4436,8 +4434,8 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
           || options.liveProjectedPaint === true
         )
       )
-      || options.neighborPaintSeed?.enabled === true
-      || options.largeLiveNeighborPaint === true
+      || (options.requireVisibilityTriangles === true && options.neighborPaintSeed?.enabled === true)
+      || (options.requireVisibilityTriangles === true && options.largeLiveNeighborPaint === true)
     );
 	  const seamProjectedStrokeSegments = [];
 	  const visibilityTriangles = [];
@@ -4486,8 +4484,8 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
 	  const buildSurfaceVisibilityTriangles = !preferTslFullSurfaceUvRaster
 	    || options.projectedPrimary === true
 	    || options.collectProjectedSeamStrokeSegments === true
-	    || options.neighborPaintSeed?.enabled === true
-	    || options.largeLiveNeighborPaint === true;
+	    || (options.requireVisibilityTriangles === true && options.neighborPaintSeed?.enabled === true)
+	    || (options.requireVisibilityTriangles === true && options.largeLiveNeighborPaint === true);
 	  const currentTriangle = buildSurfaceVisibilityTriangles
 	    ? rememberVisibilityTriangles(
 	        visibilityTrianglesFromHit(editor, record, hit, editable, hitUv, {

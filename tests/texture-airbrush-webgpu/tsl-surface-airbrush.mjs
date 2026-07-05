@@ -161,6 +161,9 @@ test("TSL live projected field preserves hit normals for same-side surface gatin
   assert.match(strokeSource, /const maxScreenDistance = Math\.max\(10, \(Number\(radiusPixelsForSegment\) \|\| screenRadiusPixels\) \* 1\.6\)/);
   assert.match(strokeSource, /return bestDistance <= maxScreenDistance \? best : null/);
   assert.doesNotMatch(strokeSource, /reusedAnchor[\s\S]*?return null/);
+  assert.match(source, /const previousComponent = finiteComponentId\(previousSegment\?\.componentEnd \?\? previousSegment\?\.componentStart\)/);
+  assert.match(source, /const firstComponent = finiteComponentId\(firstSegment\?\.componentStart \?\? firstSegment\?\.componentEnd\)/);
+  assert.match(source, /previousComponent >= 0 && firstComponent >= 0 && previousComponent !== firstComponent[\s\S]*?return false/);
   assert.match(strokeSource, /\}\)\.filter\(Boolean\);[\s\S]*?const projectedFieldStrokeSegments = surfaceEnrichedScreenPaintStrokeSegments\.length[\s\S]*?: projectedSurfaceBrushSegments\.length[\s\S]*?: screenPaintStrokeSegments/);
   assert.match(strokeSource, /viewNormalStart: previous\.viewNormalEnd \|\| previous\.viewNormalStart/);
   assert.match(strokeSource, /viewNormalEnd: surfaceSegment\.viewNormalStart \|\| surfaceSegment\.viewNormalEnd/);
@@ -1078,8 +1081,10 @@ test("TSL live surface airbrush skips redundant projected texture segment genera
   assert.match(body, /options\.useTslSurfaceAirbrush !== false/);
   assert.match(body, /options\.liveProjectedPaint === true/);
   assert.match(body, /editor\?\.renderer\?\.isWebGPURenderer === true/);
-  assert.match(body, /options\.neighborPaintSeed\?\.enabled !== true/);
-  assert.match(body, /options\.largeLiveNeighborPaint !== true/);
+  assert.doesNotMatch(body, /options\.neighborPaintSeed\?\.enabled !== true/);
+  assert.doesNotMatch(body, /options\.largeLiveNeighborPaint !== true/);
+  assert.match(body, /options\.requireVisibilityTriangles === true && options\.neighborPaintSeed\?\.enabled === true/);
+  assert.match(body, /options\.requireVisibilityTriangles === true && options\.largeLiveNeighborPaint === true/);
   assert.match(body, /const collectProjectedSeamStrokeSegments = !skipProjectedSeamStrokeSegmentsForTslSurface/);
 });
 

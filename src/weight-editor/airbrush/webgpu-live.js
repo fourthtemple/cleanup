@@ -4635,7 +4635,12 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
           || options.liveProjectedPaint === true
         );
       const fullSurfaceTslPaint = largeLiveBrush || liveScreenSurfaceStroke;
-      const projectedSurfacePaintCandidates = fullSurfaceTslPaint && liveNeighborPaint;
+      const sourceMeshTslNeighborPaint = fullSurfaceTslPaint
+        && liveNeighborPaint
+        && options.useTslSurfaceAirbrush !== false;
+      const projectedSurfacePaintCandidates = fullSurfaceTslPaint
+        && liveNeighborPaint
+        && !sourceMeshTslNeighborPaint;
       const boundedDisjointLiveBatch = liveVisibleGpuPaint
         && (
           !liveNeighborPaint
@@ -4647,7 +4652,7 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
       const useFootprintVisibilityProbes = liveVisibleGpuPaint
         && (
           options.directVisibilityOnly === false
-          || liveNeighborPaint
+          || (liveNeighborPaint && !sourceMeshTslNeighborPaint)
           || requireFullBrushVisibilityProbes
         );
       const liveNeighborProbeBudget = liveNeighborPaint
@@ -4737,7 +4742,8 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
               ? { webGpuStrokeSourceRoot: {} }
               : {}),
             directVisibilityOnly: !useFootprintVisibilityProbes,
-            requireVisibilityTriangles: !fullSurfaceTslPaint || liveNeighborPaint,
+            requireVisibilityTriangles: !fullSurfaceTslPaint
+              || (liveNeighborPaint && !sourceMeshTslNeighborPaint),
             useVisibilityTrianglePaintRegions: true,
             screenBrushVisibilityTriangles: true,
             // Large projected strokes need one paint pass per visible surface

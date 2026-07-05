@@ -7051,6 +7051,8 @@ test("installed airbrush WebGPU live Neighbor path keeps segment visibility with
 
   assert.equal(changed, 1);
   assert.equal(candidateOptions.keepVisibilitySamplesWithTriangles, true);
+  assert.equal(candidateOptions.requireVisibilityTriangles, false);
+  assert.equal(candidateOptions.paintProjectedSurfaceCandidates, false);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].options.visibilityMaskTriangles.length, 1);
   assert.ok(queued[0].options.visibilityMaskSamples.some((sample) => (
@@ -7090,13 +7092,14 @@ test("installed airbrush WebGPU large live Neighbor brushes keep bounded project
   assert.equal(capturedOptions.fullBrushVisibilityProbes, undefined);
   assert.equal(capturedOptions.skipVisibilityFootprintProbes, undefined);
   assert.equal(capturedOptions.largeLiveNeighborPaint, true);
-  assert.equal(capturedOptions.paintProjectedSurfaceCandidates, true);
-  assert.equal(capturedOptions.dedupProjectedSurfacePaintCandidates, true);
-  assert.equal(capturedOptions.paintOrderedProbeCandidates, true);
+  assert.equal(capturedOptions.requireVisibilityTriangles, false);
+  assert.equal(capturedOptions.paintProjectedSurfaceCandidates, false);
+  assert.equal(capturedOptions.dedupProjectedSurfacePaintCandidates, false);
+  assert.equal(capturedOptions.paintOrderedProbeCandidates, false);
   assert.equal(capturedOptions.visibilityFootprintViewRadiusScale, 1.35);
-  assert.equal(capturedOptions.denseVisibilityFootprintProbes, false);
-  assert.equal(capturedOptions.maxVisibilityFootprintProbePoints, 10);
-  assert.equal(capturedOptions.maxNeighborVisibilityIntersections, 3);
+  assert.equal(capturedOptions.denseVisibilityFootprintProbes, undefined);
+  assert.equal(capturedOptions.maxVisibilityFootprintProbePoints, undefined);
+  assert.equal(capturedOptions.maxNeighborVisibilityIntersections, undefined);
 });
 
 test("installed airbrush WebGPU live path batches compatible queued strokes", async () => {
