@@ -17,6 +17,38 @@ installSceneAndControlMethods(TestEditor, {
 });
 installPaintToolMethods(TestEditor, {});
 
+const EXPECTED_CAMERA_AIRBRUSH_PREWARM = {
+  all: false,
+  force: true,
+  limit: 1,
+  prewarmPaintablesWithoutHit: true,
+  warmScreenHitIndex: true,
+  warmNeighborTopology: false,
+  tslSurfacePrewarmAll: true,
+  tslSurfacePrewarmLimit: 1,
+  renderCompilePass: true
+};
+
+const EXPECTED_LAYER_CAMERA_AIRBRUSH_PREWARM = {
+  ...EXPECTED_CAMERA_AIRBRUSH_PREWARM,
+  preserveLayerDisplay: true
+};
+
+const EXPECTED_DEFERRED_LAYER_AIRBRUSH_PREWARM = {
+  all: false,
+  immediateLayer: false,
+  preserveLayerDisplay: true,
+  liveDisplayExternalTexture: false,
+  allowPrewarmLiveDisplayMaterialSwap: false,
+  limit: 1,
+  prewarmPaintablesWithoutHit: true,
+  warmScreenHitIndex: true,
+  warmNeighborTopology: false,
+  tslSurfacePrewarmAll: true,
+  tslSurfacePrewarmLimit: 1,
+  renderCompilePass: true
+};
+
 function classListMock(initial = []) {
   const names = new Set(initial);
   return {
@@ -286,7 +318,7 @@ test("restoring a saved camera view prewarms airbrush when painting", () => {
   assert.equal(controlsUpdated, 1);
   assert.equal(lightsUpdated, 1);
   assert.equal(cursorUpdated, 1);
-  assert.deepEqual(prewarmCalls, [[null, null, { all: true }]]);
+  assert.deepEqual(prewarmCalls, [[null, null, EXPECTED_CAMERA_AIRBRUSH_PREWARM]]);
 });
 
 test("camera changes only prewarm texture airbrush painting tools", () => {
@@ -313,8 +345,8 @@ test("camera changes only prewarm texture airbrush painting tools", () => {
 
   assert.equal(cursorUpdates, 2);
   assert.deepEqual(prewarmCalls, [
-    [null, null, { all: true }],
-    [null, null, { all: true }]
+    [null, null, EXPECTED_CAMERA_AIRBRUSH_PREWARM],
+    [null, null, EXPECTED_CAMERA_AIRBRUSH_PREWARM]
   ]);
 });
 
@@ -440,14 +472,14 @@ test("layer camera prewarm warms the active layer before broad materials", (t) =
   assert.equal(editor.prewarmTextureAirbrushAfterCameraChange(), true);
 
   assert.equal(cursorUpdates, 1);
-  assert.deepEqual(prewarmCalls, [[null, null, { all: true, limit: 1 }]]);
+  assert.deepEqual(prewarmCalls, [[null, null, EXPECTED_LAYER_CAMERA_AIRBRUSH_PREWARM]]);
   assert.equal(frameCallbacks.length, 1);
 
   frameCallbacks.shift()();
 
   assert.deepEqual(prewarmCalls, [
-    [null, null, { all: true, limit: 1 }],
-    [null, null, { all: true, limit: 2, immediateLayer: false }]
+    [null, null, EXPECTED_LAYER_CAMERA_AIRBRUSH_PREWARM],
+    [null, null, EXPECTED_DEFERRED_LAYER_AIRBRUSH_PREWARM]
   ]);
 });
 
@@ -484,7 +516,7 @@ test("deferred broad layer camera prewarm waits while a stroke is pending", (t) 
   pending = false;
   frameCallbacks.shift()();
 
-  assert.deepEqual(prewarmCalls, [[null, null, { all: true, limit: 2, immediateLayer: false }]]);
+  assert.deepEqual(prewarmCalls, [[null, null, EXPECTED_DEFERRED_LAYER_AIRBRUSH_PREWARM]]);
 });
 
 test("camera layer prewarm waits until orbit damping settles", (t) => {
@@ -535,7 +567,7 @@ test("camera layer prewarm waits until orbit damping settles", (t) => {
   frameCallbacks.shift()();
 
   assert.equal(cursorUpdates, 1);
-  assert.deepEqual(prewarmCalls, [[null, null, { all: true }]]);
+  assert.deepEqual(prewarmCalls, [[null, null, EXPECTED_CAMERA_AIRBRUSH_PREWARM]]);
   assert.equal(editor.textureAirbrushCameraPrewarmScheduled, false);
 });
 
@@ -599,7 +631,7 @@ test("layer camera change warms active layer material before settled projection 
     ["active-projection-prewarm", activeMaterial],
     ["active-cursor-probe", activeMaterial],
     "cursor",
-    ["camera-projection-prewarm", null, null, { all: true, limit: 1 }]
+    ["camera-projection-prewarm", null, null, EXPECTED_LAYER_CAMERA_AIRBRUSH_PREWARM]
   ]);
 });
 
@@ -639,14 +671,14 @@ test("stable render frame prewarms layer camera before timer fallback", (t) => {
 
   assert.equal(editor.textureAirbrushPrewarmStableCameraFrame(), true);
   assert.equal(cursorUpdates, 1);
-  assert.deepEqual(prewarmCalls, [[null, null, { all: true }]]);
+  assert.deepEqual(prewarmCalls, [[null, null, EXPECTED_CAMERA_AIRBRUSH_PREWARM]]);
   assert.equal(editor.textureAirbrushCameraPrewarmScheduled, false);
 
   frameCallbacks.shift()();
   assert.equal(frameCallbacks.length, 1);
   frameCallbacks.shift()();
   assert.equal(cursorUpdates, 1);
-  assert.deepEqual(prewarmCalls, [[null, null, { all: true }]]);
+  assert.deepEqual(prewarmCalls, [[null, null, EXPECTED_CAMERA_AIRBRUSH_PREWARM]]);
 });
 
 test("selecting airbrush schedules active layer warm before broad prewarm", () => {
@@ -713,13 +745,24 @@ test("selecting airbrush schedules active layer warm before broad prewarm", () =
     [null, null, {
       all: false,
       immediateLayer: false,
-      delay: 0
+      delay: 0,
+      force: true,
+      limit: 1,
+      liveDisplayExternalTexture: false,
+      allowPrewarmLiveDisplayMaterialSwap: false,
+      preserveLayerDisplay: true,
+      prewarmPaintablesWithoutHit: true,
+      warmScreenHitIndex: true,
+      warmNeighborTopology: false,
+      tslSurfacePrewarmAll: true,
+      tslSurfacePrewarmLimit: 1,
+      renderCompilePass: true
     }]
   ]);
   assert.equal(broadPrewarmCalls, 1);
 });
 
-test("returning from orbit to Neighbor airbrush rewarms projection immediately", () => {
+test("returning from orbit to Neighbor airbrush schedules lightweight projection prewarm", () => {
   const editor = new TestEditor();
   const prewarmCalls = [];
   editor.activeTool = "orbit";
@@ -759,8 +802,27 @@ test("returning from orbit to Neighbor airbrush rewarms projection immediately",
   editor.setTool("airbrush");
 
   assert.deepEqual(prewarmCalls, [
-    ["immediate", null, null, { all: true, force: true }],
-    ["scheduled", null, null, { all: true }]
+    ["immediate", null, null, {
+      all: true,
+      force: true,
+      limit: 1,
+      tslSurfacePrewarmAll: true,
+      tslSurfacePrewarmLimit: 1,
+      renderCompilePass: true
+    }],
+    ["immediate", null, null, {
+      all: false,
+      delay: 0,
+      force: true,
+      limit: 1,
+      liveDisplayExternalTexture: false,
+      allowPrewarmLiveDisplayMaterialSwap: false,
+      prewarmPaintablesWithoutHit: true,
+      warmScreenHitIndex: true,
+      tslSurfacePrewarmAll: true,
+      tslSurfacePrewarmLimit: 1,
+      renderCompilePass: true
+    }]
   ]);
 });
 
@@ -805,6 +867,67 @@ test("switching from airbrush to orbit drains queued paint before changing activ
   assert.deepEqual(calls, [
     ["flush", "airbrush"],
     ["end-undo", "airbrush"]
+  ]);
+  assert.equal(editor.lastStatus, "Orbit camera: left drag rotates, wheel zooms, right drag pans");
+});
+
+test("switching from an active airbrush stroke to orbit releases paint capture", () => {
+  const editor = new TestEditor();
+  const calls = [];
+  const released = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 77;
+  editor.controls = { enabled: false };
+  editor.app = { classList: classListMock(["is-texture-airbrush"]) };
+  editor.canvas = {
+    classList: classListMock(["is-texture-airbrush"]),
+    hasPointerCapture(pointerId) {
+      return pointerId === 77;
+    },
+    releasePointerCapture(pointerId) {
+      released.push(pointerId);
+    }
+  };
+  editor.toolButtons = [];
+  editor.usesSelectionStrokeUndo = () => false;
+  editor.usesTextureStrokeUndo = (tool) => tool === "airbrush";
+  editor.usesSelectionBrushCursor = () => false;
+  editor.hasSelection = () => false;
+  editor.hideTextureBrushCursor = () => {};
+  editor.hideLassoOverlay = () => {};
+  editor.preparePoseGizmoModeSwitch = () => {};
+  editor.setBonePlacementPending = () => {};
+  editor.updateMoveGizmo = () => {};
+  editor.updateBoneMoveGizmo = () => {};
+  editor.updateIkMoveGizmo = () => {};
+  editor.updateGizmoOnlyPreviewButton = () => {};
+  editor.updateNeighborHover = () => {};
+  editor.syncClonePaintControls = () => {};
+  editor.recordTutorialMacroToolChange = () => {};
+  editor.setStatus = (message) => {
+    editor.lastStatus = message;
+  };
+  editor.flushTextureAirbrushScreenStroke = () => {
+    calls.push(["flush", editor.activeTool]);
+    return 1;
+  };
+  editor.endTexturePaintStrokeUndo = () => {
+    calls.push(["end-undo", editor.activeTool]);
+    editor.flushTextureAirbrushScreenStroke();
+    return true;
+  };
+
+  editor.setTool("orbit");
+
+  assert.equal(editor.activeTool, "orbit");
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.texturePaintActivePointerId, null);
+  assert.deepEqual(released, [77]);
+  assert.deepEqual(calls, [
+    ["end-undo", "airbrush"],
+    ["flush", "airbrush"]
   ]);
   assert.equal(editor.lastStatus, "Orbit camera: left drag rotates, wheel zooms, right drag pans");
 });
@@ -898,7 +1021,7 @@ test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
   let capturedPointer = null;
   let prevented = 0;
   let stopped = 0;
-  let painted = null;
+  const painted = [];
   editor.activeTool = "airbrush";
   editor.controls = { enabled: true };
   editor.canvas = {
@@ -909,11 +1032,14 @@ test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
   editor.showTextureStrokeCursor = () => {};
   editor.beginTexturePaintStrokeUndo = () => {};
   editor.paintTextureStrokeFromEvent = (event, options) => {
-    painted = {
+    painted.push({
       pointerType: event.pointerType,
       button: event.button,
-      reset: options?.reset === true
-    };
+      clientX: event.clientX,
+      clientY: event.clientY,
+      reset: options?.reset === true,
+      strokeStart: options?.strokeStart || null
+    });
     return true;
   };
   const event = {
@@ -944,11 +1070,451 @@ test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
   assert.equal(editor.painting, true);
   assert.equal(editor.controls.enabled, false);
   assert.equal(capturedPointer, 42);
-  assert.deepEqual(painted, {
+  assert.deepEqual(painted, []);
+  assert.deepEqual(editor.textureAirbrushPendingInitialStroke?.point, {
+    clientX: 160,
+    clientY: 140
+  });
+
+  editor.onPointerMove({
+    ...event,
+    type: "pointermove",
+    clientX: 170,
+    clientY: 140,
+    buttons: 1
+  });
+
+  assert.equal(prevented, 2);
+  assert.deepEqual(painted, [{
     pointerType: "pen",
     button: 0,
-    reset: true
+    clientX: 170,
+    clientY: 140,
+    reset: true,
+    strokeStart: { clientX: 160, clientY: 140 }
+  }]);
+});
+
+test("airbrush pointerup without drag does not paint a delayed startup dot", () => {
+  const editor = new TestEditor();
+  let painted = 0;
+  let undoEnded = 0;
+
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: true };
+  editor.canvas = {
+    setPointerCapture() {},
+    releasePointerCapture() {}
+  };
+  editor.showTextureStrokeCursor = () => {};
+  editor.beginTexturePaintStrokeUndo = () => {};
+  editor.endTexturePaintStrokeUndo = () => {
+    undoEnded += 1;
+  };
+  editor.paintTextureStrokeFromEvent = () => {
+    painted += 1;
+    return true;
+  };
+  editor.hideTextureBrushCursor = () => {};
+
+  editor.onPointerDown({
+    pointerType: "mouse",
+    button: 0,
+    buttons: 1,
+    pointerId: 9,
+    clientX: 240,
+    clientY: 180,
+    preventDefault() {}
   });
+  editor.onPointerUp({
+    pointerType: "mouse",
+    button: 0,
+    buttons: 0,
+    pointerId: 9,
+    clientX: 240,
+    clientY: 180
+  });
+
+  assert.equal(painted, 0);
+  assert.equal(undoEnded, 1);
+  assert.equal(editor.painting, false);
+  assert.equal(editor.textureAirbrushPendingInitialStroke, null);
+});
+
+test("idle airbrush restores orbit controls while primary paint disables them", () => {
+  const editor = new TestEditor();
+  editor.activeTool = "airbrush";
+  editor.painting = false;
+  editor.controls = { enabled: false };
+
+  assert.equal(editor.texturePaintIdleControlsEnabledForTool("airbrush"), true);
+  assert.equal(editor.prepareTextureBrushPointerControls({
+    button: 2,
+    buttons: 2
+  }), true);
+  assert.equal(editor.controls.enabled, true);
+
+  assert.equal(editor.prepareTextureBrushPointerControls({
+    button: 0,
+    buttons: 1
+  }), true);
+  assert.equal(editor.controls.enabled, false);
+});
+
+test("ending an airbrush stroke returns controls to idle orbit-ready state", () => {
+  const editor = new TestEditor();
+  const released = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 42;
+  editor.controls = { enabled: false };
+  editor.canvas = {
+    hasPointerCapture(pointerId) {
+      return pointerId === 42;
+    },
+    releasePointerCapture(pointerId) {
+      released.push(pointerId);
+    }
+  };
+
+  editor.onPointerUp({ pointerId: 42 });
+
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.texturePaintActivePointerId, null);
+  assert.deepEqual(released, [42]);
+});
+
+test("non-primary texture brush gesture clears stale paint state before orbit", () => {
+  const editor = new TestEditor();
+  const released = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 52;
+  editor.controls = { enabled: false };
+  editor.canvas = {
+    hasPointerCapture(pointerId) {
+      return pointerId === 52;
+    },
+    releasePointerCapture(pointerId) {
+      released.push(pointerId);
+    }
+  };
+  editor.hideTextureBrushCursor = () => {};
+  editor.flushSelectionStrokeFinalChange = () => {};
+  editor.endSelectionStrokeUndo = () => {};
+  editor.endTexturePaintStrokeUndo = () => {};
+
+  const prepared = editor.prepareTextureBrushPointerControls({
+    button: 2,
+    buttons: 2,
+    pointerId: 90,
+    pointerType: "mouse",
+    clientX: 120,
+    clientY: 140
+  });
+
+  assert.equal(prepared, true);
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.texturePaintActivePointerId, null);
+  assert.deepEqual(released, [52]);
+});
+
+test("ending an airbrush stroke clears stale OrbitControls pointer state", () => {
+  const editor = new TestEditor();
+  const canvasReleased = [];
+  const orbitReleased = [];
+  const removedListeners = [];
+  const orbitPointerUps = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 42;
+  editor.canvas = {
+    hasPointerCapture(pointerId) {
+      return pointerId === 42;
+    },
+    releasePointerCapture(pointerId) {
+      canvasReleased.push(pointerId);
+    }
+  };
+  const ownerDocument = {
+    removeEventListener(type, handler) {
+      removedListeners.push([type, handler.name || "bound"]);
+    }
+  };
+  editor.controls = {
+    enabled: false,
+    state: 0,
+    _cursorStyle: "grab",
+    _pointers: [42],
+    _pointerPositions: {
+      42: { x: 120, y: 140 }
+    },
+    _onPointerMove() {},
+    _onPointerUp(event) {
+      orbitPointerUps.push(event.pointerId);
+      this._pointers.length = 0;
+      delete this._pointerPositions[event.pointerId];
+      this.state = -1;
+    },
+    domElement: {
+      ownerDocument,
+      style: { cursor: "grabbing" },
+      hasPointerCapture(pointerId) {
+        return pointerId === 42;
+      },
+      releasePointerCapture(pointerId) {
+        orbitReleased.push(pointerId);
+      }
+    }
+  };
+
+  editor.onPointerUp({ pointerId: 42, clientX: 120, clientY: 140 });
+
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.controls.state, -1);
+  assert.deepEqual(editor.controls._pointers, []);
+  assert.deepEqual(editor.controls._pointerPositions, {});
+  assert.equal(editor.controls.domElement.style.cursor, "grab");
+  assert.deepEqual(orbitPointerUps, [42]);
+  assert.deepEqual(canvasReleased, [42]);
+  assert.deepEqual(orbitReleased, [42]);
+  assert.deepEqual(removedListeners.map(([type]) => type), ["pointermove", "pointerup"]);
+});
+
+test("ordinary orbit pointer release does not clear active OrbitControls state as paint cleanup", () => {
+  const editor = new TestEditor();
+  const orbitPointerUps = [];
+  editor.activeTool = "orbit";
+  editor.painting = false;
+  editor.texturePaintActivePointerId = null;
+  editor.canvas = {};
+  editor.controls = {
+    enabled: true,
+    state: 0,
+    _pointers: [9],
+    _pointerPositions: {
+      9: { x: 100, y: 120 }
+    },
+    _onPointerUp(event) {
+      orbitPointerUps.push(event.pointerId);
+      this._pointers.length = 0;
+      this.state = -1;
+    }
+  };
+
+  editor.onPointerUp({ pointerId: 9 });
+
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.controls.state, 0);
+  assert.deepEqual(editor.controls._pointers, [9]);
+  assert.deepEqual(editor.controls._pointerPositions, {
+    9: { x: 100, y: 120 }
+  });
+  assert.deepEqual(orbitPointerUps, []);
+});
+
+test("stale airbrush release does not cancel a new orbit pointer", () => {
+  const editor = new TestEditor();
+  const orbitPointerUps = [];
+  const removedListeners = [];
+  const released = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 42;
+  editor.canvas = {
+    hasPointerCapture() {
+      return false;
+    },
+    releasePointerCapture(pointerId) {
+      released.push(["canvas", pointerId]);
+    }
+  };
+  const ownerDocument = {
+    removeEventListener(type, handler) {
+      removedListeners.push([type, handler.name || "bound"]);
+    }
+  };
+  editor.controls = {
+    enabled: false,
+    state: 0,
+    _pointers: [9],
+    _pointerPositions: {
+      9: { x: 160, y: 180 }
+    },
+    _onPointerMove() {},
+    _onPointerUp(event) {
+      orbitPointerUps.push(event.pointerId);
+      this._pointers = this._pointers.filter((id) => id !== event.pointerId);
+      delete this._pointerPositions[event.pointerId];
+      if (!this._pointers.length) {
+        this.state = -1;
+      }
+    },
+    domElement: {
+      ownerDocument,
+      style: { cursor: "grabbing" },
+      hasPointerCapture(pointerId) {
+        return pointerId === 9;
+      },
+      releasePointerCapture(pointerId) {
+        released.push(["orbit", pointerId]);
+      }
+    }
+  };
+
+  editor.onPointerUp({ pointerId: 42, clientX: 120, clientY: 140 });
+
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.controls.state, 0);
+  assert.deepEqual(editor.controls._pointers, [9]);
+  assert.deepEqual(editor.controls._pointerPositions, {
+    9: { x: 160, y: 180 }
+  });
+  assert.deepEqual(orbitPointerUps, []);
+  assert.deepEqual(removedListeners, []);
+  assert.deepEqual(released, []);
+});
+
+test("lost airbrush pointer release on move restores orbit controls", () => {
+  const editor = new TestEditor();
+  const released = [];
+  let painted = 0;
+  let prevented = 0;
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 42;
+  editor.controls = { enabled: false };
+  editor.canvas = {
+    hasPointerCapture(pointerId) {
+      return pointerId === 42;
+    },
+    releasePointerCapture(pointerId) {
+      released.push(pointerId);
+    }
+  };
+  editor.paintTextureStrokeFromEvent = () => {
+    painted += 1;
+  };
+
+  editor.onPointerMove({
+    pointerId: 42,
+    buttons: 0,
+    preventDefault() {
+      prevented += 1;
+    }
+  });
+
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.texturePaintActivePointerId, null);
+  assert.equal(painted, 0);
+  assert.equal(prevented, 0);
+  assert.deepEqual(released, [42]);
+});
+
+test("already-ended airbrush pointer release still restores idle orbit controls", () => {
+  const editor = new TestEditor();
+  const released = [];
+  editor.activeTool = "airbrush";
+  editor.painting = false;
+  editor.texturePaintActivePointerId = 17;
+  editor.controls = { enabled: false };
+  editor.canvas = {
+    hasPointerCapture(pointerId) {
+      return pointerId === 17;
+    },
+    releasePointerCapture(pointerId) {
+      released.push(pointerId);
+    }
+  };
+
+  editor.onPointerUp({ pointerId: 17 });
+
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.texturePaintActivePointerId, null);
+  assert.deepEqual(released, [17]);
+});
+
+test("lost airbrush pointer capture restores orbit controls", () => {
+  const editor = new TestEditor();
+  const released = [];
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 31;
+  editor.controls = { enabled: false };
+  editor.canvas = {
+    hasPointerCapture(pointerId) {
+      return pointerId === 31;
+    },
+    releasePointerCapture(pointerId) {
+      released.push(pointerId);
+    }
+  };
+
+  editor.onPointerUp({ type: "lostpointercapture", pointerId: 31 });
+
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.texturePaintActivePointerId, null);
+  assert.deepEqual(released, [31]);
+});
+
+test("airbrush pointer release clears fallback paint input before orbit", () => {
+  const editor = new TestEditor();
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintMouseFallbackActive = true;
+  editor.texturePaintMouseFallbackLastEvent = { type: "mousemove" };
+  editor.texturePaintTouchFallbackActive = true;
+  editor.texturePaintTouchFallbackIdentifier = 4;
+  editor.controls = { enabled: false };
+  editor.canvas = {};
+
+  editor.onPointerUp({ pointerId: 4 });
+
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.texturePaintMouseFallbackActive, false);
+  assert.equal(editor.texturePaintMouseFallbackLastEvent, null);
+  assert.equal(editor.texturePaintTouchFallbackActive, false);
+  assert.equal(editor.texturePaintTouchFallbackIdentifier, null);
+});
+
+test("canvas lostpointercapture is wired to end texture paint", () => {
+  const source = fs.readFileSync(new URL("../src/weight-editor/scene-and-controls.js", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /this\.canvas\.addEventListener\("lostpointercapture",\s*\(event\)\s*=>\s*\{[\s\S]*?this\.onPointerUp\(event\);[\s\S]*?\}\);/
+  );
+});
+
+test("airbrush pointer release restores orbit controls if final paint cleanup fails", () => {
+  const editor = new TestEditor();
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 19;
+  editor.controls = { enabled: false };
+  editor.canvas = {
+    hasPointerCapture() {
+      return false;
+    },
+    releasePointerCapture() {}
+  };
+  editor.flushSelectionStrokeFinalChange = () => {};
+  editor.endSelectionStrokeUndo = () => {};
+  editor.endTexturePaintStrokeUndo = () => {
+    throw new Error("paint cleanup failed");
+  };
+
+  assert.throws(() => editor.onPointerUp({ pointerId: 19 }), /paint cleanup failed/);
+  assert.equal(editor.painting, false);
+  assert.equal(editor.controls.enabled, true);
+  assert.equal(editor.texturePaintActivePointerId, null);
 });
 
 test("airbrush pointerdown settles orbit motion before reset stroke projection", () => {
@@ -977,6 +1543,10 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
     calls.push(["reset-frame"]);
     return true;
   };
+  editor.prewarmTextureAirbrushAfterCameraChange = () => {
+    calls.push(["prewarm-camera"]);
+    return true;
+  };
   editor.showTextureStrokeCursor = () => {
     calls.push(["cursor"]);
   };
@@ -986,13 +1556,15 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
     calls.push(["begin-undo"]);
   };
   editor.paintTextureStrokeFromEvent = (event, options) => {
-    calls.push(["paint", options?.reset === true]);
+    calls.push(["paint", options?.reset === true, options?.strokeStart || null]);
     return true;
   };
 
   editor.onPointerDown({
     button: 0,
     pointerId: 4,
+    clientX: 10,
+    clientY: 12,
     preventDefault() {
       calls.push(["prevent"]);
     }
@@ -1004,9 +1576,35 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
     ["controls-update", 2],
     ["controls-update", 3],
     ["reset-frame"],
+    ["prewarm-camera"],
+    ["cursor"],
+    ["begin-undo"],
+    ["capture"]
+  ]);
+
+  editor.onPointerMove({
+    button: 0,
+    buttons: 1,
+    pointerId: 4,
+    clientX: 22,
+    clientY: 12,
+    preventDefault() {
+      calls.push(["prevent-move"]);
+    }
+  });
+
+  assert.deepEqual(calls, [
+    ["prevent"],
+    ["controls-update", 1],
+    ["controls-update", 2],
+    ["controls-update", 3],
+    ["reset-frame"],
+    ["prewarm-camera"],
     ["cursor"],
     ["begin-undo"],
     ["capture"],
-    ["paint", true]
+    ["prevent-move"],
+    ["cursor"],
+    ["paint", true, { clientX: 10, clientY: 12 }]
   ]);
 });

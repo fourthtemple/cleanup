@@ -145,7 +145,7 @@ export function installTextureAirbrushScreenOverlayMethods(BirdWeightEditor) {
       const scatter = Math.max(0, Math.min(1, Number(payload.scatter ?? 0.35)));
       const strength = Math.max(0.08, Math.min(1, Number(payload.strength ?? 1)));
       const radius = Math.max(1, payload.radiusPixels);
-      const haloRadius = airbrushHaloRadius(radius, scatter);
+      const haloRadius = airbrushHaloRadius(radius, scatter, hardness);
       const minX = Math.max(0, Math.floor((Math.min(startX, endX) - haloRadius - 2) * scale));
       const maxX = Math.min(layer.width, Math.ceil((Math.max(startX, endX) + haloRadius + 2) * scale));
       const minY = Math.max(0, Math.floor((Math.min(startY, endY) - haloRadius - 2) * scale));

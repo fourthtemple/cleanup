@@ -359,25 +359,8 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
     },
 
     textureCanvasFromGpu(texture) {
-      if (!texture || !this.renderer || !THREE.WebGLRenderTarget || !this.textureAirbrushCopyTextureToTarget || !this.textureAirbrushCanvasFromRenderTarget) {
-        return null;
-      }
-      const size = this.textureAirbrushRenderTargetSizeForTexture?.(texture) || { width: 1024, height: 1024 };
-      const width = Math.max(1, Math.min(4096, Math.round(size.width || 1024)));
-      const height = Math.max(1, Math.min(4096, Math.round(size.height || 1024)));
-      const target = new THREE.WebGLRenderTarget(width, height, {
-        depthBuffer: false,
-        stencilBuffer: false
-      });
-      this.textureAirbrushCopyTextureRenderSettings?.(target.texture, texture);
-      try {
-        if (!this.textureAirbrushCopyTextureToTarget(texture, target)) {
-          return null;
-        }
-        return this.textureAirbrushCanvasFromRenderTarget({ target, width, height })?.canvas || null;
-      } finally {
-        target.dispose();
-      }
+      void texture;
+      return null;
     },
 
     mergeTexturePaintLayersForAssetExport({ format = "fbx" } = {}) {
@@ -414,6 +397,9 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
         } else if (sourceTexture) {
           texture.colorSpace = sourceTexture.colorSpace;
           texture.flipY = sourceTexture.flipY;
+          if ("channel" in sourceTexture) {
+            texture.channel = sourceTexture.channel;
+          }
           texture.wrapS = sourceTexture.wrapS;
           texture.wrapT = sourceTexture.wrapT;
           texture.minFilter = sourceTexture.minFilter;
@@ -446,6 +432,14 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
       let texture = material?.[field];
       if (!texture) {
         return;
+      }
+      if (
+        texture.userData?.textureAirbrushExternalWebGpuDisplay === true
+        && material.userData?.textureAirbrushWebGpuCanvasMap
+      ) {
+        texture = material.userData.textureAirbrushWebGpuCanvasMap;
+        material[field] = texture;
+        material.needsUpdate = true;
       }
       if (
         field === "map"
@@ -525,6 +519,8 @@ export function installAssetExportMethods(BirdWeightEditor, deps) {
         delete cleanMaterialUserData.texturePaintLayerStack;
         delete cleanMaterialUserData.textureAirbrushBakedTexture;
         delete cleanMaterialUserData.textureAirbrushGpuTarget;
+        delete cleanMaterialUserData.textureAirbrushWebGpuExternalMap;
+        delete cleanMaterialUserData.textureAirbrushWebGpuCanvasMap;
         delete cleanMaterialUserData.texturePaintMergedExportTexture;
         material.userData = cleanMaterialUserData;
       }

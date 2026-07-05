@@ -1,7 +1,14 @@
 export const TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE = 0.72;
-export const TEXTURE_AIRBRUSH_EDGE_EXPONENT_BASE = 3.6;
-export const TEXTURE_AIRBRUSH_EDGE_HARDNESS_SCALE = 2.55;
-export const TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE = 0.25;
+export const TEXTURE_AIRBRUSH_SOFT_HALO_SCALE = 0.85;
+export const TEXTURE_AIRBRUSH_CORE_MIN_SCALE = 0.0;
+export const TEXTURE_AIRBRUSH_CORE_HARDNESS_SCALE = 0.58;
+export const TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER = 1.35;
+export const TEXTURE_AIRBRUSH_EDGE_EXPONENT_BASE = 1.0;
+export const TEXTURE_AIRBRUSH_EDGE_HARDNESS_SCALE = 15.0;
+export const TEXTURE_AIRBRUSH_EDGE_HARDNESS_POWER = 2.2;
+export const TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE = 0.0;
+export const TEXTURE_AIRBRUSH_SOFT_TAIL_ALPHA_SCALE = 0.12;
+export const TEXTURE_AIRBRUSH_SCATTER_TAIL_ALPHA_SCALE = 0.08;
 export const TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD = 0.004;
 
 export function clampByte(value) {
@@ -65,26 +72,40 @@ export function airbrushCoverageForDistance(distancePixels, radiusPixels, scatte
   const radius = Math.max(1, radiusPixels);
   const safeScatter = Math.max(0, Math.min(1, scatter));
   const safeHardness = Math.max(0, Math.min(1, hardness));
-  const haloRadius = airbrushHaloRadius(radius, safeScatter);
+  const haloRadius = airbrushHaloRadius(radius, safeScatter, safeHardness);
   if (distancePixels > haloRadius) {
     return 0;
   }
-  const hardRadius = radius * safeHardness;
-  if (distancePixels <= hardRadius) {
+  const coreRadius = radius * (
+    TEXTURE_AIRBRUSH_CORE_MIN_SCALE
+    + Math.pow(safeHardness, TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER) * TEXTURE_AIRBRUSH_CORE_HARDNESS_SCALE
+  );
+  if (distancePixels <= coreRadius) {
     return 1;
   }
-  const fadeRadius = Math.max(1, haloRadius - hardRadius);
-  const edge = Math.max(0, 1 - (distancePixels - hardRadius) / fadeRadius);
-  const exponent = TEXTURE_AIRBRUSH_EDGE_EXPONENT_BASE
-    - safeHardness * TEXTURE_AIRBRUSH_EDGE_HARDNESS_SCALE
-    + safeScatter * TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE;
-  return Math.min(1, Math.pow(edge, exponent));
+  const fadeRadius = Math.max(1, haloRadius - coreRadius);
+  const normalized = Math.max(0, Math.min(1, (distancePixels - coreRadius) / fadeRadius));
+  const exponent = Math.max(
+    0.05,
+    TEXTURE_AIRBRUSH_EDGE_EXPONENT_BASE
+      + Math.pow(safeHardness, TEXTURE_AIRBRUSH_EDGE_HARDNESS_POWER) * TEXTURE_AIRBRUSH_EDGE_HARDNESS_SCALE
+      - safeScatter * TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE
+  );
+  const shaped = Math.max(0, Math.min(1, Math.pow(normalized, exponent)));
+  const smoothEdge = shaped * shaped * (3 - 2 * shaped);
+  return Math.min(1, Math.max(0, 1 - smoothEdge));
 }
 
-export function airbrushHaloRadius(radiusPixels, scatter) {
+export function airbrushHaloRadius(radiusPixels, scatter, hardness = 0.35) {
   const radius = Math.max(1, radiusPixels);
   const safeScatter = Math.max(0, Math.min(1, scatter));
-  return radius * (1 + safeScatter * TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE);
+  const safeHardness = Math.max(0, Math.min(1, hardness));
+  const softness = 1 - safeHardness;
+  return radius * (
+    1
+    + safeScatter * TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE
+    + softness * TEXTURE_AIRBRUSH_SOFT_HALO_SCALE
+  );
 }
 
 export function airbrushAlphaForDistance(distancePixels, radiusPixels, opacity, scatter, hardness, strength = 1) {

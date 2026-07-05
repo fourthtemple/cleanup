@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { installPaintToolMethods } from "../src/weight-editor/paint-tools.js";
-import { installTextureAirbrushWebGlBackendMethods } from "../src/weight-editor/airbrush/webgl-backend.js";
 import { installTexturePaintLayerMethods } from "../src/weight-editor/texture-layers.js";
 
 class TestEditor {}
@@ -792,76 +791,22 @@ test("top layer opacity zero and restore reuses the cached live layer path", () 
   assert.equal(editor.texturePaintLayerOpacityOutput.textContent, "42%");
 });
 
-test("empty layer GPU target initialization stays revision-zero and display-empty", () => {
-  class WebGlEditor {}
-  const createdTargets = [];
+test("empty layer display no longer initializes legacy WebGL render targets", () => {
+  class WebGpuOnlyEditor {}
   const THREE = {
     LinearFilter: "linear",
     ClampToEdgeWrapping: "clamp",
-    WebGLRenderTarget: class {
-      constructor(width, height) {
-        this.width = width;
-        this.height = height;
-        this.texture = {};
-        createdTargets.push(this);
-      }
-      dispose() {}
+    WebGLRenderTarget() {
+      throw new Error("WebGPU-only layer display must not allocate WebGL render targets");
     }
   };
-  installPaintToolMethods(WebGlEditor, { THREE });
-  installTextureAirbrushWebGlBackendMethods(WebGlEditor, { THREE });
-  const editor = new WebGlEditor();
-  const layerCanvas = fakeCanvas(64, 32);
-  const layer = {
-    id: "paint-1",
-    name: "Paint 1",
-    visible: true,
-    opacity: 1,
-    canvas: layerCanvas,
-    context: layerCanvas.getContext("2d"),
-    isEmpty: true
-  };
-  const stack = {
-    width: 64,
-    height: 32,
-    baseCanvas: fakeCanvas(64, 32),
-    activeLayerId: layer.id,
-    selectedLayerIds: [layer.id],
-    selectionAnchorLayerId: layer.id,
-    layers: [layer]
-  };
-  const sourceTexture = {
-    minFilter: "linear",
-    magFilter: "linear",
-    wrapS: "clamp",
-    wrapT: "clamp",
-    generateMipmaps: false
-  };
-  const material = {
-    userData: {
-      clonePaintTexture: sourceTexture,
-      texturePaintLayerStack: stack
-    }
-  };
-  editor.renderer = {
-    autoClear: true,
-    getRenderTarget() {
-      return null;
-    },
-    setRenderTarget() {},
-    setClearColor() {},
-    clear() {}
-  };
-  editor.texturePaintLayerStackForMaterial = () => stack;
-  editor.texturePaintActivePaintLayerForStack = () => ({ stack, layer });
-  editor.textureAirbrushCanvasTextureForLayerCanvas = () => sourceTexture;
+  installPaintToolMethods(WebGpuOnlyEditor, { THREE });
+  installTexturePaintLayerMethods(WebGpuOnlyEditor);
+  const editor = new WebGpuOnlyEditor();
 
-  const targetEntry = editor.textureAirbrushGpuLayerTargetForMaterial(material, { renderPanel: false });
-
-  assert.equal(targetEntry?.target, createdTargets[0]);
-  assert.equal(targetEntry.paintRevision, 0);
-  assert.equal(targetEntry.emptyTransparent, true);
-  assert.equal(layer.isEmpty, true);
+  assert.equal(editor.textureAirbrushGpuLayerTargetForMaterial, undefined);
+  assert.equal(editor.textureAirbrushCopyTextureToTarget, undefined);
+  assert.equal(editor.textureAirbrushCanvasFromRenderTarget, undefined);
 });
 
 test("selecting a layer does not read GPU layer targets back to CPU canvases", () => {

@@ -6,32 +6,32 @@ import {
 export function installTextureAirbrushNearBrushMethods(BirdWeightEditor) {
   Object.assign(BirdWeightEditor.prototype, {
     paintTextureRegion(options = {}) {
-      const entry = [...(this.clonePaintTargets?.entries?.() || [])]
-        .find(([, target]) => target?.vertices?.size);
-      if (!entry) {
-        this.setStatus("Capture a Region first");
-        return 0;
-      }
-      const [record, target] = entry;
-      const changed = this.textureAirbrushNear(record, {
-        cloneRegionHit: true,
-        uv: target.originUv || target.uvCenter,
-        face: {
-          a: target.originFace?.a || 0,
-          b: target.originFace?.b || 0,
-          c: target.originFace?.c || 0,
-          materialIndex: target.originMaterialIndex ?? target.materialIndex ?? 0
-        }
-      }, {
-        ...options,
-        fullRegion: true
+      void options;
+      this.textureAirbrushReportWebGpuFallback?.({
+        backend: "none",
+        webGpuStatus: "cpu-region-paint-disabled"
       });
-      return changed;
+      this.setStatus?.("Region airbrush requires the WebGPU visible-surface paint path.");
+      return 0;
     },
 
     textureAirbrushNear(record, hit, options = {}) {
       if (options.event) {
         options = this.textureAirbrushOptionsWithPressure?.(options.event, options) || options;
+      }
+      if (
+        options.fullRegion === true
+        || options.meshFallback === true
+        || !options.event
+      ) {
+        void record;
+        void hit;
+        this.textureAirbrushReportWebGpuFallback?.({
+          backend: "none",
+          webGpuStatus: "cpu-uv-paint-disabled"
+        });
+        this.setStatus?.("Airbrush CPU UV painting is disabled; WebGPU visible-surface paint is required.");
+        return 0;
       }
       if (hit?.cloneRegionHit && options.event) {
         return this.textureAirbrushProjectedRegionFromEvent?.(record, options.event, hit, options) || 0;
@@ -50,7 +50,7 @@ export function installTextureAirbrushNearBrushMethods(BirdWeightEditor) {
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
         // Live airbrush must not fall back to direct UV brushing: the UV path
         // paints in texture space and can touch non-camera-facing islands.
-        const changed = this.textureAirbrushProjectedMeshFromEvent?.(options.event, options) || 0;
+        const changed = this.textureAirbrushVisibleSurfacePaintFromEvent?.(options.event, options) || 0;
         return changed;
       }
       const material = this.clonePaintMaterialForHit?.(record, hit);

@@ -1,3 +1,5 @@
+import { textureAirbrushRecordIdentity } from "./record-identity.js";
+
 function faceVertexIndexes(face = null) {
   return [face?.a, face?.b, face?.c].filter((vertexIndex) => Number.isInteger(vertexIndex));
 }
@@ -24,12 +26,17 @@ function materialIdentity(material = null) {
   return material?.uuid || material?.id || "";
 }
 
-function recordIdentity(record = null) {
-  return record?.object?.uuid
-    || record?.object?.id
-    || record?.geometry?.uuid
-    || record?.geometry?.id
-    || "";
+function editablePaintTargetsMatch(left = null, right = null) {
+  return Boolean(
+    left
+    && right
+    && (
+      left === right
+      || (left.canvas && left.canvas === right.canvas)
+      || (left.texture && left.texture === right.texture)
+      || (left.layer && left.layer === right.layer)
+    )
+  );
 }
 
 function recordsMatch(left = null, right = null) {
@@ -105,6 +112,53 @@ function textureNeighborPositionKey(record = null, vertexIndex = 0) {
   ].join(":");
 }
 
+function neighborDeletedSignature(record = null) {
+  const deleted = record?.deleted || null;
+  const size = Math.max(0, Math.floor(Number(deleted?.size) || 0));
+  if (!size) {
+    return "0";
+  }
+  let hash = 2166136261;
+  let sum = 0;
+  let xor = 0;
+  for (const value of deleted) {
+    const vertexIndex = Math.max(0, Math.floor(Number(value) || 0));
+    sum = (sum + vertexIndex) >>> 0;
+    xor ^= vertexIndex;
+    hash ^= vertexIndex;
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `${size}:${sum}:${xor >>> 0}:${hash >>> 0}`;
+}
+
+function neighborPositionSeamMapCurrent(record = null, position = null) {
+  const state = record?.texturePaintNeighborPositionSeamMapState || null;
+  return Boolean(
+    state
+    && state.position === position
+    && state.vertexCount === Math.max(0, Math.floor(Number(position?.count) || 0))
+    && state.positionVersion === Math.max(0, Math.floor(Number(position?.version) || 0))
+    && state.skinIndex === (record?.geometry?.attributes?.skinIndex || null)
+    && state.skinWeight === (record?.geometry?.attributes?.skinWeight || null)
+    && state.map instanceof Map
+  );
+}
+
+function neighborComponentStateCurrent(record = null, position = null, deletedSignature = "") {
+  const state = record?.texturePaintNeighborComponentState || null;
+  return Boolean(
+    state
+    && state.position === position
+    && state.vertexNeighbors === record?.vertexNeighbors
+    && state.seamMap === (record?.texturePaintNeighborPositionSeamMapState?.map || null)
+    && state.vertexCount === Math.max(0, Math.floor(Number(position?.count) || 0))
+    && state.positionVersion === Math.max(0, Math.floor(Number(position?.version) || 0))
+    && state.deletedSignature === deletedSignature
+    && state.componentIds
+    && Array.isArray(state.components)
+  );
+}
+
 function firstValidFaceVertex(record = null, face = null) {
   for (const vertexIndex of faceVertexIndexes(face)) {
     if (!record?.deleted?.has?.(vertexIndex)) {
@@ -174,8 +228,8 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       if (!record || !position || !vertexCount) {
         return null;
       }
-      if (record.texturePaintNeighborPositionSeamMap) {
-        return record.texturePaintNeighborPositionSeamMap;
+      if (neighborPositionSeamMapCurrent(record, position)) {
+        return record.texturePaintNeighborPositionSeamMapState.map;
       }
       const groups = new Map();
       for (let vertexIndex = 0; vertexIndex < vertexCount; vertexIndex += 1) {
@@ -198,33 +252,118 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         }
       }
       record.texturePaintNeighborPositionSeamMap = map;
+      record.texturePaintNeighborPositionSeamMapState = {
+        position,
+        vertexCount,
+        positionVersion: Math.max(0, Math.floor(Number(position.version) || 0)),
+        skinIndex: record.geometry?.attributes?.skinIndex || null,
+        skinWeight: record.geometry?.attributes?.skinWeight || null,
+        map
+      };
+      record.texturePaintNeighborComponentState = null;
       return map;
+    },
+
+    textureAirbrushNeighborComponentState(record = null) {
+      const position = record?.geometry?.attributes?.position || null;
+      const vertexCount = Math.max(0, Math.floor(Number(position?.count) || 0));
+      if (!record || !position || !vertexCount) {
+        return null;
+      }
+      this.textureAirbrushEnsureNeighborTopology?.(record);
+      const seamMap = this.textureAirbrushNeighborPositionSeamMap?.(record) || null;
+      const deletedSignature = neighborDeletedSignature(record);
+      if (neighborComponentStateCurrent(record, position, deletedSignature)) {
+        return record.texturePaintNeighborComponentState;
+      }
+      const deleted = record.deleted || null;
+      const componentIds = new Int32Array(vertexCount);
+      componentIds.fill(-1);
+      const components = [];
+      const enqueue = (queue, componentId, vertexIndex) => {
+        if (
+          !Number.isInteger(vertexIndex)
+          || vertexIndex < 0
+          || vertexIndex >= vertexCount
+          || componentIds[vertexIndex] !== -1
+          || deleted?.has?.(vertexIndex)
+        ) {
+          return false;
+        }
+        componentIds[vertexIndex] = componentId;
+        queue.push(vertexIndex);
+        return true;
+      };
+      for (let seedVertexIndex = 0; seedVertexIndex < vertexCount; seedVertexIndex += 1) {
+        if (componentIds[seedVertexIndex] !== -1 || deleted?.has?.(seedVertexIndex)) {
+          continue;
+        }
+        const componentId = components.length;
+        const queue = [];
+        const vertices = [];
+        enqueue(queue, componentId, seedVertexIndex);
+        for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+          const vertexIndex = queue[queueIndex];
+          vertices.push(vertexIndex);
+          for (const candidateIndex of this.textureAirbrushNeighborLinkedVertices(record, vertexIndex)) {
+            enqueue(queue, componentId, candidateIndex);
+          }
+          for (const candidateIndex of record.vertexNeighbors?.[vertexIndex] || []) {
+            enqueue(queue, componentId, candidateIndex);
+          }
+        }
+        components.push(vertices);
+      }
+      const state = {
+        position,
+        positionVersion: Math.max(0, Math.floor(Number(position.version) || 0)),
+        vertexCount,
+        vertexNeighbors: record.vertexNeighbors || null,
+        seamMap,
+        deletedSignature,
+        componentIds,
+        components,
+        componentSets: []
+      };
+      record.texturePaintNeighborComponentState = state;
+      return state;
+    },
+
+    textureAirbrushNeighborComponentSet(record = null, componentId = -1) {
+      const state = this.textureAirbrushNeighborComponentState?.(record) || null;
+      const index = Math.floor(Number(componentId));
+      if (!state || index < 0 || index >= state.components.length) {
+        return null;
+      }
+      if (!state.componentSets[index]) {
+        state.componentSets[index] = new Set(state.components[index]);
+      }
+      return state.componentSets[index];
     },
 
     textureAirbrushNeighborComponent(record = null, seedVertexIndex = null) {
       if (!record || !Number.isInteger(seedVertexIndex) || record.deleted?.has?.(seedVertexIndex)) {
         return null;
       }
-      this.textureAirbrushEnsureNeighborTopology?.(record);
-      const component = new Set();
-      const queue = [seedVertexIndex];
-      while (queue.length) {
-        const vertexIndex = queue.shift();
-        if (component.has(vertexIndex) || record.deleted?.has?.(vertexIndex)) {
-          continue;
-        }
-        component.add(vertexIndex);
-        const candidates = [
-          ...this.textureAirbrushNeighborLinkedVertices(record, vertexIndex),
-          ...(record.vertexNeighbors?.[vertexIndex] || [])
-        ];
-        for (const candidateIndex of candidates) {
-          if (!component.has(candidateIndex) && !record.deleted?.has?.(candidateIndex)) {
-            queue.push(candidateIndex);
-          }
+      const state = this.textureAirbrushNeighborComponentState?.(record) || null;
+      const componentId = state?.componentIds?.[seedVertexIndex] ?? -1;
+      return this.textureAirbrushNeighborComponentSet?.(record, componentId) || null;
+    },
+
+    textureAirbrushPrewarmNeighborTopology(record = null, options = {}) {
+      const records = record
+        ? [record]
+        : (this.textureAirbrushRecords?.() || this.paintRecords || []).filter((candidate) => candidate?.geometry);
+      const limit = record
+        ? 1
+        : Math.max(1, Math.floor(Number(options.limit ?? options.neighborTopologyLimit) || 4));
+      let warmed = 0;
+      for (const candidate of records.slice(0, limit)) {
+        if (this.textureAirbrushNeighborComponentState?.(candidate)) {
+          warmed += 1;
         }
       }
-      return component;
+      return warmed;
     },
 
     textureAirbrushNeighborSeedKey(seed = null) {
@@ -232,7 +371,7 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         return "";
       }
       return [
-        recordIdentity(seed.record) || "record",
+        textureAirbrushRecordIdentity(seed.record),
         seed.materialIndex ?? 0,
         materialIdentity(seed.material) || "material",
         seed.seedVertexIndex ?? "surface"
@@ -251,6 +390,7 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       }
       const material = this.clonePaintMaterialForHit?.(record, hit) || null;
       const materialIndex = hit.face?.materialIndex ?? 0;
+      const editable = this.editableClonePaintTexture?.(material) || null;
       const seedNormal = normalizedNormal(hit.face?.normal);
       const seed = {
         enabled: true,
@@ -259,6 +399,7 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         geometry: record.geometry || null,
         material,
         materialIndex,
+        editable,
         seedVertexIndex,
         seedNormal,
         component: this.textureAirbrushNeighborComponent?.(record, seedVertexIndex) || null
@@ -267,18 +408,64 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       return seed;
     },
 
-    textureAirbrushNeighborSeedFromEvent(event = null, tool = this.activeTool) {
+    textureAirbrushNeighborPaintHitFromEvent(event = null, tool = this.activeTool) {
       if (!event || (tool !== "airbrush" && tool !== "texture-eraser")) {
         return null;
       }
+      return this.texturePaintHitForEvent?.(event, tool, {
+        refreshSkinnedBounds: false,
+        allowAnimationProgressMismatch: this.painting === true,
+        raycastFallbackOnScreenMiss: true
+      }) || null;
+    },
+
+    textureAirbrushNeighborSeedFromEvent(event = null, tool = this.activeTool) {
       return this.textureAirbrushNeighborSeedFromHit?.(
-        this.texturePaintHitForEvent?.(event, tool) || null
+        this.textureAirbrushNeighborPaintHitFromEvent?.(event, tool) || null
       ) || null;
     },
 
+    textureAirbrushNeighborSeedAllowsPaintHit(seed = null, paintHit = null) {
+      if (!seed?.enabled) {
+        return true;
+      }
+      const record = paintHit?.record || null;
+      const hit = paintHit?.hit || null;
+      if (!record || !hit?.face) {
+        return false;
+      }
+      const material = this.clonePaintMaterialForHit?.(record, hit) || null;
+      const materialIndex = hit.face?.materialIndex ?? 0;
+      return this.textureAirbrushNeighborHitAllowed?.(seed, record, hit, material, materialIndex) === true;
+    },
+
+    textureAirbrushSyncNeighborPaintSeedForHit(paintHit = null, options = {}) {
+      const current = this.textureAirbrushActiveNeighborPaintSeed || null;
+      if (current?.enabled && options.reset !== true) {
+        return current;
+      }
+      const nextSeed = this.textureAirbrushNeighborSeedFromHit?.(paintHit) || null;
+      if (nextSeed?.enabled) {
+        this.textureAirbrushActiveNeighborPaintSeed = nextSeed;
+        return nextSeed;
+      }
+      if (options.reset === true || !current?.enabled) {
+        this.textureAirbrushActiveNeighborPaintSeed = null;
+        return null;
+      }
+      return current;
+    },
+
+    textureAirbrushSyncNeighborPaintSeedForEvent(event = null, tool = this.activeTool, options = {}) {
+      if (!this.texturePaintNeighborModeEnabled?.()) {
+        return null;
+      }
+      const paintHit = this.textureAirbrushNeighborPaintHitFromEvent?.(event, tool) || null;
+      return this.textureAirbrushSyncNeighborPaintSeedForHit?.(paintHit, options) || null;
+    },
+
     textureAirbrushBeginNeighborPaintStroke(event = null, tool = this.activeTool) {
-      this.textureAirbrushActiveNeighborPaintSeed = this.textureAirbrushNeighborSeedFromEvent?.(event, tool) || null;
-      return this.textureAirbrushActiveNeighborPaintSeed;
+      return this.textureAirbrushSyncNeighborPaintSeedForEvent?.(event, tool, { reset: true }) || null;
     },
 
     textureAirbrushEndNeighborPaintStroke() {
@@ -297,15 +484,20 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         return false;
       }
       // Neighbor mode broadens the eligible connected surface island only.
-      // Visibility is still enforced later by the airbrush projection shader;
-      // do not use this pass gate to allow painting hidden faces.
-      if (seed.component?.size) {
-        return true;
-      }
-      if (Number.isInteger(seed.materialIndex) && (pass?.materialIndex ?? 0) !== seed.materialIndex) {
-        return false;
-      }
-      return !seed.material || !pass?.material || pass.material === seed.material;
+      // The projection shader still owns the normal-observability rule:
+      // camera-facing normals may paint, normals pointing away from the camera
+      // may not. Do not use this pass gate as a back-normal bypass.
+	      if (seed.component?.size) {
+	        return true;
+	      }
+	      const passMaterialMatchesSeed = !seed.material
+	        || !pass?.material
+	        || pass.material === seed.material
+	        || editablePaintTargetsMatch(seed.editable, this.editableClonePaintTexture?.(pass.material) || null);
+	      if (Number.isInteger(seed.materialIndex) && (pass?.materialIndex ?? 0) !== seed.materialIndex && !passMaterialMatchesSeed) {
+	        return false;
+	      }
+	      return passMaterialMatchesSeed;
     },
 
     textureAirbrushNeighborCanReuseCachedPasses(seed = null) {
@@ -323,14 +515,20 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       const resolvedMaterialIndex = Number.isInteger(materialIndex)
         ? materialIndex
         : hit?.face?.materialIndex ?? 0;
-      if (!hasConnectedComponent && Number.isInteger(seed.materialIndex) && resolvedMaterialIndex !== seed.materialIndex) {
-        return false;
-      }
-      const resolvedMaterial = material || (record && hit
-        ? this.clonePaintMaterialForHit?.(record, hit) || null
-        : null);
-      if (!hasConnectedComponent && seed.material && resolvedMaterial && resolvedMaterial !== seed.material) {
-        return false;
+	      const resolvedMaterial = material || (record && hit
+	        ? this.clonePaintMaterialForHit?.(record, hit) || null
+	        : null);
+	      const resolvedEditable = resolvedMaterial
+	        ? this.editableClonePaintTexture?.(resolvedMaterial) || null
+	        : null;
+	      const matchesSeedPaintTarget = editablePaintTargetsMatch(seed.editable, resolvedEditable);
+	      if (!hasConnectedComponent && Number.isInteger(seed.materialIndex) && resolvedMaterialIndex !== seed.materialIndex && !matchesSeedPaintTarget) {
+	        return false;
+	      }
+	      if (!hasConnectedComponent && seed.material && resolvedMaterial && resolvedMaterial !== seed.material) {
+	        if (!matchesSeedPaintTarget) {
+	          return false;
+	        }
       }
       const hitNormal = normalizedNormal(hit?.face?.normal);
       if (!hasConnectedComponent && seed.seedNormal && hitNormal) {
@@ -350,15 +548,18 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       }
       for (const vertexIndex of vertices) {
         if (seed.component.has(vertexIndex)) {
-          return true;
+          continue;
         }
-        for (const linkedIndex of this.textureAirbrushNeighborLinkedVertices(record, vertexIndex)) {
-          if (seed.component.has(linkedIndex)) {
-            return true;
-          }
+        const linkedVertices = this.textureAirbrushNeighborLinkedVertices(record, vertexIndex);
+        if (linkedVertices.some((linkedIndex) => (
+          linkedIndex !== vertexIndex
+          && seed.component.has(linkedIndex)
+        ))) {
+          continue;
         }
+        return false;
       }
-      return false;
+      return true;
     }
   });
 }

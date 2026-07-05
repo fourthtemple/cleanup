@@ -53,7 +53,8 @@ export function installTextureAirbrushVisibleRegionMethods(BirdWeightEditor, dep
       };
       const brushRadius = Math.max(1, options.radiusPixels ?? this.textureBrushRadiusScreenPixels?.() ?? 24);
       const scatter = this.textureAirbrushScatter?.() ?? 0.35;
-      const haloRadius = airbrushHaloRadius(brushRadius, scatter);
+      const hardness = this.textureAirbrushHardness?.() ?? 0.35;
+      const haloRadius = airbrushHaloRadius(brushRadius, scatter, hardness);
       const radiusSq = haloRadius * haloRadius;
       const color = this.textureAirbrushColor();
       const alpha = options.strength ?? this.textureAirbrushStrength?.() ?? 0.26;

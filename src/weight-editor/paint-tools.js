@@ -1,7 +1,220 @@
 const TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MIN_PIXELS = 6;
 const TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS = 18;
 const TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_RADIUS_SCALE = 0.75;
-const TEXTURE_AIRBRUSH_CONTINUOUS_MAX_SAMPLES = 24;
+const TEXTURE_AIRBRUSH_CONTINUOUS_MAX_SAMPLES = 64;
+const TEXTURE_AIRBRUSH_QUADRATIC_SAMPLE_MAX_PIXELS = 8;
+const TEXTURE_AIRBRUSH_LOW_SPACING_QUADRATIC_SAMPLE_MAX_PIXELS = 3;
+const TEXTURE_AIRBRUSH_COALESCED_WEBGPU_IMMEDIATE_MAX_BATCHES = 1;
+const TEXTURE_AIRBRUSH_COALESCED_WEBGPU_IMMEDIATE_MAX_BATCH_SEGMENTS = 16;
+const TEXTURE_AIRBRUSH_COALESCED_WEBGPU_IMMEDIATE_MAX_SEGMENTS = 32;
+const TEXTURE_AIRBRUSH_COALESCED_WEBGPU_IMMEDIATE_MAX_BATCH_MS = 2;
+
+function texturePaintFiniteClientPoint(event = null) {
+  const clientX = Number(event?.clientX);
+  const clientY = Number(event?.clientY);
+  if (!Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return null;
+  }
+  return { clientX, clientY };
+}
+
+function texturePaintClientDistanceSqValues(ax = 0, ay = 0, bx = 0, by = 0) {
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+function texturePaintPointToSegmentDistanceSqValues(px = 0, py = 0, ax = 0, ay = 0, bx = 0, by = 0) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lengthSq = dx * dx + dy * dy;
+  if (lengthSq <= 0.000001) {
+    return texturePaintClientDistanceSqValues(px, py, ax, ay);
+  }
+  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq));
+  const projectedX = ax + dx * t;
+  const projectedY = ay + dy * t;
+  return texturePaintClientDistanceSqValues(px, py, projectedX, projectedY);
+}
+
+function texturePaintCloneImageData(imageData = null) {
+  if (
+    !imageData
+    || !Number.isFinite(Number(imageData.width))
+    || !Number.isFinite(Number(imageData.height))
+    || !imageData.data
+  ) {
+    return null;
+  }
+  const width = Math.max(1, Math.floor(Number(imageData.width)));
+  const height = Math.max(1, Math.floor(Number(imageData.height)));
+  const data = new Uint8ClampedArray(imageData.data);
+  if (typeof ImageData === "function") {
+    try {
+      return new ImageData(data, width, height);
+    } catch {
+      // Some non-browser test shims only support plain ImageData-like objects.
+    }
+  }
+  return { width, height, data };
+}
+
+function texturePaintDebugAirbrushActive() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  return new URLSearchParams(window.location?.search || "").has("debugAirbrush");
+}
+
+function texturePaintDebugImageDataStats(imageData = null) {
+  if (!imageData?.data?.length) {
+    return null;
+  }
+  let alpha = 0;
+  let magenta = 0;
+  for (let index = 0; index < imageData.data.length; index += 4) {
+    const a = imageData.data[index + 3] || 0;
+    if (a <= 0) {
+      continue;
+    }
+    alpha += 1;
+    if ((imageData.data[index] || 0) > 180 && (imageData.data[index + 2] || 0) > 180) {
+      magenta += 1;
+    }
+  }
+  return {
+    width: imageData.width || 0,
+    height: imageData.height || 0,
+    alpha,
+    magenta
+  };
+}
+
+function texturePaintTslSurfaceTexture(texture = null) {
+  return Boolean(
+    texture?.userData?.texturePaintTslSurfaceAirbrushDisplayTexture === true
+    || texture?.userData?.texturePaintTslSurfaceAirbrushTargetTexture === true
+  );
+}
+
+function texturePaintStableReferenceTexture(texture = null) {
+  if (!texturePaintTslSurfaceTexture(texture)) {
+    return texture || null;
+  }
+  return texture?.userData?.textureAirbrushWebGpuCanvasMap
+    || texture?.userData?.texturePaintTslSurfaceDisplayOriginalMap
+    || texture?.userData?.clonePaintOriginalMap
+    || null;
+}
+
+function texturePaintCopyRenderTargetTextureSettings(targetTexture = null, sourceTexture = null, THREE = null) {
+  if (!targetTexture || !sourceTexture) {
+    return false;
+  }
+  targetTexture.colorSpace = sourceTexture.colorSpace || THREE?.SRGBColorSpace || targetTexture.colorSpace;
+  targetTexture.flipY = sourceTexture.flipY ?? false;
+  if ("channel" in targetTexture && "channel" in sourceTexture) {
+    targetTexture.channel = sourceTexture.channel;
+  }
+  targetTexture.wrapS = sourceTexture.wrapS || THREE?.ClampToEdgeWrapping || targetTexture.wrapS;
+  targetTexture.wrapT = sourceTexture.wrapT || THREE?.ClampToEdgeWrapping || targetTexture.wrapT;
+  targetTexture.magFilter = sourceTexture.magFilter || THREE?.LinearFilter || targetTexture.magFilter;
+  targetTexture.minFilter = sourceTexture.minFilter || THREE?.LinearFilter || targetTexture.minFilter;
+  targetTexture.generateMipmaps = false;
+  return true;
+}
+
+function texturePaintSetDebugData(key, value) {
+  if (!texturePaintDebugAirbrushActive()) {
+    return false;
+  }
+  const root = window.document?.documentElement || null;
+  if (!root?.dataset) {
+    return false;
+  }
+  root.dataset[key] = typeof value === "string" ? value : JSON.stringify(value);
+  return true;
+}
+
+function textureAirbrushCoalescedPathCanCollapse(events = [], startPoint = null, radiusPixels = 1) {
+  if (!Array.isArray(events) || events.length <= 2) {
+    return true;
+  }
+  const first = startPoint || events[0];
+  const last = events.at(-1);
+  if (
+    !Number.isFinite(first?.clientX)
+    || !Number.isFinite(first?.clientY)
+    || !Number.isFinite(last?.clientX)
+    || !Number.isFinite(last?.clientY)
+  ) {
+    return false;
+  }
+  const radius = Math.max(1, Number(radiusPixels) || 1);
+  const tolerance = Math.max(0.75, Math.min(4, radius * 0.12));
+  const toleranceSq = tolerance * tolerance;
+  for (const event of events.slice(0, -1)) {
+    if (!Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) {
+      return false;
+    }
+    if (
+      texturePaintPointToSegmentDistanceSqValues(
+        event.clientX,
+        event.clientY,
+        first.clientX,
+        first.clientY,
+        last.clientX,
+        last.clientY
+      ) > toleranceSq
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function textureAirbrushHighRateEventsNeedCurveSampling(events = [], startPoint = null, sampleStepPixels = 1) {
+  if (!Array.isArray(events) || events.length < 1) {
+    return false;
+  }
+  if (events.length > 3) {
+    return false;
+  }
+  const step = Math.max(0.75, Number(sampleStepPixels) || 1);
+  let previous = startPoint || null;
+  for (const event of events) {
+    if (!Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) {
+      continue;
+    }
+    if (
+      previous
+      && Number.isFinite(previous.clientX)
+      && Number.isFinite(previous.clientY)
+      && Math.sqrt(texturePaintClientDistanceSqValues(
+        previous.clientX,
+        previous.clientY,
+        event.clientX,
+        event.clientY
+      )) > step * 1.5
+    ) {
+      return true;
+    }
+    previous = event;
+  }
+  return false;
+}
+
+function textureAirbrushQuadraticPoint(startPoint = null, controlPoint = null, endPoint = null, t = 0) {
+  const inverse = 1 - t;
+  return {
+    clientX: inverse * inverse * startPoint.clientX
+      + 2 * inverse * t * controlPoint.clientX
+      + t * t * endPoint.clientX,
+    clientY: inverse * inverse * startPoint.clientY
+      + 2 * inverse * t * controlPoint.clientY
+      + t * t * endPoint.clientY
+  };
+}
 
 function texturePaintPointerIsHighRateBrushInput(event = null) {
   const pointerType = String(event?.pointerType || "").toLowerCase();
@@ -10,6 +223,17 @@ function texturePaintPointerIsHighRateBrushInput(event = null) {
   }
   const webkitForce = Number(event?.webkitForce ?? event?.force);
   return !pointerType && Number.isFinite(webkitForce) && webkitForce > 0;
+}
+
+function texturePaintInitialStrokeDragThresholdSq(editor = null) {
+  const radius = Math.max(
+    1,
+    Number(editor?.textureAirbrushCachedStrokeRadiusPixels?.()) || 0,
+    Number(editor?.textureBrushRadiusScreenPixels?.()) || 0,
+    8
+  );
+  const threshold = Math.max(1.5, Math.min(8, radius * 0.04));
+  return threshold * threshold;
 }
 
 function texturePaintPrimaryTouch(event = null) {
@@ -49,13 +273,27 @@ function texturePaintActiveTouch(event = null, identifier = null) {
 
 function texturePaintGpuTargetEffectivelyEmpty(targetEntry = null) {
   const layer = targetEntry?.layer || null;
-  if (!targetEntry || Math.max(0, Math.floor(Number(targetEntry.paintRevision) || 0)) > 0) {
+  if (!targetEntry) {
+    return false;
+  }
+  if (
+    layer?.texturePaintGpuPainted === true
+    || layer?.texturePaintHasPaint === true
+    || targetEntry.texturePaintLayerHasPaint === true
+  ) {
     return false;
   }
   if (layer?.isEmpty === true && targetEntry.emptyTransparent !== false) {
     return true;
   }
-  return targetEntry.emptyTransparent === true && layer?.isEmpty !== false;
+  if (targetEntry.emptyTransparent === true) {
+    return true;
+  }
+  if (targetEntry.emptyTransparent === false) {
+    return false;
+  }
+  return Math.max(0, Math.floor(Number(targetEntry.paintRevision) || 0)) <= 0
+    && layer?.isEmpty !== false;
 }
 
 function texturePaintActiveLayerMode(editor = null, material = null) {
@@ -118,6 +356,177 @@ function webKitForceEventsAvailable() {
   return Boolean(documentRef && "onwebkitmouseforcechanged" in documentRef);
 }
 
+function texturePaintReleasePointerCapture(canvas = null, pointerId = null) {
+  if (!canvas || pointerId === null || pointerId === undefined || typeof canvas.releasePointerCapture !== "function") {
+    return false;
+  }
+  try {
+    if (typeof canvas.hasPointerCapture === "function" && !canvas.hasPointerCapture(pointerId)) {
+      return false;
+    }
+    canvas.releasePointerCapture(pointerId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function texturePaintSetPointerCapture(canvas = null, pointerId = null) {
+  if (!canvas || pointerId === null || pointerId === undefined || typeof canvas.setPointerCapture !== "function") {
+    return false;
+  }
+  try {
+    canvas.setPointerCapture(pointerId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function texturePaintPointerReleaseEvent(sourceEvent = null, pointerId = null) {
+  const clientX = Number(sourceEvent?.clientX ?? sourceEvent?.pageX ?? 0) || 0;
+  const clientY = Number(sourceEvent?.clientY ?? sourceEvent?.pageY ?? 0) || 0;
+  return {
+    pointerId,
+    pointerType: sourceEvent?.pointerType || "mouse",
+    button: sourceEvent?.button ?? 0,
+    buttons: 0,
+    clientX,
+    clientY,
+    pageX: Number(sourceEvent?.pageX ?? clientX) || clientX,
+    pageY: Number(sourceEvent?.pageY ?? clientY) || clientY,
+    preventDefault() {},
+    stopPropagation() {},
+    stopImmediatePropagation() {}
+  };
+}
+
+function texturePaintClearOrbitPointerState(editor = null, sourceEvent = null, pointerId = null) {
+  const controls = editor?.controls;
+  if (!controls) {
+    return false;
+  }
+  let changed = false;
+  const hasPaintPointerId = pointerId !== null && pointerId !== undefined;
+  const isPaintPointer = (id) => !hasPaintPointerId || id == pointerId;
+  let trackedPointers = Array.isArray(controls._pointers)
+    ? controls._pointers.filter((id) => id !== null && id !== undefined)
+    : [];
+  const trackedPaintPointers = trackedPointers.filter(isPaintPointer);
+  if (trackedPaintPointers.length > 0 && typeof controls._onPointerUp === "function") {
+    for (const trackedPointer of trackedPaintPointers) {
+      try {
+        controls._onPointerUp(texturePaintPointerReleaseEvent(sourceEvent, trackedPointer));
+        changed = true;
+      } catch {
+        // OrbitControls can throw if browser capture was already released; the
+        // direct cleanup below still restores the idle state for paint-owned pointers.
+      }
+    }
+  }
+  trackedPointers = Array.isArray(controls._pointers)
+    ? controls._pointers.filter((id) => id !== null && id !== undefined)
+    : [];
+  const hasUnrelatedOrbitPointer = hasPaintPointerId
+    && trackedPointers.some((id) => !isPaintPointer(id));
+  if (hasUnrelatedOrbitPointer) {
+    return changed;
+  }
+  const element = controls.domElement || editor?.canvas || null;
+  const documentRef = element?.ownerDocument || globalThis.document || null;
+  if (documentRef && typeof controls._onPointerMove === "function") {
+    documentRef.removeEventListener?.("pointermove", controls._onPointerMove);
+    changed = true;
+  }
+  if (documentRef && typeof controls._onPointerUp === "function") {
+    documentRef.removeEventListener?.("pointerup", controls._onPointerUp);
+    changed = true;
+  }
+  const releaseTarget = element || editor?.canvas || null;
+  const releaseIds = new Set(trackedPaintPointers.length ? trackedPaintPointers : trackedPointers);
+  if (pointerId !== null && pointerId !== undefined) {
+    releaseIds.add(pointerId);
+  }
+  for (const id of releaseIds) {
+    if (releaseTarget === editor?.canvas && id === pointerId) {
+      continue;
+    }
+    texturePaintReleasePointerCapture(releaseTarget, id);
+  }
+  if (Array.isArray(controls._pointers) && controls._pointers.length > 0) {
+    controls._pointers.length = 0;
+    changed = true;
+  }
+  if (controls._pointerPositions && typeof controls._pointerPositions === "object") {
+    for (const key of Object.keys(controls._pointerPositions)) {
+      delete controls._pointerPositions[key];
+      changed = true;
+    }
+  }
+  if ("state" in controls && controls.state !== -1) {
+    controls.state = -1;
+    changed = true;
+  }
+  if (controls._cursorStyle === "grab" && element?.style) {
+    element.style.cursor = "grab";
+  }
+  return changed;
+}
+
+function texturePaintClearFallbackInputState(editor = null) {
+  if (!editor) {
+    return false;
+  }
+  editor.texturePaintMouseFallbackActive = false;
+  editor.texturePaintMouseFallbackLastEvent = null;
+  editor.texturePaintTouchFallbackActive = false;
+  editor.texturePaintTouchFallbackIdentifier = null;
+  return true;
+}
+
+function texturePaintInputDebugEnabled() {
+  return typeof window !== "undefined"
+    && new URLSearchParams(window.location?.search || "").has("debugAirbrush");
+}
+
+function exposeTexturePaintInputDebug(editor = null, label = "", event = null, detail = {}) {
+  if (!texturePaintInputDebugEnabled()) {
+    return;
+  }
+  const root = window?.document?.documentElement || null;
+  if (!root?.dataset) {
+    return;
+  }
+  root.dataset.textureAirbrushDebugInputCount = String(
+    Math.max(0, Math.floor(Number(root.dataset.textureAirbrushDebugInputCount) || 0)) + 1
+  );
+  root.dataset.textureAirbrushDebugInputLabel = label || "";
+  root.dataset.textureAirbrushDebugInputEventType = String(event?.type || "");
+  root.dataset.textureAirbrushDebugInputButton = String(event?.button ?? "");
+  root.dataset.textureAirbrushDebugInputButtons = String(event?.buttons ?? "");
+  root.dataset.textureAirbrushDebugInputActiveTool = String(editor?.activeTool || "");
+  root.dataset.textureAirbrushDebugInputPainting = String(editor?.painting === true);
+  root.dataset.textureAirbrushDebugInputDetail = JSON.stringify(detail || {});
+}
+
+function exposeTexturePaintStrokeDebug(editor = null, label = "", event = null, detail = {}) {
+  if (!texturePaintInputDebugEnabled()) {
+    return;
+  }
+  const root = window?.document?.documentElement || null;
+  if (!root?.dataset) {
+    return;
+  }
+  root.dataset.textureAirbrushDebugStrokePathCount = String(
+    Math.max(0, Math.floor(Number(root.dataset.textureAirbrushDebugStrokePathCount) || 0)) + 1
+  );
+  root.dataset.textureAirbrushDebugStrokePathLabel = label || "";
+  root.dataset.textureAirbrushDebugStrokePathEventType = String(event?.type || "");
+  root.dataset.textureAirbrushDebugStrokePathTool = String(editor?.activeTool || "");
+  root.dataset.textureAirbrushDebugStrokePathPainting = String(editor?.painting === true);
+  root.dataset.textureAirbrushDebugStrokePathDetail = JSON.stringify(detail || {});
+}
+
 export function installPaintToolMethods(BirdWeightEditor, deps) {
   const {
     THREE,
@@ -144,9 +553,19 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
   Object.assign(BirdWeightEditor.prototype, {
     onPointerDown(event) {
       this.texturePaintLastPointerEventAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+      this.textureAirbrushPendingInitialStroke = null;
       if (event.button !== 0 || this.activeTool === "orbit" || this.activeTool === "move") {
+        exposeTexturePaintInputDebug(this, "pointerdown-ignored", event, {
+          reason: event.button !== 0 ? "non-primary-button" : "tool",
+          button: event.button ?? null,
+          activeTool: this.activeTool || ""
+        });
         return;
       }
+      exposeTexturePaintInputDebug(this, "pointerdown", event, {
+        activeTool: this.activeTool || "",
+        pointerId: event.pointerId ?? null
+      });
       this.lastCanvasPointerPaintAt = typeof performance !== "undefined" ? performance.now() : Date.now();
       if (this.activeTool === "bone") {
         if (this.transformControls?.enabled && this.transformControls.object && (this.transformControls.axis || this.transformControls.dragging)) {
@@ -166,18 +585,36 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (this.activeTool === "eyedropper") {
         this.painting = true;
         this.controls.enabled = false;
-        this.canvas.setPointerCapture?.(event.pointerId);
+        this.texturePaintActivePointerId = event.pointerId ?? null;
+        texturePaintSetPointerCapture(this.canvas, event.pointerId);
         this.pickTextureColorFromEvent(event);
         return;
       }
       if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser") {
-        this.settleTextureAirbrushCameraMotion?.();
+        const cameraSettled = this.settleTextureAirbrushCameraMotion?.() === true;
+        if (cameraSettled) {
+          this.prewarmTextureAirbrushAfterCameraChange?.();
+        }
+        this.texturePaintTslSurfaceAirbrushInvalidate?.();
+        this.textureAirbrushResetStrokeBrushState?.();
+        this.textureAirbrushResetStrokePressureState?.();
+        this.textureAirbrushResetInputSamplingState?.();
         this.showTextureStrokeCursor?.(event, { prewarm: false });
+        const startPoint = texturePaintFiniteClientPoint(event);
+        this.textureAirbrushPendingInitialStroke = startPoint
+          ? {
+              point: startPoint,
+              event: this.textureAirbrushInputEventAtPoint?.(event, startPoint) || event,
+              tool: this.activeTool
+            }
+          : null;
       } else if (this.activeTool === "clone") {
         this.settleTextureAirbrushCameraMotion?.();
         this.updateTextureBrushCursor?.(event);
+        this.textureAirbrushPendingInitialStroke = null;
       } else if (this.usesSelectionBrushCursor?.(this.activeTool)) {
         this.updateSelectionBrushCursor?.(event);
+        this.textureAirbrushPendingInitialStroke = null;
       }
       const undoLabel = this.activeTool === "neighbor"
         ? "Neighbor pen"
@@ -200,14 +637,16 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (this.activeTool === "lasso") {
         this.controls.enabled = false;
         this.painting = true;
-        this.canvas.setPointerCapture?.(event.pointerId);
+        this.texturePaintActivePointerId = event.pointerId ?? null;
+        texturePaintSetPointerCapture(this.canvas, event.pointerId);
         this.beginLassoStroke(event);
         return;
       }
       if (this.activeTool === "neighbor") {
         this.controls.enabled = false;
         this.painting = true;
-        this.canvas.setPointerCapture?.(event.pointerId);
+        this.texturePaintActivePointerId = event.pointerId ?? null;
+        texturePaintSetPointerCapture(this.canvas, event.pointerId);
         const changed = this.beginNeighborStroke(event);
         if (changed > 0) {
           this.queueSelectionPaintChange?.(changed, "neighbor");
@@ -216,10 +655,14 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       }
       this.painting = true;
       this.controls.enabled = false;
+      this.texturePaintActivePointerId = event.pointerId ?? null;
       if (!keepWebKitForceEvents) {
-        this.canvas.setPointerCapture?.(event.pointerId);
+        texturePaintSetPointerCapture(this.canvas, event.pointerId);
       }
-      if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser" || this.activeTool === "clone") {
+      if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser") {
+        return;
+      }
+      if (this.activeTool === "clone") {
         this.paintTextureStrokeFromEvent?.(event, { reset: true });
       } else {
         this.paintFromEvent(event);
@@ -247,6 +690,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.pushUndoState?.(undoLabel);
       }
       this.settleTextureAirbrushCameraMotion?.();
+      this.prewarmTextureAirbrushAfterCameraChange?.();
       this.updateTextureBrushCursor?.(event);
       this.paintTextureStrokeFromEvent?.(event, { reset: true });
       this.textureAirbrushEndNeighborPaintStroke?.();
@@ -254,6 +698,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     onPointerMove(event) {
+      this.texturePaintLastPointerEventAt = typeof performance !== "undefined" ? performance.now() : Date.now();
       if (!this.painting && this.activeTool === "neighbor") {
         this.updateNeighborHover(event);
         return;
@@ -277,6 +722,11 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (!this.painting || this.activeTool === "orbit" || this.activeTool === "move" || this.activeTool === "bone") {
         return;
       }
+      const buttons = Number(event?.buttons);
+      if (Number.isFinite(buttons) && (buttons & 1) !== 1) {
+        this.onPointerUp(event);
+        return;
+      }
       if (this.activeTool === "neighbor") {
         event.preventDefault();
         const changed = this.continueNeighborStroke(event);
@@ -297,6 +747,29 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser" || this.activeTool === "clone") {
         if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser") {
           this.showTextureStrokeCursor?.(event);
+          const pendingInitialStroke = this.textureAirbrushPendingInitialStroke || null;
+          if (pendingInitialStroke?.tool === this.activeTool) {
+            const currentPoint = texturePaintFiniteClientPoint(event);
+            if (!currentPoint) {
+              return;
+            }
+            if (
+              texturePaintClientDistanceSqValues(
+                pendingInitialStroke.point.clientX,
+                pendingInitialStroke.point.clientY,
+                currentPoint.clientX,
+                currentPoint.clientY
+              ) < texturePaintInitialStrokeDragThresholdSq(this)
+            ) {
+              return;
+            }
+            this.textureAirbrushPendingInitialStroke = null;
+            this.paintTextureStrokeFromEvent?.(event, {
+              reset: true,
+              strokeStart: pendingInitialStroke.point
+            });
+            return;
+          }
         } else {
           this.updateTextureBrushCursor?.(event);
         }
@@ -329,7 +802,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         clientX: sourceEvent.clientX,
         clientY: sourceEvent.clientY,
         button: sourceEvent.button ?? fallback.button ?? 0,
-        buttons: sourceEvent.buttons ?? fallback.buttons ?? 1,
+        buttons: fallback.forceButtons === true
+          ? fallback.buttons ?? sourceEvent.buttons ?? 1
+          : sourceEvent.buttons ?? fallback.buttons ?? 1,
         pointerId: fallback.pointerId,
         pointerType: sourceEvent.pointerType || fallback.pointerType || "",
         pressure: sourceEvent.pressure ?? fallback.pressure,
@@ -511,8 +986,21 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         || (hasButton ? event.button !== 0 : options.allowMissingButton !== true)
         || this.shouldIgnoreMouseFallbackForRecentPointer?.(event)
       ) {
+        exposeTexturePaintInputDebug(this, "mousedown-fallback-ignored", event, {
+          reason: !this.texturePaintMouseFallbackToolActive?.()
+            ? "tool"
+            : (hasButton ? event.button !== 0 : options.allowMissingButton !== true)
+              ? "non-primary-button"
+              : "recent-pointer",
+          hasButton,
+          allowMissingButton: options.allowMissingButton === true
+        });
         return false;
       }
+      exposeTexturePaintInputDebug(this, "mousedown-fallback", event, {
+        hasButton,
+        allowMissingButton: options.allowMissingButton === true
+      });
       this.texturePaintMouseFallbackActive = true;
       this.texturePaintMouseFallbackLastEvent = event;
       this.textureAirbrushRememberNativePressureEvent?.(event);
@@ -556,6 +1044,14 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
 
     onCanvasMouseUpFallback(event) {
       if (!this.texturePaintMouseFallbackActive) {
+        if (this.painting === true && this.texturePaintMouseFallbackToolActive?.()) {
+          exposeTexturePaintInputDebug(this, "mouseup-safety-pointerup", event, {
+            activePointerId: this.texturePaintActivePointerId ?? null,
+            activeTool: this.activeTool || ""
+          });
+          this.onPointerUp(event);
+          return true;
+        }
         return false;
       }
       this.texturePaintMouseFallbackActive = false;
@@ -656,18 +1152,43 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       this.texturePaintMouseFallbackLastEvent = event;
       this.onPointerMove(this.texturePaintMouseFallbackEvent?.(event, {
         button: 0,
-        buttons: 1
+        buttons: 1,
+        forceButtons: true
       }) || event);
       return true;
     },
 
-    onPointerUp() {
+    onPointerUp(event = null) {
+      this.texturePaintLastPointerEventAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+      const pointerId = event?.pointerId ?? this.texturePaintActivePointerId;
+      const releasePaintPointer = this.painting === true
+        || this.texturePaintMouseFallbackActive === true
+        || this.texturePaintTouchFallbackActive === true
+        || (this.texturePaintActivePointerId !== null && this.texturePaintActivePointerId !== undefined);
+      exposeTexturePaintInputDebug(this, "pointerup", event, {
+        pointerId: pointerId ?? null,
+        releasePaintPointer,
+        activePointerId: this.texturePaintActivePointerId ?? null,
+        mouseFallbackActive: this.texturePaintMouseFallbackActive === true,
+        touchFallbackActive: this.texturePaintTouchFallbackActive === true
+      });
+      texturePaintReleasePointerCapture(this.canvas, pointerId);
+      if (releasePaintPointer) {
+        texturePaintClearOrbitPointerState(this, event, pointerId);
+      }
+      texturePaintClearFallbackInputState(this);
+      this.texturePaintActivePointerId = null;
+      const idleControlsEnabled = this.texturePaintIdleControlsEnabledForTool?.(this.activeTool)
+        ?? (this.activeTool === "orbit" || this.activeTool === "bone");
       if (!this.painting) {
+        if (this.controls && idleControlsEnabled === true) {
+          this.controls.enabled = true;
+        }
         return;
       }
       if (this.activeTool === "eyedropper") {
         this.painting = false;
-        this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
+        this.controls.enabled = idleControlsEnabled;
         return;
       }
       if (this.activeTool === "lasso") {
@@ -678,7 +1199,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           this.endSelectionStrokeUndo?.();
         }
         this.painting = false;
-        this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
+        this.controls.enabled = idleControlsEnabled;
         return;
       }
       this.painting = false;
@@ -686,6 +1207,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser" || this.activeTool === "clone") {
         const now = typeof performance !== "undefined" ? performance.now() : Date.now();
         this.texturePaintSuppressClickUntil = now + 700;
+        this.textureAirbrushPendingInitialStroke = null;
         this.textureAirbrushNativePressureSample = null;
         this.texturePaintStrokePoint = null;
         this.textureAirbrushEndNeighborPaintStroke?.();
@@ -697,10 +1219,15 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.textureAirbrushLastPaintCameraSplitSnapshot = null;
         this.hideTextureBrushCursor?.();
       }
-      this.controls.enabled = this.activeTool === "orbit" || this.activeTool === "bone";
-      this.flushSelectionStrokeFinalChange?.();
-      this.endSelectionStrokeUndo?.();
-      this.endTexturePaintStrokeUndo?.();
+      try {
+        this.flushSelectionStrokeFinalChange?.();
+        this.endSelectionStrokeUndo?.();
+        this.endTexturePaintStrokeUndo?.();
+      } finally {
+        if (this.controls) {
+          this.controls.enabled = idleControlsEnabled;
+        }
+      }
     },
 
     usesSelectionStrokeUndo(action) {
@@ -867,8 +1394,13 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       this.textureAirbrushInputSamplingCache = null;
     },
 
+    textureAirbrushResetStrokeCurveState() {
+      this.textureAirbrushStrokeCurveState = null;
+    },
+
     textureAirbrushInvalidateBrushSettings(options = {}) {
       this.textureAirbrushResetInputSamplingState?.();
+      this.textureAirbrushResetStrokeCurveState?.();
       this.textureAirbrushResetStrokeSpacing?.();
       this.textureAirbrushResetStrokePressureState?.();
       this.textureAirbrushResetStrokeBrushState?.();
@@ -879,13 +1411,25 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         !this.painting
         && options.prewarm !== false
         && this.activeTool === "airbrush"
-        && this.texturePaintLayerModeActive?.() === true
       ) {
         const event = options.event || this.lastBrushCursorEvent || null;
-        if (event) {
-          const hit = this.texturePaintHitForEvent?.(event, "airbrush") || null;
-          this.scheduleTextureAirbrushPrewarm?.(event, hit, { preserveLayerDisplay: true });
-        }
+        const color = this.textureAirbrushColor?.() || null;
+        this.scheduleTextureAirbrushPrewarm?.(event, null, {
+          force: options.forcePrewarm !== false,
+          radiusPixels: Math.max(1, Number(this.textureBrushRadiusScreenPixels?.()) || 8),
+          opacity: this.textureAirbrushOpacity?.() ?? 0.42,
+          hardness: this.textureAirbrushHardness?.() ?? 0.35,
+          scatter: this.textureAirbrushScatter?.() ?? 0.35,
+          visibleEdgeMode: this.textureAirbrushVisibleEdgeMode?.() || "soft",
+          ...(color ? { color: { r: color.r, g: color.g, b: color.b } } : {}),
+          preserveLayerDisplay: this.texturePaintLayerModeActive?.() === true,
+          prewarmPaintablesWithoutHit: true,
+          warmScreenHitIndex: true,
+          warmNeighborTopology: false,
+          tslSurfacePrewarmAll: true,
+          tslSurfacePrewarmLimit: 1,
+          renderCompilePass: true
+        });
       }
       return true;
     },
@@ -929,6 +1473,46 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         ?? TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS;
     },
 
+    textureAirbrushCurveSampleStepPixels(radiusPixels = null) {
+      const radius = Math.max(1, Number(radiusPixels) || this.textureAirbrushCachedStrokeRadiusPixels?.() || 8);
+      const spacingPercent = Math.max(0.1, Math.min(200, Number(this.textureAirbrushSpacingPercent?.() ?? 1)));
+      const webGpuScreenStroke = this.textureAirbrushCanUseScreenStroke?.() === true
+        && typeof this.textureAirbrushWebGpuPaintFromEvent === "function"
+        && Boolean(this.textureAirbrushWebGpuDevice?.());
+      if (webGpuScreenStroke) {
+        return Math.max(
+          TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MIN_PIXELS,
+          Math.min(TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS, radius * 0.5)
+        );
+      }
+      const spacingPixels = Math.max(
+        0.1,
+        Number(this.textureAirbrushSpacingPixels?.(radius)) || radius * 0.25
+      );
+      const continuousStep = this.textureAirbrushContinuousSampleStepPixels?.()
+        || TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS;
+      const lowSpacing = spacingPercent <= 10;
+      const lowSpacingCurveStep = Math.max(
+        lowSpacing ? 2 : 1.5,
+        Math.min(
+          lowSpacing
+            ? TEXTURE_AIRBRUSH_LOW_SPACING_QUADRATIC_SAMPLE_MAX_PIXELS
+            : TEXTURE_AIRBRUSH_QUADRATIC_SAMPLE_MAX_PIXELS,
+          radius * (lowSpacing ? 0.08 : 0.22)
+        )
+      );
+      return Math.max(
+        lowSpacing ? 2 : 1.5,
+        Math.min(
+          continuousStep,
+          Math.max(
+            lowSpacing ? Math.min(spacingPixels, lowSpacingCurveStep) : spacingPixels,
+            lowSpacingCurveStep
+          )
+        )
+      );
+    },
+
     textureAirbrushShouldInterpolateContinuousStroke() {
       return this.textureAirbrushInputSamplingState?.().continuous === true;
     },
@@ -948,11 +1532,48 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       const dx = endPoint.clientX - startPoint.clientX;
       const dy = endPoint.clientY - startPoint.clientY;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const sampleStep = this.textureAirbrushContinuousSampleStepPixels?.()
+      const sampleStep = this.textureAirbrushCurveSampleStepPixels?.()
         || TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS;
       if (distance <= sampleStep + 0.001) {
+        this.textureAirbrushStrokeCurveState = {
+          previousInputPoint: { clientX: startPoint.clientX, clientY: startPoint.clientY },
+          lastInputPoint: { clientX: endPoint.clientX, clientY: endPoint.clientY }
+        };
         return [sourceEvent];
       }
+      const previousInputPoint = this.textureAirbrushStrokeCurveState?.previousInputPoint || null;
+      let controlPoint = {
+        clientX: (startPoint.clientX + endPoint.clientX) * 0.5,
+        clientY: (startPoint.clientY + endPoint.clientY) * 0.5
+      };
+      if (
+        Number.isFinite(previousInputPoint?.clientX)
+        && Number.isFinite(previousInputPoint?.clientY)
+        && texturePaintClientDistanceSqValues(
+          previousInputPoint.clientX,
+          previousInputPoint.clientY,
+          startPoint.clientX,
+          startPoint.clientY
+        ) > 0.000001
+      ) {
+        const tangentX = startPoint.clientX - previousInputPoint.clientX;
+        const tangentY = startPoint.clientY - previousInputPoint.clientY;
+        const tangentLength = Math.sqrt(tangentX * tangentX + tangentY * tangentY);
+        const controlDistance = Math.min(distance * 0.55, tangentLength * 0.5);
+        const scale = tangentLength > 0.000001 ? controlDistance / tangentLength : 0;
+        controlPoint = {
+          clientX: startPoint.clientX + tangentX * scale,
+          clientY: startPoint.clientY + tangentY * scale
+        };
+      }
+      const usesQuadraticCurve = texturePaintPointToSegmentDistanceSqValues(
+        controlPoint.clientX,
+        controlPoint.clientY,
+        startPoint.clientX,
+        startPoint.clientY,
+        endPoint.clientX,
+        endPoint.clientY
+      ) > 0.25;
       const sampleCount = Math.max(
         1,
         Math.min(TEXTURE_AIRBRUSH_CONTINUOUS_MAX_SAMPLES, Math.ceil(distance / sampleStep))
@@ -960,11 +1581,27 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       const samples = [];
       for (let index = 1; index <= sampleCount; index += 1) {
         const ratio = index / sampleCount;
-        samples.push(this.textureAirbrushInputEventAtPoint?.(sourceEvent, {
-          clientX: startPoint.clientX + dx * ratio,
-          clientY: startPoint.clientY + dy * ratio
-        }) || sourceEvent);
+        const sample = this.textureAirbrushInputEventAtPoint?.(
+          sourceEvent,
+          textureAirbrushQuadraticPoint(startPoint, controlPoint, endPoint, ratio)
+        ) || sourceEvent;
+        if (
+          sourceEvent?.__cleanupRetainedNativePressure === true
+          && sample
+          && typeof sample === "object"
+        ) {
+          sample.__cleanupRetainedNativePressure = true;
+          sample.__cleanupPressureSource = sourceEvent.__cleanupPressureSource || "native";
+        }
+        if (usesQuadraticCurve && sample && typeof sample === "object") {
+          sample.textureAirbrushCurveSample = true;
+        }
+        samples.push(sample);
       }
+      this.textureAirbrushStrokeCurveState = {
+        previousInputPoint: { clientX: startPoint.clientX, clientY: startPoint.clientY },
+        lastInputPoint: { clientX: endPoint.clientX, clientY: endPoint.clientY }
+      };
       return samples;
     },
 
@@ -994,11 +1631,22 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         options.prewarm !== false
         && !this.painting
         && this.activeTool === "airbrush"
-        && this.texturePaintLayerModeActive?.()
       ) {
-        const hit = this.texturePaintHitForEvent?.(event, "airbrush") || null;
-        this.scheduleTextureAirbrushPrewarm?.(event, hit, {
-          preserveLayerDisplay: true
+        const color = this.textureAirbrushColor?.() || null;
+        this.scheduleTextureAirbrushPrewarm?.(event, null, {
+          radiusPixels: Math.max(1, Number(this.textureBrushRadiusScreenPixels?.()) || radius),
+          opacity: this.textureAirbrushOpacity?.() ?? 0.42,
+          hardness: this.textureAirbrushHardness?.() ?? 0.35,
+          scatter: this.textureAirbrushScatter?.() ?? 0.35,
+          visibleEdgeMode: this.textureAirbrushVisibleEdgeMode?.() || "soft",
+          ...(color ? { color: { r: color.r, g: color.g, b: color.b } } : {}),
+          preserveLayerDisplay: this.texturePaintLayerModeActive?.() === true,
+          prewarmPaintablesWithoutHit: true,
+          warmScreenHitIndex: true,
+          warmNeighborTopology: false,
+          tslSurfacePrewarmAll: true,
+          tslSurfacePrewarmLimit: 1,
+          renderCompilePass: true
         });
       }
       if (
@@ -1012,108 +1660,217 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return true;
     },
 
-    queueAirbrushTextureStrokeEvent(event, { reset = false } = {}) {
+    queueAirbrushTextureStrokeEvent(event, { reset = false, strokeStart = null } = {}) {
       const events = this.textureAirbrushStrokeSourceEvents?.(event, { reset })
         || this.texturePaintCoalescedEvents?.(event)
         || [event];
+      const explicitStrokeStart = texturePaintFiniteClientPoint(strokeStart);
       const skipInterpolatedSamples = texturePaintPointerIsHighRateBrushInput(events[0])
         || texturePaintPointerIsHighRateBrushInput(event);
+      const deferImmediateWebGpuFlush = events.length > 1
+        && this.textureAirbrushCanUseScreenStroke?.() === true
+        && typeof this.flushTextureAirbrushScreenStroke === "function";
+      // Keep coalesced samples as real screen segments. Collapsing them into one
+      // segment keeps dispatch counts low but makes broad/curved airbrush strokes
+      // blotchy because the GPU no longer receives the path shape to smooth.
+      const collapseCoalescedWebGpuScreenStroke = false;
+      const previousDeferImmediateWebGpuFlush = this.textureAirbrushDeferImmediateWebGpuScreenFlush;
       let queued = false;
-      let previous = reset ? null : this.texturePaintStrokePoint;
+      let previous = reset ? explicitStrokeStart : this.texturePaintStrokePoint;
       let resetSpacing = reset;
+      const sampleHighRatePath = skipInterpolatedSamples
+        && !collapseCoalescedWebGpuScreenStroke
+        && textureAirbrushHighRateEventsNeedCurveSampling(
+          events,
+          previous || events[0],
+          this.textureAirbrushCurveSampleStepPixels?.()
+            || TEXTURE_AIRBRUSH_CONTINUOUS_SAMPLE_MAX_PIXELS
+        );
       if (reset) {
         this.textureAirbrushScreenStrokeChanged = false;
         this.textureAirbrushResetInputSamplingState?.();
+        this.textureAirbrushResetStrokeCurveState?.();
+        this.textureAirbrushResetStrokeBrushState?.();
+        this.textureAirbrushResetStrokePressureState?.();
       }
-      for (const pointEvent of events) {
-        if (!Number.isFinite(pointEvent?.clientX) || !Number.isFinite(pointEvent?.clientY)) {
-          continue;
-        }
-        if (skipInterpolatedSamples) {
-          const sampleCurrent = {
+      if (this.textureAirbrushShouldUseLargeWebGpuNeighborFastQueue?.(event) === true) {
+        const queuedLarge = this.textureAirbrushQueueLargeWebGpuNeighborStrokeEvents?.(events, {
+          reset,
+          strokeStart: explicitStrokeStart
+        }) === true;
+        exposeTexturePaintStrokeDebug(this, "queue-large-neighbor-result", event, {
+          reset,
+          queued: queuedLarge,
+          sourceEvents: events.length,
+          queueLength: this.textureAirbrushScreenStrokeQueue?.length || 0,
+          pendingBatches: this.textureAirbrushPendingScreenStrokeBatches?.length || 0
+        });
+        return queuedLarge;
+      }
+      exposeTexturePaintStrokeDebug(this, "queue-screen-start", event, {
+        reset,
+        sourceEvents: events.length,
+        skipInterpolatedSamples,
+        sampleHighRatePath,
+        deferImmediateWebGpuFlush,
+        previous: previous ? { clientX: previous.clientX, clientY: previous.clientY } : null,
+        explicitStrokeStart: explicitStrokeStart
+          ? { clientX: explicitStrokeStart.clientX, clientY: explicitStrokeStart.clientY }
+          : null,
+        queueLength: this.textureAirbrushScreenStrokeQueue?.length || 0
+      });
+      if (deferImmediateWebGpuFlush) {
+        this.textureAirbrushDeferImmediateWebGpuScreenFlush = true;
+      }
+      try {
+        const queueEvents = collapseCoalescedWebGpuScreenStroke ? [events.at(-1)] : events;
+        const collapsedStrokeStart = collapseCoalescedWebGpuScreenStroke
+          ? (previous || events[0])
+          : null;
+        for (const pointEvent of queueEvents) {
+          if (!Number.isFinite(pointEvent?.clientX) || !Number.isFinite(pointEvent?.clientY)) {
+            continue;
+          }
+          if (skipInterpolatedSamples && !sampleHighRatePath) {
+            const sampleCurrent = {
+              clientX: pointEvent.clientX,
+              clientY: pointEvent.clientY
+            };
+            const strokeStart = collapsedStrokeStart || previous || sampleCurrent;
+            const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
+            queued = queueStroke?.call(this, pointEvent, {
+              strokeStart,
+              reset: resetSpacing || !previous,
+              ...(pointEvent.textureAirbrushCurveSample === true ? { preserveCurveSamples: true } : {}),
+              ...(collapseCoalescedWebGpuScreenStroke ? { deferResetRewarm: true } : {})
+            }) || queued;
+            resetSpacing = false;
+            previous = sampleCurrent;
+            continue;
+          }
+          const current = {
             clientX: pointEvent.clientX,
             clientY: pointEvent.clientY
           };
-          const strokeStart = previous || sampleCurrent;
-          const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
-          queued = queueStroke?.call(this, pointEvent, {
-            strokeStart,
-            reset: resetSpacing || !previous
-          }) || queued;
-          resetSpacing = false;
-          previous = sampleCurrent;
-          continue;
-        }
-        const current = {
-          clientX: pointEvent.clientX,
-          clientY: pointEvent.clientY
-        };
-        const strokeEvents = previous
-          ? this.textureAirbrushInterpolatedStrokeEvents?.(pointEvent, previous, current) || [pointEvent]
-          : [pointEvent];
-        for (const strokeEvent of strokeEvents) {
-          if (!Number.isFinite(strokeEvent?.clientX) || !Number.isFinite(strokeEvent?.clientY)) {
-            continue;
+          const strokeEvents = previous
+            ? this.textureAirbrushInterpolatedStrokeEvents?.(pointEvent, previous, current) || [pointEvent]
+            : [pointEvent];
+          for (const strokeEvent of strokeEvents) {
+            if (!Number.isFinite(strokeEvent?.clientX) || !Number.isFinite(strokeEvent?.clientY)) {
+              continue;
+            }
+            const sampleCurrent = {
+              clientX: strokeEvent.clientX,
+              clientY: strokeEvent.clientY
+            };
+            const strokeStart = previous || sampleCurrent;
+            const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
+            queued = queueStroke?.call(this, strokeEvent, {
+              strokeStart,
+              reset: resetSpacing || !previous,
+              ...(strokeEvent.textureAirbrushCurveSample === true ? { preserveCurveSamples: true } : {})
+            }) || queued;
+            resetSpacing = false;
+            previous = sampleCurrent;
           }
-          const sampleCurrent = {
-            clientX: strokeEvent.clientX,
-            clientY: strokeEvent.clientY
-          };
-          const strokeStart = previous || sampleCurrent;
-          const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
-          queued = queueStroke?.call(this, strokeEvent, {
-            strokeStart,
-            reset: resetSpacing || !previous
-          }) || queued;
-          resetSpacing = false;
-          previous = sampleCurrent;
+        }
+      } finally {
+        if (deferImmediateWebGpuFlush) {
+          if (previousDeferImmediateWebGpuFlush === undefined) {
+            delete this.textureAirbrushDeferImmediateWebGpuScreenFlush;
+          } else {
+            this.textureAirbrushDeferImmediateWebGpuScreenFlush = previousDeferImmediateWebGpuFlush;
+          }
         }
       }
       if (previous) {
         this.texturePaintStrokePoint = previous;
       }
+      if (queued && deferImmediateWebGpuFlush && previousDeferImmediateWebGpuFlush !== true) {
+        const scheduled = this.scheduleTextureAirbrushImmediateWebGpuScreenFlush?.({
+          live: true,
+          maxBatches: TEXTURE_AIRBRUSH_COALESCED_WEBGPU_IMMEDIATE_MAX_BATCHES,
+          maxBatchSegments: TEXTURE_AIRBRUSH_COALESCED_WEBGPU_IMMEDIATE_MAX_BATCH_SEGMENTS,
+          maxSegments: TEXTURE_AIRBRUSH_COALESCED_WEBGPU_IMMEDIATE_MAX_SEGMENTS,
+          maxBatchMs: TEXTURE_AIRBRUSH_COALESCED_WEBGPU_IMMEDIATE_MAX_BATCH_MS,
+          immediateWebGpuFlush: true
+        }) === true;
+        if (!scheduled) {
+          this.scheduleTextureAirbrushScreenStrokeFlush?.();
+        }
+      }
+      exposeTexturePaintStrokeDebug(this, "queue-screen-result", event, {
+        reset,
+        queued,
+        sourceEvents: events.length,
+        queueLength: this.textureAirbrushScreenStrokeQueue?.length || 0,
+        lastQueueRadius: this.textureAirbrushScreenStrokeQueue?.at?.(-1)?.radiusPixels ?? null,
+        lastQueueColor: this.textureAirbrushScreenStrokeQueue?.at?.(-1)?.color || null,
+        pendingBatches: this.textureAirbrushPendingScreenStrokeBatches?.length || 0,
+        screenFlushScheduled: this.textureAirbrushScreenFlushScheduled === true,
+        immediateFlushScheduled: this.textureAirbrushImmediateWebGpuScreenFlushScheduled === true,
+        flushing: this.textureAirbrushFlushingScreenStroke === true,
+        lastPoint: previous ? { clientX: previous.clientX, clientY: previous.clientY } : null
+      });
       return queued;
     },
 
-    paintTextureStrokeFromEvent(event, { reset = false } = {}) {
+    paintTextureStrokeFromEvent(event, { reset = false, strokeStart = null } = {}) {
       if (!event || (this.activeTool !== "airbrush" && this.activeTool !== "texture-eraser" && this.activeTool !== "clone")) {
+        exposeTexturePaintStrokeDebug(this, "stroke-ignored", event, {
+          reason: !event ? "missing-event" : "tool",
+          activeTool: this.activeTool || ""
+        });
         return false;
       }
-      if (reset === true && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser")) {
-        this.textureAirbrushBeginNeighborPaintStroke?.(event, this.activeTool);
-      }
+      const useScreenStroke = this.textureAirbrushCanUseScreenStroke?.() === true;
       const current = {
         clientX: event.clientX,
         clientY: event.clientY
       };
-      const previous = reset ? null : this.texturePaintStrokePoint;
+      exposeTexturePaintStrokeDebug(this, "stroke-entry", event, {
+        reset,
+        useScreenStroke,
+        current,
+        strokeStart: texturePaintFiniteClientPoint(strokeStart),
+        hasWebGpuDevice: Boolean(this.textureAirbrushWebGpuDevice?.()),
+        queueLength: this.textureAirbrushScreenStrokeQueue?.length || 0,
+        pendingBatches: this.textureAirbrushPendingScreenStrokeBatches?.length || 0
+      });
       if (this.activeTool === "clone") {
         this.paintFromEvent(event);
         this.texturePaintStrokePoint = current;
+        exposeTexturePaintStrokeDebug(this, "stroke-clone", event, { reset, current });
         return true;
       }
-      if (this.textureAirbrushCanUseScreenStroke?.()) {
-        return this.queueAirbrushTextureStrokeEvent(event, { reset });
+      if (useScreenStroke) {
+        const queued = this.queueAirbrushTextureStrokeEvent(event, { reset, strokeStart });
+        exposeTexturePaintStrokeDebug(this, "stroke-screen-result", event, {
+          reset,
+          queued,
+          queueLength: this.textureAirbrushScreenStrokeQueue?.length || 0,
+          pendingBatches: this.textureAirbrushPendingScreenStrokeBatches?.length || 0,
+          screenFlushScheduled: this.textureAirbrushScreenFlushScheduled === true,
+          immediateFlushScheduled: this.textureAirbrushImmediateWebGpuScreenFlushScheduled === true,
+          flushing: this.textureAirbrushFlushingScreenStroke === true
+        });
+        return queued;
       }
-      if (!previous) {
-        this.paintFromEvent(event, { strokeStart: current });
-        this.texturePaintStrokePoint = current;
-        return true;
-      }
-      const dx = current.clientX - previous.clientX;
-      const dy = current.clientY - previous.clientY;
-      const distance = Math.sqrt(dx * dx + dy * dy);
-      if (distance <= 0.001) {
-        this.paintFromEvent(event, { strokeStart: previous });
-        this.texturePaintStrokePoint = current;
-        return true;
-      }
-      const brushRadius = Math.max(1, this.textureBrushRadiusScreenPixels?.() || 8);
-      const maxSegmentPixels = Math.max(80, brushRadius * 18);
-      const strokeStart = distance > maxSegmentPixels ? current : previous;
-      this.paintFromEvent(event, { strokeStart });
-      this.texturePaintStrokePoint = current;
-      return true;
+      this.textureAirbrushReportWebGpuFallback?.({
+        backend: "none",
+        webGpuStatus: this.textureAirbrushWebGpuDevice?.()
+          ? "visible-surface-mask-unavailable"
+          : "backend-uninitialized"
+      });
+      exposeTexturePaintStrokeDebug(this, "stroke-no-screen-path", event, {
+        reset,
+        hasWebGpuDevice: Boolean(this.textureAirbrushWebGpuDevice?.()),
+        canUseScreenStroke: useScreenStroke
+      });
+      this.setStatus?.(this.activeTool === "texture-eraser"
+        ? "WebGPU eraser needs the live screen stroke path"
+        : "WebGPU airbrush needs the live screen stroke path");
+      return false;
     },
 
     captureSelectionSnapshot() {
@@ -1332,57 +2089,106 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     copyTextureToRenderTarget(sourceTexture, destinationTarget) {
-      if (!this.renderer || !sourceTexture || !destinationTarget) {
+      const renderer = this.renderer || null;
+      if (
+        !renderer?.isWebGPURenderer
+        || !sourceTexture
+        || !destinationTarget?.texture
+        || typeof THREE?.Scene !== "function"
+        || typeof THREE?.OrthographicCamera !== "function"
+        || typeof THREE?.PlaneGeometry !== "function"
+        || typeof THREE?.MeshBasicMaterial !== "function"
+        || typeof THREE?.Mesh !== "function"
+      ) {
         return false;
       }
-      if (this.textureAirbrushCopyTextureToTarget) {
-        return this.textureAirbrushCopyTextureToTarget(sourceTexture, destinationTarget);
+      if (sourceTexture === destinationTarget.texture) {
+        return true;
       }
-      this.textureAirbrushEnsureCopyScene?.();
-      if (!this.textureAirbrushGpuCopyScene || !this.textureAirbrushGpuCopyCamera || !this.textureAirbrushGpuCopyMesh) {
+      const state = this.texturePaintGpuRenderTargetCopyState ||= {};
+      if (!state.scene) {
+        state.scene = new THREE.Scene();
+        state.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1, 1);
+        state.material = new THREE.MeshBasicMaterial({
+          map: sourceTexture,
+          transparent: false,
+          depthTest: false,
+          depthWrite: false,
+          blending: THREE.NoBlending,
+          toneMapped: false
+        });
+        state.mesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), state.material);
+        state.mesh.frustumCulled = false;
+        state.scene.add(state.mesh);
+      }
+      if (!state.material || !state.mesh || !state.scene || !state.camera) {
         return false;
       }
-      this.textureAirbrushCopyTextureRenderSettings?.(destinationTarget.texture, sourceTexture);
-      const previousTarget = this.renderer.getRenderTarget();
-      const previousAutoClear = this.renderer.autoClear;
-      this.textureAirbrushGpuCopyMesh.material = this.textureAirbrushCopyMaterial?.(sourceTexture) || this.textureAirbrushGpuCopyMesh.material;
-      this.renderer.setRenderTarget(destinationTarget);
-      this.renderer.autoClear = true;
-      this.renderer.clear(true, true, true);
-      this.renderer.render(this.textureAirbrushGpuCopyScene, this.textureAirbrushGpuCopyCamera);
-      this.renderer.setRenderTarget(previousTarget);
-      this.renderer.autoClear = previousAutoClear;
+      if (state.material.map !== sourceTexture) {
+        state.material.map = sourceTexture;
+        state.material.needsUpdate = true;
+      }
+      const previousTarget = typeof renderer.getRenderTarget === "function"
+        ? renderer.getRenderTarget()
+        : null;
+      const previousAutoClear = renderer.autoClear;
+      try {
+        renderer.setRenderTarget(destinationTarget);
+        renderer.autoClear = true;
+        renderer.clear?.();
+        renderer.render(state.scene, state.camera);
+      } catch {
+        return false;
+      } finally {
+        renderer.setRenderTarget(previousTarget);
+        renderer.autoClear = previousAutoClear;
+      }
       return true;
     },
 
     cloneTextureRenderTargetSnapshot(targetEntry) {
-      if (!targetEntry?.target?.texture || !this.renderer || !THREE.WebGLRenderTarget) {
+      const renderer = this.renderer || null;
+      const sourceTarget = targetEntry?.target || null;
+      const sourceTexture = sourceTarget?.texture || null;
+      if (
+        !renderer?.isWebGPURenderer
+        || !sourceTexture
+        || typeof THREE?.RenderTarget !== "function"
+      ) {
         return null;
       }
-      const sourceTexture = targetEntry.target.texture;
-      const settings = this.textureAirbrushRenderTextureSettings?.(sourceTexture) || {
-        minFilter: sourceTexture.minFilter || THREE.LinearFilter,
-        magFilter: sourceTexture.magFilter || THREE.LinearFilter,
-        wrapS: sourceTexture.wrapS || THREE.ClampToEdgeWrapping,
-        wrapT: sourceTexture.wrapT || THREE.ClampToEdgeWrapping,
-        generateMipmaps: false
-      };
-      const snapshot = new THREE.WebGLRenderTarget(targetEntry.width || targetEntry.target.width, targetEntry.height || targetEntry.target.height, {
-        minFilter: settings.minFilter,
-        magFilter: settings.magFilter,
-        wrapS: settings.wrapS,
-        wrapT: settings.wrapT,
+      const width = Math.max(1, Math.floor(Number(targetEntry?.width || sourceTarget.width) || 1));
+      const height = Math.max(1, Math.floor(Number(targetEntry?.height || sourceTarget.height) || 1));
+      const snapshot = new THREE.RenderTarget(width, height, {
         depthBuffer: false,
-        stencilBuffer: false
+        stencilBuffer: false,
+        format: sourceTexture.format || THREE.RGBAFormat,
+        generateMipmaps: false
       });
-      if (!this.textureAirbrushCopyTextureRenderSettings?.(snapshot.texture, sourceTexture)) {
-        snapshot.texture.colorSpace = sourceTexture.colorSpace;
-        snapshot.texture.flipY = sourceTexture.flipY;
-        snapshot.texture.generateMipmaps = settings.generateMipmaps;
-      }
+      snapshot.texture.name = `${sourceTexture.name || "texture-paint-gpu-target"} undo snapshot`;
+      texturePaintCopyRenderTargetTextureSettings(snapshot.texture, sourceTexture, THREE);
       if (!this.copyTextureToRenderTarget(sourceTexture, snapshot)) {
         snapshot.dispose?.();
         return null;
+      }
+      const displayTarget = targetEntry?.displayTarget || null;
+      const displayTexture = displayTarget?.texture || null;
+      if (displayTexture) {
+        const displayWidth = Math.max(1, Math.floor(Number(displayTarget.width || width) || width));
+        const displayHeight = Math.max(1, Math.floor(Number(displayTarget.height || height) || height));
+        const displaySnapshot = new THREE.RenderTarget(displayWidth, displayHeight, {
+          depthBuffer: false,
+          stencilBuffer: false,
+          format: displayTexture.format || THREE.RGBAFormat,
+          generateMipmaps: false
+        });
+        displaySnapshot.texture.name = `${displayTexture.name || "texture-paint-gpu-display"} undo snapshot`;
+        texturePaintCopyRenderTargetTextureSettings(displaySnapshot.texture, displayTexture, THREE);
+        if (this.copyTextureToRenderTarget(displayTexture, displaySnapshot)) {
+          snapshot.texturePaintDisplaySnapshot = displaySnapshot;
+        } else {
+          displaySnapshot.dispose?.();
+        }
       }
       return snapshot;
     },
@@ -1409,6 +2215,8 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         return false;
       }
       delete snapshot.texturePaintSnapshotRefs;
+      snapshot.texturePaintDisplaySnapshot?.dispose?.();
+      delete snapshot.texturePaintDisplaySnapshot;
       snapshot.dispose?.();
       return true;
     },
@@ -1514,44 +2322,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     clearTexturePaintGpuTarget(targetEntry = null, options = {}) {
-      if (!targetEntry?.target || !this.renderer) {
-        return false;
-      }
-      const previousTarget = typeof this.renderer.getRenderTarget === "function"
-        ? this.renderer.getRenderTarget()
-        : null;
-      const previousAutoClear = this.renderer.autoClear;
-      const previousClearAlpha = typeof this.renderer.getClearAlpha === "function"
-        ? this.renderer.getClearAlpha()
-        : 1;
-      const previousClearColor = typeof THREE.Color === "function" ? new THREE.Color() : null;
-      if (previousClearColor && typeof this.renderer.getClearColor === "function") {
-        this.renderer.getClearColor(previousClearColor);
-      }
-      try {
-        this.renderer.setRenderTarget(targetEntry.target);
-        this.renderer.autoClear = true;
-        this.renderer.setClearColor?.(0x000000, 0);
-        this.renderer.clear(true, true, true);
-      } finally {
-        if (typeof this.renderer.setRenderTarget === "function") {
-          this.renderer.setRenderTarget(previousTarget);
-        }
-        this.renderer.autoClear = previousAutoClear;
-        if (previousClearColor && typeof this.renderer.setClearColor === "function") {
-          this.renderer.setClearColor(previousClearColor, previousClearAlpha);
-        }
-      }
-      targetEntry.emptyTransparent = true;
-      if (targetEntry.layer) {
-        targetEntry.layer.isEmpty = true;
-      }
-      if (options.markMutated === false) {
-        this.disposeTexturePaintGpuPrewarmSnapshot?.(targetEntry);
-      } else {
-        this.markTexturePaintGpuTargetMutated?.(targetEntry);
-      }
-      return true;
+      void targetEntry;
+      void options;
+      return false;
     },
 
     beginTexturePaintStrokeUndo(label = "Texture paint") {
@@ -1578,7 +2351,118 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return true;
     },
 
-    captureTexturePaintCanvasUndoTarget(record, material, editable, materialIndex = 0) {
+    texturePaintNormalizeCanvasUndoBounds(canvas = null, bounds = null) {
+      if (!canvas?.width || !canvas.height || !bounds) {
+        return null;
+      }
+      const canvasWidth = Math.max(1, Math.floor(Number(canvas.width) || 1));
+      const canvasHeight = Math.max(1, Math.floor(Number(canvas.height) || 1));
+      const x = Math.max(0, Math.min(canvasWidth - 1, Math.floor(Number(bounds.x) || 0)));
+      const y = Math.max(0, Math.min(canvasHeight - 1, Math.floor(Number(bounds.y) || 0)));
+      const right = Math.max(x + 1, Math.min(canvasWidth, Math.ceil(x + Math.max(1, Number(bounds.width) || 1))));
+      const bottom = Math.max(y + 1, Math.min(canvasHeight, Math.ceil(y + Math.max(1, Number(bounds.height) || 1))));
+      return {
+        x,
+        y,
+        width: right - x,
+        height: bottom - y
+      };
+    },
+
+    texturePaintUnionCanvasUndoBounds(canvas = null, first = null, second = null) {
+      const left = this.texturePaintNormalizeCanvasUndoBounds?.(canvas, first);
+      const right = this.texturePaintNormalizeCanvasUndoBounds?.(canvas, second);
+      if (!left) {
+        return right;
+      }
+      if (!right) {
+        return left;
+      }
+      const x = Math.min(left.x, right.x);
+      const y = Math.min(left.y, right.y);
+      const x2 = Math.max(left.x + left.width, right.x + right.width);
+      const y2 = Math.max(left.y + left.height, right.y + right.height);
+      return this.texturePaintNormalizeCanvasUndoBounds?.(canvas, {
+        x,
+        y,
+        width: x2 - x,
+        height: y2 - y
+      });
+    },
+
+    texturePaintNormalizeCanvasUndoRegions(canvas = null, regions = []) {
+      if (!canvas?.width || !canvas.height || !Array.isArray(regions)) {
+        return [];
+      }
+      const normalized = [];
+      for (const region of regions) {
+        const bounds = this.texturePaintNormalizeCanvasUndoBounds?.(canvas, region);
+        if (!bounds) {
+          continue;
+        }
+        if (normalized.some((existing) => (
+          bounds.x >= existing.x
+          && bounds.y >= existing.y
+          && bounds.x + bounds.width <= existing.x + existing.width
+          && bounds.y + bounds.height <= existing.y + existing.height
+        ))) {
+          continue;
+        }
+        normalized.push(bounds);
+      }
+      return normalized;
+    },
+
+    texturePaintCanvasUndoRegionSnapshot(context = null, canvas = null, bounds = null, source = null) {
+      if (source) {
+        return this.texturePaintImageDataFromSourceForUndoBounds?.(source, canvas, bounds);
+      }
+      return this.texturePaintImageDataForCanvasUndoBounds?.(context, canvas, bounds);
+    },
+
+    texturePaintImageDataForCanvasUndoBounds(context = null, canvas = null, bounds = null) {
+      if (!context || !canvas?.width || !canvas.height) {
+        return null;
+      }
+      const normalized = this.texturePaintNormalizeCanvasUndoBounds?.(canvas, bounds);
+      if (!normalized) {
+        return context.getImageData(0, 0, canvas.width, canvas.height);
+      }
+      return context.getImageData(normalized.x, normalized.y, normalized.width, normalized.height);
+    },
+
+    texturePaintImageDataFromSourceForUndoBounds(source = null, canvas = null, bounds = null) {
+      if (
+        !source?.data
+        || !canvas?.width
+        || !canvas.height
+        || source.width !== canvas.width
+        || source.height !== canvas.height
+        || source.data.byteLength !== canvas.width * canvas.height * 4
+      ) {
+        return null;
+      }
+      const normalized = this.texturePaintNormalizeCanvasUndoBounds?.(canvas, bounds);
+      if (!normalized) {
+        return source;
+      }
+      const data = new Uint8ClampedArray(normalized.width * normalized.height * 4);
+      for (let row = 0; row < normalized.height; row += 1) {
+        const sourceOffset = ((normalized.y + row) * canvas.width + normalized.x) * 4;
+        const targetOffset = row * normalized.width * 4;
+        data.set(source.data.subarray(sourceOffset, sourceOffset + normalized.width * 4), targetOffset);
+      }
+      if (typeof ImageData !== "undefined") {
+        return new ImageData(data, normalized.width, normalized.height);
+      }
+      return {
+        width: normalized.width,
+        height: normalized.height,
+        data
+      };
+    },
+
+    captureTexturePaintCanvasUndoTarget(record, material, editable, materialIndex = 0, options = {}) {
       const stroke = this.texturePaintActiveStrokeUndo?.() || this.texturePaintStrokeUndo;
       const canvas = editable?.canvas;
       const context = editable?.context;
@@ -1586,9 +2470,84 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         return false;
       }
       const key = this.texturePaintUndoEntryKey("canvas", record, materialIndex, material, null, editable?.layer?.id || "");
+      const boundsRegions = this.texturePaintNormalizeCanvasUndoRegions?.(
+        canvas,
+        options.boundsRegions || options.paintRegions || options.regions || []
+      ) || [];
       if (stroke.touched.has(key)) {
+        const entry = stroke.touched.get(key);
+        if (boundsRegions.length || entry?.regions?.length) {
+          entry.regions ||= [];
+          const source = entry.beforeSourceImageData || (
+            options.beforeImageData?.width === canvas.width
+            && options.beforeImageData?.height === canvas.height
+            && options.beforeImageData?.data?.byteLength === canvas.width * canvas.height * 4
+              ? texturePaintCloneImageData(options.beforeImageData)
+              : null
+          );
+          if (source && !entry.beforeSourceImageData) {
+            entry.beforeSourceImageData = source;
+          }
+          const nextRegions = boundsRegions.length
+            ? boundsRegions
+            : [this.texturePaintNormalizeCanvasUndoBounds?.(canvas, options.bounds || null)].filter(Boolean);
+          for (const bounds of nextRegions) {
+            const alreadyCovered = entry.regions.some((region) => (
+              bounds.x >= region.bounds.x
+              && bounds.y >= region.bounds.y
+              && bounds.x + bounds.width <= region.bounds.x + region.bounds.width
+              && bounds.y + bounds.height <= region.bounds.y + region.bounds.height
+            ));
+            if (alreadyCovered) {
+              continue;
+            }
+            entry.bounds = this.texturePaintUnionCanvasUndoBounds?.(canvas, entry.bounds, bounds) || entry.bounds;
+            entry.regions.push({
+              bounds,
+              before: source ? null : this.texturePaintCanvasUndoRegionSnapshot?.(context, canvas, bounds, null),
+              after: null
+            });
+          }
+          return true;
+        }
+        const nextBounds = this.texturePaintUnionCanvasUndoBounds?.(canvas, entry?.bounds, options.bounds || null);
+        if (entry && nextBounds && entry.bounds) {
+          const changedBounds = nextBounds.x !== entry.bounds.x
+            || nextBounds.y !== entry.bounds.y
+            || nextBounds.width !== entry.bounds.width
+            || nextBounds.height !== entry.bounds.height;
+          if (changedBounds) {
+            entry.bounds = nextBounds;
+            if (entry.beforeSourceImageData) {
+              entry.before = null;
+            } else {
+              entry.before = this.texturePaintImageDataForCanvasUndoBounds?.(context, canvas, nextBounds) || entry.before;
+            }
+            entry.after = null;
+          }
+        }
         return true;
       }
+      const bounds = this.texturePaintNormalizeCanvasUndoBounds?.(canvas, options.bounds || null);
+      const sourceBeforeImageData = options.beforeImageData?.width === canvas.width
+        && options.beforeImageData?.height === canvas.height
+        && options.beforeImageData?.data?.byteLength === canvas.width * canvas.height * 4
+        ? texturePaintCloneImageData(options.beforeImageData)
+        : null;
+      const regions = boundsRegions.length
+        ? boundsRegions.map((regionBounds) => ({
+            bounds: regionBounds,
+            before: sourceBeforeImageData
+              ? null
+              : this.texturePaintCanvasUndoRegionSnapshot?.(context, canvas, regionBounds, null),
+            after: null
+          }))
+        : null;
+      const beforeImageData = sourceBeforeImageData
+        ? null
+        : regions?.length
+          ? null
+        : this.texturePaintImageDataForCanvasUndoBounds?.(context, canvas, bounds);
       const entry = {
         type: "canvas",
         key,
@@ -1600,11 +2559,22 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         texture: editable.texture,
         layer: editable.layer || null,
         layerStack: editable.layerStack || null,
-        before: context.getImageData(0, 0, canvas.width, canvas.height),
+        bounds,
+        regions,
+        beforeSourceImageData: sourceBeforeImageData,
+        before: beforeImageData,
         after: null
       };
       stroke.touched.set(key, entry);
       stroke.before.push(entry);
+      texturePaintSetDebugData("textureAirbrushDebugUndoCaptureEntry", {
+        key,
+        layer: Boolean(entry.layer),
+        bounds,
+        regionCount: regions?.length || 0,
+        beforeSource: texturePaintDebugImageDataStats(sourceBeforeImageData),
+        before: texturePaintDebugImageDataStats(beforeImageData)
+      });
       return true;
     },
 
@@ -1651,7 +2621,8 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         return null;
       }
       const key = this.texturePaintUndoEntryKey("canvas", record, materialIndex, material, null, editable?.layer?.id || "");
-      return stroke.touched.get(key)?.before || null;
+      const entry = stroke.touched.get(key) || null;
+      return entry?.beforeSourceImageData || entry?.before || null;
     },
 
     texturePaintCanvasStrokeOpacityState(record, material, editable, materialIndex = 0) {
@@ -1676,7 +2647,52 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
 
     finalizeTexturePaintUndoEntry(entry) {
       if (entry.type === "canvas") {
-        entry.after = entry.context.getImageData(0, 0, entry.canvas.width, entry.canvas.height);
+        if (Array.isArray(entry.regions) && entry.regions.length) {
+          for (const region of entry.regions) {
+            if (entry.beforeSourceImageData && !region.before) {
+              region.before = this.texturePaintImageDataFromSourceForUndoBounds?.(
+                entry.beforeSourceImageData,
+                entry.canvas,
+                region.bounds || null
+              ) || region.before;
+            }
+            region.after = this.texturePaintImageDataForCanvasUndoBounds?.(
+              entry.context,
+              entry.canvas,
+              region.bounds || null
+            ) || region.after;
+          }
+          delete entry.beforeSourceImageData;
+          texturePaintSetDebugData("textureAirbrushDebugUndoFinalizeEntry", {
+            layer: Boolean(entry.layer),
+            regionCount: entry.regions.length,
+            regions: entry.regions.slice(0, 4).map((region) => ({
+              bounds: region.bounds || null,
+              before: texturePaintDebugImageDataStats(region.before),
+              after: texturePaintDebugImageDataStats(region.after)
+            }))
+          });
+          return entry.regions.some((region) => region.before && region.after);
+        }
+        if (entry.beforeSourceImageData) {
+          entry.before = this.texturePaintImageDataFromSourceForUndoBounds?.(
+            entry.beforeSourceImageData,
+            entry.canvas,
+            entry.bounds || null
+          ) || entry.beforeSourceImageData;
+        }
+        entry.after = this.texturePaintImageDataForCanvasUndoBounds?.(
+          entry.context,
+          entry.canvas,
+          entry.bounds || null
+        ) || entry.context.getImageData(0, 0, entry.canvas.width, entry.canvas.height);
+        delete entry.beforeSourceImageData;
+        texturePaintSetDebugData("textureAirbrushDebugUndoFinalizeEntry", {
+          layer: Boolean(entry.layer),
+          bounds: entry.bounds || null,
+          before: texturePaintDebugImageDataStats(entry.before),
+          after: texturePaintDebugImageDataStats(entry.after)
+        });
         return true;
       }
       if (entry.type === "gpu") {
@@ -1920,6 +2936,8 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       this.textureAirbrushScreenStrokeQueue = [];
       this.textureAirbrushPendingScreenStrokeBatches = [];
       this.texturePaintNeedsExactFirstPaintDisplayRefresh = false;
+      this.textureAirbrushCancelDeferredWebGpuCanvasSync?.();
+      this.textureAirbrushReleaseDeferredWebGpuReadbacks?.();
       const host = typeof window !== "undefined" ? window : globalThis;
       if (this.texturePaintExactFirstPaintDisplayTimer && typeof host?.clearTimeout === "function") {
         host.clearTimeout(this.texturePaintExactFirstPaintDisplayTimer);
@@ -1954,6 +2972,223 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return prepared;
     },
 
+    rebuildTexturePaintCompositeCanvasTexture(material = null, options = {}) {
+      const userData = material?.userData || null;
+      const canvas = userData?.clonePaintCanvas || null;
+      if (!material || !userData || !canvas || typeof THREE?.CanvasTexture !== "function") {
+        return null;
+      }
+      const previousTexture = userData.clonePaintTexture || null;
+      const referenceTexture = texturePaintStableReferenceTexture(options.referenceTexture)
+        || texturePaintStableReferenceTexture(previousTexture)
+        || userData.clonePaintOriginalMap
+        || texturePaintStableReferenceTexture(material.map)
+        || material.map
+        || null;
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.name = referenceTexture?.name || previousTexture?.name || "clone paint material color texture";
+      texture.colorSpace = referenceTexture?.colorSpace || THREE.SRGBColorSpace;
+      texture.flipY = referenceTexture?.flipY ?? false;
+      if (referenceTexture && "channel" in referenceTexture) {
+        texture.channel = referenceTexture.channel;
+      }
+      texture.wrapS = referenceTexture?.wrapS || THREE.ClampToEdgeWrapping;
+      texture.wrapT = referenceTexture?.wrapT || THREE.ClampToEdgeWrapping;
+      texture.magFilter = referenceTexture?.magFilter || THREE.LinearFilter;
+      texture.minFilter = referenceTexture?.minFilter || THREE.LinearFilter;
+      texture.generateMipmaps = referenceTexture?.generateMipmaps ?? true;
+      if (Number.isFinite(Number(referenceTexture?.anisotropy))) {
+        texture.anisotropy = referenceTexture.anisotropy;
+      }
+      if (referenceTexture?.offset && texture.offset?.copy) {
+        texture.offset.copy(referenceTexture.offset);
+      }
+      if (referenceTexture?.repeat && texture.repeat?.copy) {
+        texture.repeat.copy(referenceTexture.repeat);
+      }
+      if (referenceTexture?.center && texture.center?.copy) {
+        texture.center.copy(referenceTexture.center);
+      }
+      texture.rotation = referenceTexture?.rotation || 0;
+      texture.matrixAutoUpdate = referenceTexture?.matrixAutoUpdate ?? true;
+      if (referenceTexture?.matrix && texture.matrix?.copy) {
+        texture.matrix.copy(referenceTexture.matrix);
+      }
+      texture.needsUpdate = true;
+      userData.clonePaintTexture = texture;
+      material.map = texture;
+      material.needsUpdate = true;
+      this.textureAirbrushInvalidateWebGpuCache?.(previousTexture);
+      this.textureAirbrushInvalidateWebGpuCache?.(texture);
+      if (previousTexture && previousTexture !== texture && previousTexture !== userData.clonePaintOriginalMap) {
+        if (!texturePaintTslSurfaceTexture(previousTexture)) {
+          previousTexture.dispose?.();
+        }
+      }
+      texturePaintSetDebugData("textureAirbrushDebugRebuiltCompositeTexture", {
+        rebuilt: true,
+        hadPrevious: Boolean(previousTexture),
+        previousWasTslSurface: texturePaintTslSurfaceTexture(previousTexture),
+        optionReferenceWasTslSurface: texturePaintTslSurfaceTexture(options.referenceTexture),
+        referenceWasPrevious: Boolean(referenceTexture && referenceTexture === previousTexture),
+        referenceWasStableFromPrevious: Boolean(previousTexture && referenceTexture === texturePaintStableReferenceTexture(previousTexture)),
+        materialMapRebound: material.map === texture,
+        textureNeedsUpdate: texture.needsUpdate === true,
+        materialNeedsUpdate: material.needsUpdate === true
+      });
+      return texture;
+    },
+
+    restoreTexturePaintCanvasWebGpuDisplay(entry = null) {
+      const material = entry?.material || null;
+      const userData = material?.userData || null;
+      const entryTexture = entry?.texture || null;
+      const materialMap = material?.map || null;
+      const materialMapIsExternal = materialMap?.userData?.textureAirbrushExternalWebGpuDisplay === true;
+      const materialMapIsTslSurfaceDisplay = texturePaintTslSurfaceTexture(materialMap);
+      const entryTextureIsTslSurfaceDisplay = texturePaintTslSurfaceTexture(entryTexture);
+      const cloneTextureIsTslSurfaceDisplay = texturePaintTslSurfaceTexture(userData?.clonePaintTexture);
+      const externalMap = userData?.textureAirbrushWebGpuExternalMap
+        || (materialMapIsExternal ? materialMap : null);
+      const canvasMap = userData?.textureAirbrushWebGpuCanvasMap
+        || materialMap?.userData?.textureAirbrushWebGpuCanvasMap
+        || entryTexture?.userData?.textureAirbrushWebGpuCanvasMap
+        || (entryTexture?.userData?.textureAirbrushExternalWebGpuDisplay === true
+          ? entryTexture.userData.textureAirbrushWebGpuCanvasMap || null
+          : null);
+      const layerRestore = Boolean(entry?.layer || entry?.layerStack || userData?.texturePaintLayerStack);
+      const compositeMap = layerRestore
+        ? userData?.clonePaintTexture || canvasMap || null
+        : null;
+      const restoredMap = compositeMap || (
+        entryTexture?.userData?.textureAirbrushExternalWebGpuDisplay === true
+        || entryTextureIsTslSurfaceDisplay
+        ? canvasMap
+        : entryTexture || canvasMap
+      );
+      let finalRestoredMap = restoredMap || null;
+      if (entryTexture) {
+        entryTexture.needsUpdate = true;
+      }
+      if (canvasMap && canvasMap !== entryTexture) {
+        canvasMap.needsUpdate = true;
+      }
+      if (externalMap && externalMap !== entryTexture && externalMap !== canvasMap) {
+        this.textureAirbrushInvalidateWebGpuCache?.(externalMap);
+      }
+      if (materialMapIsTslSurfaceDisplay && materialMap !== entryTexture && materialMap !== canvasMap) {
+        this.textureAirbrushInvalidateWebGpuCache?.(materialMap);
+      }
+      let tslSurfaceCacheInvalidated = false;
+      if (typeof this.texturePaintTslSurfaceAirbrushInvalidate === "function") {
+        tslSurfaceCacheInvalidated = this.texturePaintTslSurfaceAirbrushInvalidate(
+          material || entryTexture || canvasMap || materialMap || null
+        ) === true;
+        if (!tslSurfaceCacheInvalidated) {
+          tslSurfaceCacheInvalidated = this.texturePaintTslSurfaceAirbrushInvalidate() === true;
+        }
+      }
+      this.textureAirbrushInvalidateWebGpuCache?.(entryTexture || entry?.canvas);
+      if (canvasMap && canvasMap !== entryTexture) {
+        this.textureAirbrushInvalidateWebGpuCache?.(canvasMap);
+      }
+      if (entry?.canvas && entry.canvas !== entryTexture && entry.canvas !== canvasMap) {
+        this.textureAirbrushInvalidateWebGpuCache?.(entry.canvas);
+      }
+      if (userData) {
+        if (layerRestore) {
+          this.discardTexturePaintMaterialGpuComposite?.(material);
+        }
+        this.texturePaintDisableLiveLayerShaderComposite?.(material);
+        delete userData.texturePaintLiveLayerShaderComposite;
+        delete userData.textureAirbrushWebGpuExternalMap;
+        delete userData.textureAirbrushWebGpuCanvasMap;
+        if (externalMap?.userData) {
+          delete externalMap.userData.textureAirbrushExternalWebGpuDisplay;
+          delete externalMap.userData.textureAirbrushWebGpuCanvasMap;
+        }
+        if (materialMap?.userData?.textureAirbrushExternalWebGpuDisplay === true) {
+          delete materialMap.userData.textureAirbrushExternalWebGpuDisplay;
+          delete materialMap.userData.textureAirbrushWebGpuCanvasMap;
+        }
+        const stack = entry?.layerStack || userData.texturePaintLayerStack || null;
+        for (const layer of stack?.layers || []) {
+          const targetEntry = layer?.gpuTarget || null;
+          if (!targetEntry) {
+            continue;
+          }
+          delete targetEntry.liveCompositeTarget;
+          delete targetEntry.liveCompositeBaseTexture;
+          delete targetEntry.liveCompositeLayer;
+          delete targetEntry.liveCompositeLayerCount;
+          delete targetEntry.liveCompositeLayerIndex;
+          delete targetEntry.liveCompositeLayerOpacity;
+          delete targetEntry.liveCompositeLayerBlendMode;
+          delete targetEntry.liveCompositeUnderlayKey;
+          delete targetEntry.liveCompositeLayerMutationSerial;
+          delete targetEntry.liveShaderComposite;
+        }
+      }
+      if (
+        !layerRestore
+        && material
+        && entry?.canvas
+        && (
+          !finalRestoredMap
+          || entryTextureIsTslSurfaceDisplay
+          || materialMapIsTslSurfaceDisplay
+          || cloneTextureIsTslSurfaceDisplay
+        )
+      ) {
+        finalRestoredMap = this.rebuildTexturePaintCompositeCanvasTexture?.(material, {
+          referenceTexture: canvasMap || materialMap || entryTexture || userData?.clonePaintOriginalMap || null
+        }) || finalRestoredMap;
+      }
+      if (userData && !layerRestore && finalRestoredMap && !texturePaintTslSurfaceTexture(finalRestoredMap)) {
+        userData.clonePaintCanvas = entry?.canvas || userData.clonePaintCanvas || null;
+        userData.clonePaintContext = entry?.context || userData.clonePaintContext || null;
+        userData.clonePaintTexture = finalRestoredMap;
+        delete userData.texturePaintTslSurfaceAirbrushTarget;
+      }
+      if (material && restoredMap && layerRestore) {
+        material.map = finalRestoredMap;
+        material.needsUpdate = true;
+        material.dispose?.();
+      } else if (
+        material
+        && finalRestoredMap
+        && finalRestoredMap !== material.map
+        && (
+          (externalMap && material.map === externalMap)
+          || materialMapIsExternal
+          || materialMapIsTslSurfaceDisplay
+          || entryTextureIsTslSurfaceDisplay
+          || cloneTextureIsTslSurfaceDisplay
+        )
+      ) {
+        material.map = finalRestoredMap;
+        material.needsUpdate = true;
+        material.dispose?.();
+      }
+      texturePaintSetDebugData("textureAirbrushDebugRestoreDisplay", {
+        layerRestore,
+        materialMapWasExternal: materialMapIsExternal,
+        materialMapWasTslSurfaceDisplay: materialMapIsTslSurfaceDisplay,
+        entryTextureWasTslSurfaceDisplay: entryTextureIsTslSurfaceDisplay,
+        cloneTextureWasTslSurfaceDisplay: cloneTextureIsTslSurfaceDisplay,
+        tslSurfaceCacheInvalidated,
+        hadExternalMap: Boolean(externalMap),
+        hadCanvasMap: Boolean(canvasMap),
+        hadCompositeMap: Boolean(compositeMap),
+        restoredMapApplied: Boolean(material && finalRestoredMap && material.map === finalRestoredMap),
+        materialNeedsUpdate: material?.needsUpdate === true,
+        materialDisposedForRebind: Boolean(material?.dispose && finalRestoredMap),
+        layerGpuTarget: Boolean(entry?.layer?.gpuTarget),
+        layerGpuLayerTexture: Boolean(entry?.layer?.gpuLayerTexture)
+      });
+      return true;
+    },
+
     finalizeTexturePaintStrokeUndo(stroke = null) {
       if (!stroke?.changed || !stroke.before.length) {
         for (const entry of stroke?.before || []) {
@@ -1973,7 +3208,10 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         label: stroke.label,
         entries
       };
-      const insertIndex = Number.isInteger(stroke.undoStackInsertIndex)
+      const pendingUndoWantsPaintOnTop = this.texturePaintHistoryWaitDirection === "undo";
+      const insertIndex = pendingUndoWantsPaintOnTop
+        ? this.undoStack.length
+        : Number.isInteger(stroke.undoStackInsertIndex)
         ? Math.max(0, Math.min(this.undoStack.length, stroke.undoStackInsertIndex))
         : this.undoStack.length;
       this.undoStack.splice(insertIndex, 0, state);
@@ -2024,10 +3262,16 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             this.textureAirbrushPendingWebGpuPaints?.size
             || this.textureAirbrushQueuedWebGpuStrokes?.length
             || this.textureAirbrushWebGpuFlushInFlight
+            || this.textureAirbrushDeferredWebGpuCanvasSyncCaches?.size
+            || this.textureAirbrushDeferredWebGpuReadbackStarts?.size
           )
           && typeof this.flushTextureAirbrushPendingWebGpuPaints === "function"
         ) {
-          this.flushTextureAirbrushPendingWebGpuPaints().finally(() => {
+          this.flushTextureAirbrushPendingWebGpuPaints({
+            deferCanvasSyncUntilIdle: false,
+            canvasSyncIdleDelayMs: 0,
+            canvasSyncMaxDelayMs: 8000
+          }).finally(() => {
             let finalized = false;
             try {
               finalized = this.finalizeTexturePaintStrokeUndo?.(stroke);
@@ -2068,6 +3312,18 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     restoreTexturePaintSnapshot(entries = [], field = "before") {
       let restoredLayerPanel = false;
       const restoredGpuLayerMaterials = new Map();
+      texturePaintSetDebugData("textureAirbrushDebugUndoRestoreStart", {
+        field,
+        entryCount: Array.isArray(entries) ? entries.length : 0,
+        entries: (Array.isArray(entries) ? entries : []).slice(0, 4).map((entry) => ({
+          type: entry?.type || "",
+          layer: Boolean(entry?.layer),
+          regionCount: Array.isArray(entry?.regions) ? entry.regions.length : 0,
+          bounds: entry?.bounds || null,
+          before: texturePaintDebugImageDataStats(entry?.before),
+          after: texturePaintDebugImageDataStats(entry?.after)
+        }))
+      });
       const rememberRestoredGpuLayerMaterial = (material = null, layer = null, options = {}) => {
         if (!material) {
           return;
@@ -2082,13 +3338,82 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         state.needsCanvasFlush = state.needsCanvasFlush || options.needsCanvasFlush === true;
         restoredGpuLayerMaterials.set(material, state);
       };
+      const debugCanvasRegionStats = (context = null, boundsList = []) => {
+        if (!texturePaintDebugAirbrushActive() || !context || typeof context.getImageData !== "function") {
+          return [];
+        }
+        return boundsList.slice(0, 4).map((bounds) => {
+          const normalized = bounds
+            ? {
+                x: Math.max(0, Math.floor(Number(bounds.x) || 0)),
+                y: Math.max(0, Math.floor(Number(bounds.y) || 0)),
+                width: Math.max(1, Math.floor(Number(bounds.width) || 1)),
+                height: Math.max(1, Math.floor(Number(bounds.height) || 1))
+              }
+            : null;
+          if (!normalized) {
+            return null;
+          }
+          try {
+            return {
+              bounds: normalized,
+              stats: texturePaintDebugImageDataStats(context.getImageData(
+                normalized.x,
+                normalized.y,
+                normalized.width,
+                normalized.height
+              ))
+            };
+          } catch {
+            return {
+              bounds: normalized,
+              stats: null
+            };
+          }
+        }).filter(Boolean);
+      };
       for (const entry of entries) {
         if (entry.type === "canvas") {
-          const image = entry[field];
-          if (!entry.context || !entry.canvas || !image) {
+          const regions = Array.isArray(entry.regions) && entry.regions.length
+            ? entry.regions
+            : null;
+          if (!entry.context || !entry.canvas) {
             continue;
           }
-          entry.context.putImageData(image, 0, 0);
+          if (regions) {
+            for (const region of regions) {
+              const image = region[field];
+              if (!image) {
+                continue;
+              }
+              const bounds = this.texturePaintNormalizeCanvasUndoBounds?.(entry.canvas, region.bounds || null);
+              entry.context.putImageData(image, bounds?.x || 0, bounds?.y || 0);
+            }
+            texturePaintSetDebugData("textureAirbrushDebugUndoRestoreCanvasEntry", {
+              field,
+              layer: Boolean(entry.layer),
+              regionCount: regions.length,
+              regions: regions.slice(0, 4).map((region) => ({
+                bounds: region.bounds || null,
+                before: texturePaintDebugImageDataStats(region.before),
+                after: texturePaintDebugImageDataStats(region.after)
+              }))
+            });
+          } else {
+            const image = entry[field];
+            if (!image) {
+              continue;
+            }
+            const bounds = this.texturePaintNormalizeCanvasUndoBounds?.(entry.canvas, entry.bounds || null);
+            entry.context.putImageData(image, bounds?.x || 0, bounds?.y || 0);
+            texturePaintSetDebugData("textureAirbrushDebugUndoRestoreCanvasEntry", {
+              field,
+              layer: Boolean(entry.layer),
+              bounds,
+              before: texturePaintDebugImageDataStats(entry.before),
+              after: texturePaintDebugImageDataStats(entry.after)
+            });
+          }
           if (entry.texture) {
             entry.texture.needsUpdate = true;
           }
@@ -2096,10 +3421,35 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             entry.material.needsUpdate = true;
           }
           if (entry.layer) {
+            this.restoreTexturePaintCanvasWebGpuDisplay?.(entry);
             this.texturePaintUpdateLayerEmptyState?.(entry.layer);
-            this.texturePaintCompositeMaterialLayers?.(entry.material);
+            // A canvas history restore makes the layer canvas authoritative.
+            // Reusing the old live WebGPU target can re-show the stroke that was
+            // just undone, even when the restored canvas pixels are transparent.
+            this.disposeTexturePaintLayerGpuState?.(entry.layer);
+            this.texturePaintCompositeMaterialLayers?.(entry.material, {
+              skipGpuFlush: true,
+              preferCpuDisplay: true
+            });
+            this.rebuildTexturePaintCompositeCanvasTexture?.(entry.material, {
+              referenceTexture: entry.texture || entry.material?.userData?.clonePaintTexture || null
+            });
+            texturePaintSetDebugData("textureAirbrushDebugUndoRestoreCurrentCanvas", {
+              layer: true,
+              layerRegions: debugCanvasRegionStats(entry.context, (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)),
+              baseRegions: debugCanvasRegionStats(
+                entry.layerStack?.baseContext || entry.material?.userData?.texturePaintLayerStack?.baseContext || null,
+                (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)
+              ),
+              compositeRegions: debugCanvasRegionStats(
+                entry.material?.userData?.clonePaintContext || null,
+                (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)
+              )
+            });
+            rememberRestoredGpuLayerMaterial(entry.material, entry.layer);
             restoredLayerPanel = true;
           } else if (entry.material?.userData?.texturePaintLayerStack) {
+            this.restoreTexturePaintCanvasWebGpuDisplay?.(entry);
             this.texturePaintSyncBackgroundFromEditable?.(entry.material, {
               canvas: entry.canvas,
               context: entry.context,
@@ -2109,9 +3459,13 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
               skipGpuFlush: true,
               preferCpuDisplay: true
             });
+            this.rebuildTexturePaintCompositeCanvasTexture?.(entry.material, {
+              referenceTexture: entry.texture || entry.material?.userData?.clonePaintTexture || null
+            });
+            rememberRestoredGpuLayerMaterial(entry.material, null);
             restoredLayerPanel = true;
           }
-          this.textureAirbrushInvalidateWebGpuCache?.(entry.texture || entry.canvas);
+          this.restoreTexturePaintCanvasWebGpuDisplay?.(entry);
           this.refreshCloneSpotlightTextures?.(entry.record);
           continue;
         }
@@ -2120,6 +3474,11 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           if ((!snapshot?.texture && snapshot?.clear !== true) || !entry.targetEntry?.target) {
             continue;
           }
+          const targetTexture = entry.targetEntry.target?.texture || null;
+          const displayTarget = entry.targetEntry.displayTarget || null;
+          const displayTexture = displayTarget?.texture || null;
+          const restoresTslSurfaceTarget = texturePaintTslSurfaceTexture(targetTexture)
+            || texturePaintTslSurfaceTexture(displayTexture);
           if (snapshot.clear === true) {
             this.clearTexturePaintGpuTarget?.(entry.targetEntry, { markMutated: false });
             entry.targetEntry.emptyTransparent = true;
@@ -2139,6 +3498,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             }
           } else {
             this.copyTextureToRenderTarget(snapshot.texture, entry.targetEntry.target);
+            if (snapshot.texturePaintDisplaySnapshot?.texture && displayTarget?.texture) {
+              this.copyTextureToRenderTarget(snapshot.texturePaintDisplaySnapshot.texture, displayTarget);
+            }
             entry.targetEntry.emptyTransparent = false;
             if (entry.targetEntry.layer) {
               entry.targetEntry.layer.isEmpty = false;
@@ -2154,6 +3516,43 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           if (entry.material) {
             entry.material.needsUpdate = true;
           }
+          if (restoresTslSurfaceTarget && entry.targetEntry.layerMode !== true && entry.material) {
+            entry.material.userData ||= {};
+            const restoredTargetTexture = entry.targetEntry.target?.texture || null;
+            const restoredDisplayTexture = entry.targetEntry.displayTarget?.texture || null;
+            if (restoredTargetTexture) {
+              entry.material.userData.clonePaintTexture = restoredTargetTexture;
+              entry.targetEntry.editable && (entry.targetEntry.editable.texture = restoredTargetTexture);
+            }
+            if (restoredDisplayTexture || restoredTargetTexture) {
+              entry.material.map = restoredDisplayTexture || restoredTargetTexture;
+              entry.material.needsUpdate = true;
+              entry.material.dispose?.();
+            }
+            entry.material.userData.texturePaintTslSurfaceAirbrushTarget = entry.targetEntry;
+            texturePaintSetDebugData("textureAirbrushDebugUndoRestoreGpuTslSurface", {
+              field,
+              hasTargetTexture: Boolean(restoredTargetTexture),
+              hasDisplayTexture: Boolean(restoredDisplayTexture),
+              copiedDisplaySnapshot: Boolean(snapshot.texturePaintDisplaySnapshot?.texture && displayTarget?.texture),
+              materialMapIsDisplay: Boolean(restoredDisplayTexture && entry.material.map === restoredDisplayTexture)
+            });
+            this.refreshCloneSpotlightTextures?.(entry.record);
+            continue;
+          }
+          this.restoreTexturePaintCanvasWebGpuDisplay?.({
+            type: "gpu",
+            record: entry.record,
+            material: entry.material,
+            texture: entry.targetEntry?.layerMode === true
+              ? entry.targetEntry?.layer?.gpuLayerTexture || entry.material?.userData?.clonePaintTexture || null
+              : entry.material?.userData?.clonePaintTexture || entry.material?.map || null,
+            canvas: entry.targetEntry?.layerMode === true
+              ? entry.targetEntry?.layer?.canvas || null
+              : entry.material?.userData?.clonePaintCanvas || null,
+            layer: entry.targetEntry?.layer || null,
+            layerStack: entry.targetEntry?.layerStack || entry.material?.userData?.texturePaintLayerStack || null
+          });
         }
       }
       if (restoredLayerPanel) {
@@ -3029,10 +4428,12 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             // first real post-camera repair stroke, matching the queued path.
             this.textureAirbrushPostCameraProjectionStrokeAccumulateActive = true;
           }
+        } else if (neighborPaintActive) {
+          this.textureAirbrushSyncNeighborPaintSeedForHit?.(textureHit);
         }
-        const projectedChanged = this.textureAirbrushProjectedMeshFromEvent?.(event, {
+        const visibleSurfaceChanged = this.textureAirbrushVisibleSurfacePaintFromEvent?.(event, {
           gpu: !layerMode || layerGpuPaint,
-          ...(layerMode && !layerGpuPaint ? { resolvedBackend: { backend: "cpu", webGpuStatus: "layer-paint" } } : {}),
+          ...(layerMode && !layerGpuPaint ? { resolvedBackend: { backend: "none", webGpuStatus: "layer-paint-gpu-required" } } : {}),
           strokeStart: options.strokeStart || null,
           neighborPaintSeed: this.textureAirbrushActiveNeighborPaintSeed || null,
           ...(postCameraProjectionRewarmed ? { postCameraProjectionRewarmed: true } : {}),
@@ -3041,7 +4442,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           erase: this.activeTool === "texture-eraser",
           ...macroBrushOptions
         }) || 0;
-        if (!projectedChanged) {
+        if (!visibleSurfaceChanged) {
           this.setStatus(this.activeTool === "texture-eraser"
             ? "Eraser needs paint on the active texture layer"
             : "Airbrush needs the cursor over textured mesh");
@@ -3111,7 +4512,25 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return this.pickTextureColorNear?.(textureHit.record, textureHit.hit) || false;
     },
 
-    refreshSkinnedRaycastBounds() {
+    refreshSkinnedRaycastBounds(options = {}) {
+      const now = typeof performance !== "undefined" && typeof performance.now === "function"
+        ? performance.now()
+        : Date.now();
+      const activeTextureStroke = Boolean(this.texturePaintStrokeUndo);
+      const minIntervalMs = Math.max(
+        0,
+        Number(options.minIntervalMs)
+        || Number(this.textureAirbrushSkinnedRaycastBoundsMinIntervalMs)
+        || (activeTextureStroke ? 250 : 12)
+      );
+      if (
+        options.force !== true
+        && Number.isFinite(this.lastSkinnedRaycastBoundsRefreshAt)
+        && now - this.lastSkinnedRaycastBoundsRefreshAt < minIntervalMs
+      ) {
+        return false;
+      }
+      this.lastSkinnedRaycastBoundsRefreshAt = now;
       for (const record of this.paintRecords) {
         const object = record.object;
         if (!object?.isSkinnedMesh) {
@@ -3122,6 +4541,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           object.computeBoundingBox?.();
         }
       }
+      return true;
     },
 
     finishPaintChange(changed, action, options = {}) {

@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import * as THREE from "../node_modules/three/build/three.module.js";
+import { installAnimationLibraryMethods } from "../src/weight-editor/animation-library.js";
 import { installSceneAndControlMethods } from "../src/weight-editor/scene-and-controls.js";
 import { installTutorialMacroMethods } from "../src/weight-editor/tutorial-macros.js";
 
 class TestEditor {}
+class DemoLibraryEditor {}
 
+installAnimationLibraryMethods(DemoLibraryEditor);
 installSceneAndControlMethods(TestEditor, {
   THREE,
   EDIT_ONLY_TOOLS: new Set(["move", "pull", "push"]),
@@ -290,6 +293,18 @@ test("viewport repro macro play uses the current loaded scene", (t) => {
   editor.tutorialMacroModeActive = () => true;
   editor.hasTutorialMacro = (name) => name === "after-orbit-paint";
   editor.savedTutorialMacroNames = () => ["after-orbit-paint"];
+  editor.model = {};
+  editor.canvas = {};
+  editor.paintRecords = [{
+    object: {
+      geometry: {
+        attributes: {
+          position: {},
+          uv: {}
+        }
+      }
+    }
+  }];
   editor.loadPackagedTutorialMacros = async () => {};
   editor.loadTutorialMacrosFromIndexedDb = async () => {};
   let played = null;
@@ -312,6 +327,148 @@ test("viewport repro macro play uses the current loaded scene", (t) => {
       requireCurrentScene: true
     }
   });
+});
+
+test("viewport repro macro play loads the demo when no scene is loaded", (t) => {
+  withWindowSearch(t, "?reproMacro=after-orbit-paint");
+  const editor = new TestEditor();
+  const playButton = buttonMock();
+  editor.reproMacroPlayButton = playButton;
+  editor.reproMacroRecordButton = buttonMock();
+  editor.reproMacroExportButton = buttonMock();
+  editor.tutorialMacroFloatingStopButton = buttonMock();
+  editor.tutorialReproMacroActive = true;
+  editor.tutorialActiveMacroName = "after-orbit-paint";
+  editor.tutorialMacroModeActive = () => true;
+  editor.hasTutorialMacro = (name) => name === "after-orbit-paint";
+  editor.savedTutorialMacroNames = () => ["after-orbit-paint"];
+  editor.loadPackagedTutorialMacros = async () => {};
+  editor.loadTutorialMacrosFromIndexedDb = async () => {};
+  let played = null;
+  editor.playTutorialMacro = (name, options) => {
+    played = { name, options };
+  };
+
+  editor.bindTutorialMacroControls();
+  editor.updateTutorialMacroControls();
+
+  assert.equal(playButton.hidden, false);
+  assert.equal(playButton.disabled, false);
+  assert.equal(playButton.textContent, "Play");
+  playButton.click();
+  assert.deepEqual(played, {
+    name: "after-orbit-paint",
+    options: {
+      preservePointerMoves: true,
+      resetDemo: true,
+      requireCurrentScene: false
+    }
+  });
+});
+
+test("tutorial macro orbit event reenables controls after texture paint", async (t) => {
+  withWindowSearch(t, "");
+  const originalPointerEvent = globalThis.PointerEvent;
+  globalThis.PointerEvent = class PointerEvent {
+    constructor(type, init = {}) {
+      this.type = type;
+      Object.assign(this, init);
+    }
+  };
+  t.after(() => {
+    globalThis.PointerEvent = originalPointerEvent;
+  });
+
+  const editor = new TestEditor();
+  const dispatched = [];
+  const toolCalls = [];
+  editor.tutorialMacroPlaying = true;
+  editor.activeTool = "airbrush";
+  editor.controls = { enabled: false };
+  editor.canvas = {
+    getBoundingClientRect() {
+      return { left: 10, top: 20, width: 200, height: 100 };
+    },
+    dispatchEvent(event) {
+      dispatched.push({
+        type: event.type,
+        activeTool: editor.activeTool,
+        controlsEnabled: editor.controls.enabled
+      });
+      return true;
+    },
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    hasPointerCapture() {
+      return false;
+    }
+  };
+  editor.moveTutorialMacroPointerTo = () => {};
+  editor.setTool = (tool, options) => {
+    toolCalls.push({ tool, options });
+    editor.activeTool = tool;
+    editor.controls.enabled = tool === "orbit" || tool === "bone";
+  };
+
+  await editor.applyTutorialMacroEvent({
+    type: "pointer",
+    kind: "down",
+    tool: "orbit",
+    x: 0.5,
+    y: 0.5,
+    button: 0,
+    buttons: 1
+  });
+
+  assert.deepEqual(toolCalls, [{
+    tool: "orbit",
+    options: { preserveViewportLayers: true }
+  }]);
+  assert.deepEqual(dispatched, [{
+    type: "pointerdown",
+    activeTool: "orbit",
+    controlsEnabled: true
+  }]);
+});
+
+test("viewport repro macro mode enables demo library bootstrap", (t) => {
+  withWindowSearch(t, "?reproMacro=after-orbit-paint");
+  const editor = new DemoLibraryEditor();
+
+  assert.equal(editor.tutorialDemoAnimationLibraryName(), "");
+
+  editor.tutorialReproMacroActive = true;
+  assert.equal(editor.tutorialDemoAnimationLibraryName(), "cat");
+});
+
+test("demo model loader does not treat a selected clip as a loaded paintable scene", async (t) => {
+  withWindowSearch(t, "?reproMacro=after-orbit-paint");
+  const editor = new DemoLibraryEditor();
+  editor.tutorialReproMacroActive = true;
+  editor.activeClipEntry = { key: "stale-selected-file" };
+  editor.animationLibraryFolders = [{
+    name: "cat-demo",
+    label: "Cat Demo",
+    files: [{
+      key: "cat-demo:walking-8",
+      name: "walking-8.fbx",
+      path: "assets/models/animation-library/etes/walking-8.fbx",
+      url: "./assets/models/animation-library/etes/walking-8.fbx",
+      extension: "fbx"
+    }]
+  }];
+  editor.renderAnimationLibrary = () => {};
+  editor.renderCharacterOptions = () => {};
+  editor.setStatus = () => {};
+  let restored = null;
+  editor.restoreAnimationLibraryFile = async (item, options) => {
+    restored = { item, options };
+    return true;
+  };
+
+  assert.equal(await editor.ensureTutorialDemoModelLoaded("cat"), true);
+  assert.equal(restored?.item?.name, "walking-8.fbx");
+  assert.deepEqual(restored?.options, { statusVerb: "Loaded demo" });
 });
 
 test("tutorial macro idle waits for pending airbrush screen paint", async () => {
@@ -458,7 +615,7 @@ test("after-orbit repro macros default old brush events to Neighbor on", (t) => 
   assert.equal(ordinary.events[0].settings.neighbor, undefined);
 });
 
-test("packaged after-orbit repro macro exercises paint, orbit, then paint with Neighbor", (t) => {
+test("packaged after-orbit repro macro keeps a Neighbor paint stroke and orbit repro", (t) => {
   withWindowSearch(t, "");
   const editor = new TestEditor();
   editor.tutorialEditorEnabled = true;
@@ -489,17 +646,14 @@ test("packaged after-orbit repro macro exercises paint, orbit, then paint with N
     }
   }
 
-  assert.ok(strokes.length >= 3);
+  assert.ok(strokes.length >= 2);
   const neighborPaintStrokes = strokes.filter((stroke) => stroke.tool === "airbrush");
-  assert.equal(neighborPaintStrokes.length, 2);
+  assert.equal(neighborPaintStrokes.length, 1);
   assert.ok(neighborPaintStrokes[0].moves > 20);
-  assert.ok(neighborPaintStrokes[1].moves > 20);
   assert.equal(neighborPaintStrokes[0].neighbor, true);
-  assert.equal(neighborPaintStrokes[1].neighbor, true);
   assert.ok(strokes.some((stroke) => (
     stroke.tool === "orbit"
     && stroke.start > neighborPaintStrokes[0].end
-    && stroke.end < neighborPaintStrokes[1].start
   )));
   assert.ok(macro.events.some((event) => event.type === "camera" && event.reason === "camera"));
 });

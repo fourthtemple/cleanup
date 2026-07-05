@@ -1,6 +1,8 @@
 export const TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT = "rgba8unorm";
-export const TEXTURE_AIRBRUSH_WEBGPU_BRUSH_UNIFORM_BYTES = 80;
-export const TEXTURE_AIRBRUSH_WEBGPU_STROKE_SEGMENT_FLOATS = 4;
+export const TEXTURE_AIRBRUSH_WEBGPU_BRUSH_UNIFORM_BYTES = 128;
+export const TEXTURE_AIRBRUSH_WEBGPU_STROKE_SEGMENT_FLOATS = 6;
+export const TEXTURE_AIRBRUSH_WEBGPU_VISIBILITY_SAMPLE_FLOATS = 12;
+export const TEXTURE_AIRBRUSH_WEBGPU_PAINT_REGION_UINTS = 4;
 export const TEXTURE_AIRBRUSH_WEBGPU_BYTES_PER_PIXEL = 4;
 export const TEXTURE_AIRBRUSH_WEBGPU_BYTES_PER_ROW_ALIGNMENT = 256;
 
@@ -11,6 +13,13 @@ function finiteNumber(value, fallback = 0) {
 
 function positiveInteger(value, fallback = 1) {
   return Math.max(1, Math.floor(finiteNumber(value, fallback)));
+}
+
+function textureMipLevelCount(width = 1, height = 1) {
+  return Math.max(
+    1,
+    Math.floor(Math.log2(Math.max(positiveInteger(width, 1), positiveInteger(height, 1)))) + 1
+  );
 }
 
 function usageFlag(scope, groupName, name, fallback) {
@@ -30,7 +39,8 @@ export function textureAirbrushWebGpuUsageConstants(scope = globalThis) {
       copySrc: usageFlag(scope, "GPUTextureUsage", "COPY_SRC", 0x01),
       copyDst: usageFlag(scope, "GPUTextureUsage", "COPY_DST", 0x02),
       textureBinding: usageFlag(scope, "GPUTextureUsage", "TEXTURE_BINDING", 0x04),
-      storageBinding: usageFlag(scope, "GPUTextureUsage", "STORAGE_BINDING", 0x08)
+      storageBinding: usageFlag(scope, "GPUTextureUsage", "STORAGE_BINDING", 0x08),
+      renderAttachment: usageFlag(scope, "GPUTextureUsage", "RENDER_ATTACHMENT", 0x10)
     },
     shaderStage: {
       compute: usageFlag(scope, "GPUShaderStage", "COMPUTE", 0x04)
@@ -66,42 +76,98 @@ export function textureAirbrushWebGpuTextureDescriptors(width, height, scope = g
     height: positiveInteger(height, 1),
     depthOrArrayLayers: 1
   };
+  const dimension = "2d";
   return {
     source: {
       size,
+      dimension,
       format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
-      usage: usage.textureBinding | usage.copyDst
+      mipLevelCount: textureMipLevelCount(size.width, size.height),
+      usage: usage.textureBinding | usage.copySrc | usage.copyDst | usage.storageBinding | usage.renderAttachment
     },
     strokeSource: {
       size,
+      dimension,
       format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
-      usage: usage.textureBinding | usage.copyDst
+      usage: usage.textureBinding | usage.copySrc | usage.copyDst
     },
     visibilityMask: {
       size,
+      dimension,
       format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
       usage: usage.textureBinding | usage.copyDst
     },
     output: {
       size,
+      dimension,
       format: TEXTURE_AIRBRUSH_WEBGPU_TEXTURE_FORMAT,
-      usage: usage.storageBinding | usage.copySrc | usage.copyDst
+      usage: usage.textureBinding | usage.storageBinding | usage.copySrc | usage.copyDst | usage.renderAttachment
     }
   };
 }
 
-export function textureAirbrushWebGpuBufferDescriptors(uniformData, strokeData, scope = globalThis) {
+function boundedWriteByteLength(data, requested = null, fallback = null) {
+  const byteLength = Math.max(0, Math.floor(Number(data?.byteLength) || 0));
+  if (!byteLength) {
+    return 0;
+  }
+  const desired = Math.floor(Number(requested));
+  const fallbackLength = Math.floor(Number(fallback));
+  const length = Number.isFinite(desired) && desired > 0
+    ? desired
+    : Number.isFinite(fallbackLength) && fallbackLength > 0
+      ? fallbackLength
+      : byteLength;
+  return Math.max(4, Math.min(byteLength, length));
+}
+
+export function textureAirbrushWebGpuBufferDescriptors(
+  uniformData,
+  strokeData,
+  visibilitySampleData = null,
+  paintRegionData = null,
+  scope = globalThis,
+  options = {}
+) {
   const usage = textureAirbrushWebGpuUsageConstants(scope).buffer;
+  const visibilityData = visibilitySampleData || new Float32Array(TEXTURE_AIRBRUSH_WEBGPU_VISIBILITY_SAMPLE_FLOATS);
+  const regionData = paintRegionData || new Uint32Array(TEXTURE_AIRBRUSH_WEBGPU_PAINT_REGION_UINTS);
   return {
     uniform: {
       size: uniformData.byteLength,
       usage: usage.uniform | usage.copyDst,
-      data: uniformData
+      data: uniformData,
+      writeByteLength: uniformData.byteLength
     },
     strokes: {
       size: Math.max(16, strokeData.byteLength),
       usage: usage.storage | usage.copyDst,
-      data: strokeData
+      data: strokeData,
+      writeByteLength: boundedWriteByteLength(
+        strokeData,
+        options.strokeWriteByteLength,
+        strokeData.byteLength
+      )
+    },
+    visibilitySamples: {
+      size: Math.max(16, visibilityData.byteLength),
+      usage: usage.storage | usage.copyDst,
+      data: visibilityData,
+      writeByteLength: boundedWriteByteLength(
+        visibilityData,
+        options.visibilitySampleWriteByteLength,
+        TEXTURE_AIRBRUSH_WEBGPU_VISIBILITY_SAMPLE_FLOATS * 4
+      )
+    },
+    paintRegions: {
+      size: Math.max(16, regionData.byteLength),
+      usage: usage.storage | usage.copyDst,
+      data: regionData,
+      writeByteLength: boundedWriteByteLength(
+        regionData,
+        options.paintRegionWriteByteLength,
+        TEXTURE_AIRBRUSH_WEBGPU_PAINT_REGION_UINTS * 4
+      )
     }
   };
 }
@@ -129,7 +195,8 @@ export function textureAirbrushWebGpuReadbackBufferDescriptor(width, height, sco
 }
 
 export function textureAirbrushWebGpuBindGroupLayoutEntries(scope = globalThis) {
-  const compute = textureAirbrushWebGpuUsageConstants(scope).shaderStage.compute;
+  const stages = textureAirbrushWebGpuUsageConstants(scope).shaderStage;
+  const compute = stages.compute;
   return [
     {
       binding: 0,
@@ -163,6 +230,16 @@ export function textureAirbrushWebGpuBindGroupLayoutEntries(scope = globalThis) 
       binding: 5,
       visibility: compute,
       texture: { sampleType: "float" }
+    },
+    {
+      binding: 6,
+      visibility: compute,
+      buffer: { type: "read-only-storage" }
+    },
+    {
+      binding: 7,
+      visibility: compute,
+      buffer: { type: "read-only-storage" }
     }
   ];
 }

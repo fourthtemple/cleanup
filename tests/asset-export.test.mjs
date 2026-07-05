@@ -178,3 +178,36 @@ test("FBX export flattens visible texture paint layers into the exported map", (
   assert.equal(material.onBeforeCompile, originalOnBeforeCompile);
   assert.equal(material.customProgramCacheKey, originalCacheKey);
 });
+
+test("asset export resolves live WebGPU display texture to synchronized canvas map", () => {
+  const editor = new TestEditor();
+  const canvas = fakeCanvas(2, 1, [1, 2, 3, 255, 4, 5, 6, 255]);
+  const canvasMap = new FakeCanvasTexture(canvas);
+  canvasMap.name = "paint canvas";
+  const externalMap = {
+    name: "paint live",
+    image: { width: 2, height: 1 },
+    userData: {
+      textureAirbrushExternalWebGpuDisplay: true
+    }
+  };
+  const material = {
+    name: "Cat",
+    map: externalMap,
+    needsUpdate: false,
+    userData: {
+      textureAirbrushWebGpuExternalMap: externalMap,
+      textureAirbrushWebGpuCanvasMap: canvasMap
+    }
+  };
+  editor.exportMaterials = () => [material];
+
+  editor.prepareMaterialsForAssetExport({ format: "fbx" });
+
+  assert.equal(material.map, canvasMap);
+  assert.equal(material.needsUpdate, true);
+  assert.deepEqual([...material.map.userData.content], [1, 2, 3, 4]);
+  assert.equal(material.map.userData.fileName, "paint-canvas.png");
+  assert.equal(material.userData.textureAirbrushWebGpuExternalMap, undefined);
+  assert.equal(material.userData.textureAirbrushWebGpuCanvasMap, undefined);
+});

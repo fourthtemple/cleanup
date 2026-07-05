@@ -1,12 +1,108 @@
 import {
-  byteHex,
-  linearByteToSrgbByte
+  byteHex
 } from "./math.js";
 
-export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, deps) {
-  const { THREE } = deps;
+function pickReadbackBytes(readback = null) {
+  if (!readback) {
+    return null;
+  }
+  if (readback instanceof Uint8Array || readback instanceof Uint8ClampedArray) {
+    return readback;
+  }
+  if (readback.buffer) {
+    return new Uint8Array(readback.buffer, readback.byteOffset || 0, readback.byteLength);
+  }
+  return null;
+}
+
+function pickTargetSize(targetEntry = null, editable = null) {
+  const target = targetEntry?.target || null;
+  const texture = target?.texture || null;
+  return {
+    width: Math.max(1, Math.floor(Number(
+      targetEntry?.width
+      || target?.width
+      || texture?.image?.width
+      || editable?.canvas?.width
+      || 1
+    ))),
+    height: Math.max(1, Math.floor(Number(
+      targetEntry?.height
+      || target?.height
+      || texture?.image?.height
+      || editable?.canvas?.height
+      || 1
+    )))
+  };
+}
+
+function pickColorMagnitude(sample = null) {
+  return Math.max(
+    Number(sample?.r) || 0,
+    Number(sample?.g) || 0,
+    Number(sample?.b) || 0
+  );
+}
+
+function sampleFromReadback(bytes = null, offset = 0) {
+  if (!bytes || offset + 3 >= bytes.length) {
+    return null;
+  }
+  return {
+    r: bytes[offset],
+    g: bytes[offset + 1],
+    b: bytes[offset + 2],
+    a: bytes[offset + 3]
+  };
+}
+
+function pickBestReadbackSample(bytes = null, width = 1, height = 1, centerX = 0, centerY = 0) {
+  const centerOffset = (centerY * width + centerX) * 4;
+  const center = sampleFromReadback(bytes, centerOffset);
+  if (!center || center.a <= 8) {
+    return center;
+  }
+  if (pickColorMagnitude(center) > 8) {
+    return center;
+  }
+  let best = center;
+  let bestDistance = Infinity;
+  let bestMagnitude = pickColorMagnitude(center);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const sample = sampleFromReadback(bytes, (y * width + x) * 4);
+      if (!sample || sample.a <= 8) {
+        continue;
+      }
+      const magnitude = pickColorMagnitude(sample);
+      if (magnitude <= Math.max(8, bestMagnitude)) {
+        continue;
+      }
+      const distance = Math.hypot(x - centerX, y - centerY);
+      if (magnitude > bestMagnitude || distance < bestDistance) {
+        best = sample;
+        bestMagnitude = magnitude;
+        bestDistance = distance;
+      }
+    }
+  }
+  return best;
+}
+
+export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, deps = {}) {
+  void deps;
 
   Object.assign(BirdWeightEditor.prototype, {
+    dispatchPickedTextureColorEvents() {
+      const input = this.texturePaintColor || null;
+      if (!input || typeof input.dispatchEvent !== "function" || typeof Event !== "function") {
+        return false;
+      }
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    },
+
     applyPickedTextureColor(sample) {
       if (!sample) {
         return false;
@@ -17,196 +113,165 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
       const hex = `#${byteHex(sample.r)}${byteHex(sample.g)}${byteHex(sample.b)}`;
       if (this.texturePaintColor) {
         this.texturePaintColor.value = hex;
+        this.dispatchPickedTextureColorEvents?.();
       }
       this.setStatus(`Picked ${hex}`);
       return true;
     },
 
-    pickTextureColorNear(record, hit) {
+    texturePaintPickContext(record, hit) {
       const material = this.clonePaintMaterialForHit?.(record, hit);
       const hitUv = hit?.uv;
       if (!material || !hitUv) {
         this.setStatus("Pick needs an editable texture under the cursor");
-        return false;
-      }
-
-      const renderedSample = this.pickTextureGpuSampleColor?.(material.map, hitUv);
-      if (this.applyPickedTextureColor?.(renderedSample)) {
-        return true;
-      }
-
-      const gpuSample = this.pickTextureGpuTargetColorNear?.(material, hitUv);
-      if (this.applyPickedTextureColor?.(gpuSample)) {
-        return true;
+        return null;
       }
 
       const editable = this.editableClonePaintTexture?.(material);
       if (!editable) {
         this.setStatus("Pick needs an editable texture under the cursor");
+        return null;
+      }
+      return { material, editable, hitUv };
+    },
+
+    texturePaintGpuPickTargetEntry(material = null, editable = null) {
+      const entries = [
+        material?.userData?.texturePaintCompositeGpuTarget || null,
+        editable?.layer?.gpuTarget || null,
+        material?.userData?.texturePaintTslSurfaceAirbrushTarget || null
+      ];
+      for (const entry of entries) {
+        if (entry?.target?.texture) {
+          return entry;
+        }
+      }
+      return null;
+    },
+
+    texturePaintCanReadWebGpuPickTarget(targetEntry = null) {
+      return Boolean(
+        targetEntry?.target?.texture
+        && this.renderer?.isWebGPURenderer
+        && this.renderer?.backend?.isWebGPUBackend
+        && typeof this.renderer.readRenderTargetPixelsAsync === "function"
+      );
+    },
+
+    texturePaintPickEditableColor(context = null) {
+      const { editable, hitUv } = context || {};
+      const { canvas, context: editableContext, texture } = editable || {};
+      const pixel = this.clonePaintPixelFromUv(hitUv, canvas, texture);
+      if (!Number.isFinite(pixel?.x) || !Number.isFinite(pixel?.y)) {
+        this.setStatus("Pick needs an editable texture under the cursor");
         return false;
       }
-      const { canvas, context, texture } = editable;
-      const pixel = this.clonePaintPixelFromUv(hitUv, canvas, texture);
-      const data = context.getImageData(pixel.x, pixel.y, 1, 1).data;
+      const data = editableContext.getImageData(pixel.x, pixel.y, 1, 1).data;
       return this.applyPickedTextureColor?.({ r: data[0], g: data[1], b: data[2], a: data[3] }) || false;
     },
 
-    textureAirbrushRenderTargetPixelFromUv(uv, targetEntry) {
-      const texture = targetEntry?.target?.texture;
-      const width = Math.max(1, targetEntry?.width || targetEntry?.target?.width || texture?.image?.width || 1);
-      const height = Math.max(1, targetEntry?.height || targetEntry?.target?.height || texture?.image?.height || 1);
-      const mapped = this.clonePaintTextureUv?.(uv, texture) || uv?.clone?.();
-      if (!mapped) {
-        return null;
+    async texturePaintPickWebGpuColor(context = null, targetEntry = null, options = {}) {
+      if (!this.texturePaintCanReadWebGpuPickTarget?.(targetEntry)) {
+        return false;
       }
-      const u = this.clonePaintWrapUvCoordinate
-        ? this.clonePaintWrapUvCoordinate(mapped.x, texture?.wrapS)
-        : Math.max(0, Math.min(1, mapped.x));
-      const v = this.clonePaintWrapUvCoordinate
-        ? this.clonePaintWrapUvCoordinate(mapped.y, texture?.wrapT)
-        : Math.max(0, Math.min(1, mapped.y));
-      return {
-        x: Math.max(0, Math.min(width - 1, Math.round(u * (width - 1)))),
-        // WebGL readPixels uses the render target's lower-left origin. Do not apply canvas/image flipY here.
-        y: Math.max(0, Math.min(height - 1, Math.round(v * (height - 1)))),
-        width,
-        height
-      };
-    },
-
-    pickTextureGpuSampleMaterial() {
-      if (!this.texturePickerGpuSampleMaterial) {
-        this.texturePickerGpuSampleMaterial = new THREE.ShaderMaterial({
-          depthTest: false,
-          depthWrite: false,
-          uniforms: {
-            sourceTexture: { value: null },
-            sampleUv: { value: new THREE.Vector2() }
-          },
-          vertexShader: `
-            varying vec2 vUv;
-
-            void main() {
-              vUv = uv;
-              gl_Position = vec4(position.xy, 0.0, 1.0);
-            }
-          `,
-          fragmentShader: `
-            uniform sampler2D sourceTexture;
-            uniform vec2 sampleUv;
-
-            void main() {
-              gl_FragColor = texture2D(sourceTexture, sampleUv);
-            }
-          `
-        });
+      const { editable, hitUv } = context || {};
+      const target = targetEntry.target;
+      const texture = target.texture || editable?.texture || null;
+      const { width, height } = pickTargetSize(targetEntry, editable);
+      const pixel = this.clonePaintPixelFromUv(hitUv, { width, height }, texture);
+      if (!Number.isFinite(pixel?.x) || !Number.isFinite(pixel?.y)) {
+        this.setStatus("Pick needs an editable texture under the cursor");
+        return false;
       }
-      return this.texturePickerGpuSampleMaterial;
-    },
-
-    pickTextureGpuSampleTarget() {
-      if (this.texturePickerGpuSampleTarget) {
-        return this.texturePickerGpuSampleTarget;
-      }
-      this.texturePickerGpuSampleTarget = new THREE.WebGLRenderTarget(1, 1, {
-        minFilter: THREE.NearestFilter,
-        magFilter: THREE.NearestFilter,
-        depthBuffer: false,
-        stencilBuffer: false
-      });
-      this.texturePickerGpuSampleTarget.texture.name = "texture picker sample";
-      return this.texturePickerGpuSampleTarget;
-    },
-
-    pickTextureGpuSampleColor(texture, uv) {
-      if (!this.renderer || !texture || !uv) {
-        return null;
-      }
-      this.textureAirbrushEnsureCopyScene?.();
-      const target = this.pickTextureGpuSampleTarget?.();
-      const material = this.pickTextureGpuSampleMaterial?.();
-      if (!target || !material || !this.textureAirbrushGpuCopyMesh || !this.textureAirbrushGpuCopyScene || !this.textureAirbrushGpuCopyCamera) {
-        return null;
-      }
-      const mapped = this.clonePaintTextureUv?.(uv, texture) || uv.clone?.() || uv;
-      const sampleUv = new THREE.Vector2(
-        this.clonePaintWrapUvCoordinate
-          ? this.clonePaintWrapUvCoordinate(mapped.x, texture.wrapS)
-          : Math.max(0, Math.min(1, mapped.x)),
-        this.clonePaintWrapUvCoordinate
-          ? this.clonePaintWrapUvCoordinate(mapped.y, texture.wrapT)
-          : Math.max(0, Math.min(1, mapped.y))
+      const centerX = Math.max(0, Math.min(width - 1, Math.floor(pixel.x)));
+      const centerY = Math.max(0, Math.min(height - 1, Math.floor(pixel.y)));
+      const radius = 16;
+      const readX = Math.max(0, centerX - radius);
+      const readY = Math.max(0, centerY - radius);
+      const readWidth = Math.min(width - readX, radius * 2 + 1);
+      const readHeight = Math.min(height - readY, radius * 2 + 1);
+      const readback = await this.renderer.readRenderTargetPixelsAsync(
+        target,
+        readX,
+        readY,
+        readWidth,
+        readHeight
       );
-      const previousTarget = this.renderer.getRenderTarget();
-      const previousAutoClear = this.renderer.autoClear;
-      const previousMaterial = this.textureAirbrushGpuCopyMesh.material;
-      const buffer = new Uint8Array(4);
-      material.uniforms.sourceTexture.value = texture;
-      material.uniforms.sampleUv.value.copy(sampleUv);
-      this.textureAirbrushGpuCopyMesh.material = material;
-      this.renderer.setRenderTarget(target);
-      this.renderer.autoClear = true;
-      this.renderer.clear(true, true, true);
-      this.renderer.render(this.textureAirbrushGpuCopyScene, this.textureAirbrushGpuCopyCamera);
-      this.renderer.readRenderTargetPixels(target, 0, 0, 1, 1, buffer);
-      this.renderer.setRenderTarget(previousTarget);
-      this.renderer.autoClear = previousAutoClear;
-      this.textureAirbrushGpuCopyMesh.material = previousMaterial;
-      if (texture.colorSpace === THREE.SRGBColorSpace) {
-        return {
-          r: linearByteToSrgbByte(buffer[0]),
-          g: linearByteToSrgbByte(buffer[1]),
-          b: linearByteToSrgbByte(buffer[2]),
-          a: buffer[3]
-        };
+      const bytes = pickReadbackBytes(readback);
+      if (!bytes || bytes.length < 4) {
+        return false;
       }
-      return { r: buffer[0], g: buffer[1], b: buffer[2], a: buffer[3] };
+      const sample = pickBestReadbackSample(bytes, readWidth, readHeight, centerX - readX, centerY - readY);
+      if (options.rejectNearBlack === true && pickColorMagnitude(sample) <= 8) {
+        return false;
+      }
+      return this.applyPickedTextureColor?.(sample) || false;
     },
 
-    pickTextureGpuTargetColorNear(material, uv) {
-      const entry = material?.userData?.textureAirbrushGpuTarget;
-      const target = entry?.target;
-      if (!entry || !target || !this.renderer || !uv) {
-        return null;
+    pickTextureColorNear(record, hit) {
+      const context = this.texturePaintPickContext?.(record, hit);
+      if (!context) {
+        return false;
       }
-      const directSample = this.pickTextureGpuSampleColor?.(target.texture, uv);
-      if (directSample) {
-        return directSample;
+      const targetEntry = this.texturePaintGpuPickTargetEntry?.(context.material, context.editable);
+      if (this.texturePaintCanReadWebGpuPickTarget?.(targetEntry)) {
+        this.pickTextureColorNearAsync(record, hit)
+          .then((picked) => {
+            if (!picked) {
+              this.texturePaintPickEditableColor?.(context);
+            }
+          })
+          .catch((error) => {
+            this.texturePaintPickEditableColor?.(context);
+            this.setStatus?.(`Pick failed: ${error?.message || error}`);
+          });
+        return true;
       }
-      const pixel = this.textureAirbrushRenderTargetPixelFromUv?.(uv, entry);
-      if (!pixel) {
-        return null;
+      return this.texturePaintPickEditableColor?.(context) || false;
+    },
+
+    async pickTextureColorNearAsync(record, hit) {
+      const context = this.texturePaintPickContext?.(record, hit);
+      if (!context) {
+        return false;
       }
-      const width = pixel.width;
-      const height = pixel.height;
-      const centerX = pixel.x;
-      const centerY = pixel.y;
-      const buffer = new Uint8Array(4);
-      const samples = [];
-      for (let dy = -1; dy <= 1; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          const x = Math.max(0, Math.min(width - 1, centerX + dx));
-          const y = Math.max(0, Math.min(height - 1, centerY + dy));
-          this.renderer.readRenderTargetPixels(target, x, y, 1, 1, buffer);
-          samples.push([buffer[0], buffer[1], buffer[2], buffer[3]]);
+      const alternativeHits = Array.isArray(hit?.texturePaintAlternativeHits)
+        ? hit.texturePaintAlternativeHits
+        : [];
+      const contexts = [context];
+      for (const alternative of alternativeHits) {
+        const alternativeContext = this.texturePaintPickContext?.(alternative.record, alternative.hit);
+        if (alternativeContext) {
+          contexts.push(alternativeContext);
         }
       }
-      const opaqueSamples = samples.filter((sample) => sample[3] > 8);
-      const source = opaqueSamples.length ? opaqueSamples : samples;
-      if (!source.length) {
-        return null;
+      const rejectNearBlack = contexts.length > 1;
+      if (rejectNearBlack) {
+        for (const candidateContext of contexts) {
+          const targetEntry = this.texturePaintGpuPickTargetEntry?.(candidateContext.material, candidateContext.editable);
+          if (!this.texturePaintCanReadWebGpuPickTarget?.(targetEntry)) {
+            continue;
+          }
+          try {
+            if (await this.texturePaintPickWebGpuColor(candidateContext, targetEntry, { rejectNearBlack: true })) {
+              return true;
+            }
+          } catch (error) {
+            this.setStatus?.(`Pick failed: ${error?.message || error}`);
+          }
+        }
       }
-      const average = source.reduce((sum, sample) => {
-        sum.r += sample[0];
-        sum.g += sample[1];
-        sum.b += sample[2];
-        return sum;
-      }, { r: 0, g: 0, b: 0 });
-      return {
-        r: average.r / source.length,
-        g: average.g / source.length,
-        b: average.b / source.length
-      };
+      const targetEntry = this.texturePaintGpuPickTargetEntry?.(context.material, context.editable);
+      if (this.texturePaintCanReadWebGpuPickTarget?.(targetEntry)) {
+        try {
+          if (await this.texturePaintPickWebGpuColor(context, targetEntry)) {
+            return true;
+          }
+        } catch (error) {
+          this.setStatus?.(`Pick failed: ${error?.message || error}`);
+        }
+      }
+      return this.texturePaintPickEditableColor?.(context) || false;
     }
   });
 }

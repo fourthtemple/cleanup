@@ -146,7 +146,10 @@ export function textureAirbrushPaintSamplePointsFromStroke(stroke = null, radius
   }
   const radius = Math.max(1, Number(radiusPixels) || 1);
   const spacingPercent = Math.max(0.1, Math.min(200, Number(options.spacing ?? 1)));
-  const continuousStep = Math.max(1.25, Math.min(8, radius * 0.35));
+  const lowSpacing = spacingPercent <= 10;
+  const continuousStep = lowSpacing
+    ? Math.max(1.25, Math.min(4, radius * 0.12))
+    : Math.max(1.25, Math.min(8, radius * 0.35));
   const stampedStep = Math.max(1, radius * 2 * (spacingPercent / 100));
   const step = spacingPercent <= 100 ? continuousStep : stampedStep;
   const segments = Array.isArray(stroke.strokeSegments) && stroke.strokeSegments.length

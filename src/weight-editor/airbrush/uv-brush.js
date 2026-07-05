@@ -267,9 +267,9 @@ export function installTextureAirbrushUvBrushMethods(BirdWeightEditor, deps) {
       const viewNormalZ = cameraFacingNormalZFromViewPoints(viewPoints);
       if (Number.isFinite(viewNormalZ) && viewNormalZ <= 0) {
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
-        // CPU/UV brushing is a fallback path, not permission to bypass the
-        // live shader's visible-side-only rule. If the face normal is at or
-        // behind 90 degrees from the paint camera, this path must paint nothing.
+        // Non-WebGPU UV helpers are not permission to bypass the live shader's
+        // visible-side-only rule. If the face normal is at or behind 90 degrees
+        // from the paint camera, this path must paint nothing.
         return 0;
       }
       if (texturePoints.some((point) => !point || !Number.isFinite(point.x) || !Number.isFinite(point.y))) {

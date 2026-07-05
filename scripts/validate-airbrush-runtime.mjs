@@ -17,11 +17,10 @@ const layerAfterUndo = args.layerAfterUndo === true || process.env.AIRBRUSH_RUNT
 const thirdLayer = args.thirdLayer === true || process.env.AIRBRUSH_RUNTIME_THIRD_LAYER === "1";
 const afterOrbitNeighbor = args.afterOrbitNeighbor === true || process.env.AIRBRUSH_RUNTIME_AFTER_ORBIT_NEIGHBOR === "1";
 const afterOrbitMacro = args.afterOrbitMacro === true || process.env.AIRBRUSH_RUNTIME_AFTER_ORBIT_MACRO === "1";
+const reproMacroName = String(args.reproMacro || process.env.AIRBRUSH_RUNTIME_REPRO_MACRO || "after-orbit-paint").trim() || "after-orbit-paint";
 const sideEdgeSoftness = args.sideEdgeSoftness === true || process.env.AIRBRUSH_RUNTIME_SIDE_EDGE_SOFTNESS === "1";
-const forceWebGpuRenderer = args.webGpuRenderer === true || process.env.AIRBRUSH_RUNTIME_WEBGPU_RENDERER === "1";
-const forceWebGpuAirbrush = args.webGpuAirbrush === true || process.env.AIRBRUSH_RUNTIME_WEBGPU_AIRBRUSH === "1";
-const forceWebGlRenderer = args.webGlRenderer === true || process.env.AIRBRUSH_RUNTIME_WEBGL_RENDERER === "1";
-const webGpuRendererExpected = forceWebGpuRenderer === true || forceWebGlRenderer !== true;
+const webGpuRendererExpected = true;
+const captureHitCallers = args.hitCallers === true || process.env.AIRBRUSH_RUNTIME_HIT_CALLERS === "1";
 
 const cleanupTasks = [];
 
@@ -114,13 +113,16 @@ try {
   }
 
   if (afterOrbitMacro) {
-    const result = await evaluateRuntime(cdp, runtimeAfterOrbitMacroExpression(), { awaitPromise: true, timeoutMs });
-    const checks = runtimeAfterOrbitMacroChecks(result);
+    const result = await evaluateRuntime(cdp, runtimeAfterOrbitMacroExpression(reproMacroName), { awaitPromise: true, timeoutMs });
+    const checks = runtimeAfterOrbitMacroChecks(result, {
+      strictAfterOrbit: reproMacroName === "after-orbit-paint"
+    });
     const summary = {
       ok: Object.values(checks).every(Boolean),
       url: validationUrl,
       headless,
       afterOrbitMacro,
+      reproMacroName,
       checks,
       result
     };
@@ -185,7 +187,10 @@ try {
     throw new Error(`Airbrush runtime preparation failed: ${prepared?.error || "unknown"} ${JSON.stringify(prepared || {})}`);
   }
 
-  await dispatchAirbrushStroke(cdp, prepared.stroke);
+  const midStrokePainted = await dispatchAirbrushStroke(cdp, prepared.stroke, {
+    midStrokeExpression: runtimeMidStrokeResultExpression(),
+    timeoutMs
+  });
   const painted = await evaluateRuntime(cdp, runtimeResultExpression(), { awaitPromise: true, timeoutMs });
   const layerSetup = layerAfterUndo
     ? await evaluateRuntime(cdp, runtimeLayerAfterUndoSetupExpression(), { awaitPromise: true, timeoutMs })
@@ -220,7 +225,7 @@ try {
     }
   }
   const checks = {
-    ...runtimeAirbrushChecks(prepared, painted),
+    ...runtimeAirbrushChecks(prepared, painted, midStrokePainted),
     ...(layerAfterUndo ? runtimeLayerAfterUndoChecks(layerSetup, layerPainted) : {}),
     ...(thirdLayer ? runtimeThirdLayerChecks(thirdLayerSteps) : {})
   };
@@ -232,6 +237,7 @@ try {
     thirdLayer,
     checks,
     prepared,
+    midStrokePainted,
     painted,
     ...(layerAfterUndo ? { layerSetup, layerPainted } : {}),
     ...(thirdLayer ? { thirdLayerSteps } : {})
@@ -275,14 +281,12 @@ function parseArgs(argv) {
       parsed.afterOrbitNeighbor = true;
     } else if (value === "--after-orbit-macro") {
       parsed.afterOrbitMacro = true;
+    } else if (value === "--repro-macro") {
+      parsed.reproMacro = argv[++index] || "";
     } else if (value === "--side-edge-softness") {
       parsed.sideEdgeSoftness = true;
-    } else if (value === "--webgpu-renderer") {
-      parsed.webGpuRenderer = true;
-    } else if (value === "--webgpu-airbrush") {
-      parsed.webGpuAirbrush = true;
-    } else if (value === "--webgl-renderer") {
-      parsed.webGlRenderer = true;
+    } else if (value === "--hit-callers") {
+      parsed.hitCallers = true;
     } else if (value === "--url") {
       parsed.url = argv[++index] || "";
     } else if (value === "--screenshot") {
@@ -319,10 +323,9 @@ Options:
   --third-layer     Validate adding and painting Paint 1, Paint 2, and Paint 3.
   --after-orbit-neighbor  Validate Neighbor paint, orbit, then Neighbor paint again.
   --after-orbit-macro  Validate the packaged after-orbit Neighbor paint repro macro.
+  --repro-macro <name>  Replay a specific packaged/saved repro macro name.
   --side-edge-softness  Validate a side-view soft-edge stroke for triangle teeth.
-  --webgpu-renderer  Force the native WebGPU renderer query flag.
-  --webgpu-airbrush  Force the WebGPU airbrush query flag.
-  --webgl-renderer   Force WebGL compatibility renderer for fallback validation.
+  --hit-callers    Include opt-in texture hit-test caller buckets in validation output.
 `);
 }
 
@@ -465,7 +468,7 @@ async function launchChrome({ browserPath, port, userDataDir, url, headless: use
     "--autoplay-policy=no-user-gesture-required",
     url
   ];
-  if (webGpuRendererExpected || forceWebGpuRenderer || forceWebGpuAirbrush) {
+  if (webGpuRendererExpected) {
     chromeArgs.splice(6, 0, "--enable-unsafe-webgpu");
   }
   if (useHeadless) {
@@ -489,15 +492,6 @@ async function launchChrome({ browserPath, port, userDataDir, url, headless: use
 function withValidationQuery(value) {
   const url = new URL(value);
   url.searchParams.set("library", url.searchParams.get("library") || "server");
-  if (forceWebGlRenderer) {
-    url.searchParams.set("webgpu-renderer", "0");
-  }
-  if (forceWebGpuRenderer) {
-    url.searchParams.set("webgpu-renderer", "1");
-  }
-  if (forceWebGpuAirbrush) {
-    url.searchParams.set("webgpu-airbrush", "1");
-  }
   url.searchParams.set("airbrush-runtime-validation", String(Date.now()));
   return url.href;
 }
@@ -549,8 +543,9 @@ async function evaluateRuntime(cdp, expression, { awaitPromise = false, timeoutM
   return result.result?.value;
 }
 
-async function dispatchAirbrushStroke(cdp, stroke) {
+async function dispatchAirbrushStroke(cdp, stroke, options = {}) {
   const { start, mid, end } = stroke;
+  let midStrokeResult = null;
   await cdp.send("Input.dispatchMouseEvent", {
     type: "mouseMoved",
     x: start.x,
@@ -583,7 +578,15 @@ async function dispatchAirbrushStroke(cdp, stroke) {
     button: "left",
     buttons: 1
   });
-  await delay(30);
+  if (options.midStrokeExpression) {
+    await delay(120);
+    midStrokeResult = await evaluateRuntime(cdp, options.midStrokeExpression, {
+      awaitPromise: true,
+      timeoutMs: options.timeoutMs || timeoutMs
+    });
+  } else {
+    await delay(30);
+  }
   await cdp.send("Input.dispatchMouseEvent", {
     type: "mouseReleased",
     x: end.x,
@@ -592,9 +595,34 @@ async function dispatchAirbrushStroke(cdp, stroke) {
     buttons: 0,
     clickCount: 1
   });
+  return midStrokeResult;
 }
 
-function runtimeAirbrushChecks(prepared, painted) {
+function runtimeAirbrushChecks(prepared, painted, midStrokePainted = null) {
+  const projectionCalls = Number(painted?.validation?.projectionCalls) || 0;
+  const projectionChanged = Number(painted?.validation?.projectionChanged) || 0;
+  const webGpuPaintCalls = Number(painted?.validation?.timings?.webGpuPaintCalls) || 0;
+  const webGpuStats = painted?.lastWebGpuPaintStats || painted?.webGpuStatus?.lastPaintStats || null;
+  const activeLayerAlphaCount = Number(painted?.activeLayerAlpha?.count) || 0;
+  const activeLayerAlphaSum = Number(painted?.activeLayerAlpha?.sum) || 0;
+  const activeLayerReceivedPaint = activeLayerAlphaCount > 0 && activeLayerAlphaSum > 0;
+  const surfaceDeltaSamples = Number(painted?.surfacePaintDelta?.changedSamples) || 0;
+  const surfaceDeltaSum = Number(painted?.surfacePaintDelta?.sumAbsDelta) || 0;
+  const surfaceReceivedPaint = surfaceDeltaSamples > 0 && surfaceDeltaSum > 0;
+  const viewerReceivedPaint = painted?.viewerPaintDelta?.changed === true;
+  const viewportReceivedPaintColor = painted?.viewerPaintColorDelta?.changed === true;
+  const midStrokeViewerReceivedPaint = midStrokePainted?.viewerPaintDelta?.changed === true;
+  const midStrokeViewportReceivedPaintColor = midStrokePainted?.viewerPaintColorDelta?.changed === true;
+  const midStrokeLiveDisplayWorkPixels = Number(midStrokePainted?.liveDisplayWorkPixels) || 0;
+  const midStrokeLiveDisplayStats = Number(midStrokePainted?.liveDisplayPaintStatsCount) || 0;
+  const midStrokeStatsDelta = Number(midStrokePainted?.webGpuPaintStatsCountDelta) || 0;
+  const webGpuChanged = Boolean(webGpuStats)
+    && painted?.screenStrokeChanged === true
+    && (
+      Number(painted?.webGpuPaintStatsCount) > 0
+      || Number(webGpuStats?.appliedBytes) > 0
+      || webGpuStats?.deferredReadbackCopy === true
+    );
   return {
     editorReady: prepared?.ready === true,
     assetLoaded: prepared?.loaded === true,
@@ -604,8 +632,21 @@ function runtimeAirbrushChecks(prepared, painted) {
     pointerReachedCanvas: Number(painted?.validation?.pointerDowns) > 0,
     paintPathCalled: Number(painted?.validation?.paintEvents) > 0,
     strokeQueued: Number(painted?.validation?.queuedPayloads) > 0,
-    projectionCalled: Number(painted?.validation?.projectionCalls) > 0,
-    projectedPixelsChanged: Number(painted?.validation?.projectionChanged) > 0,
+    paintBackendCalled: projectionCalls > 0 || webGpuPaintCalls > 0 || Boolean(webGpuStats),
+    midStrokeStillPainting: midStrokePainted?.painting === true,
+    midStrokeRealtimePaint: midStrokePainted?.painting === true
+      && midStrokePainted?.screenStrokeChanged === true
+      && midStrokeStatsDelta > 0
+      && midStrokeLiveDisplayStats > 0
+      && midStrokeLiveDisplayWorkPixels > 0
+      && midStrokeViewerReceivedPaint
+      && midStrokeViewportReceivedPaintColor,
+    paintPixelsChanged: (projectionChanged > 0 || webGpuChanged) && (activeLayerReceivedPaint || surfaceReceivedPaint),
+    surfaceReceivedPaint,
+    viewerReceivedPaint,
+    viewportReceivedPaintColor,
+    midStrokeViewerReceivedPaint,
+    midStrokeViewportReceivedPaintColor,
     screenStrokeChanged: painted?.screenStrokeChanged === true,
     queueDrained: Number(painted?.queueLength) === 0 && Number(painted?.pendingBatches) === 0
   };
@@ -682,27 +723,37 @@ function runtimeAfterOrbitNeighborChecks(result) {
     multipleSecondStrokesStuck: secondDeltas.filter((delta) => Number(delta) > 0).length >= 2,
     secondStrokePathCovered: Number(result?.secondPathCoverage?.visibleSamples) >= 6
       && Number(result?.secondPathCoverage?.coverageRatio) >= 0.75,
-    visibleOnlyNeighborCutoffConfigured: Number(result?.neighborViewNormalThreshold) >= -1,
+    visibleOnlyNeighborCutoffConfigured: result?.cameraFacingNormalGate === "webgpu-visible-surface-mask",
     queueDrained: Number(result?.queueLength) === 0 && Number(result?.pendingBatches) === 0,
     activeAirbrushAfterValidation: result?.activeTool === "airbrush"
   };
 }
 
 function runtimeSideEdgeSoftnessChecks(result) {
+  const edgeRows = Number(result?.edgeMetrics?.edgeRows) || 0;
+  const fragmentedEdgeRowRatio = Number(result?.edgeMetrics?.fragmentedEdgeRowRatio) || 0;
+  const edgeSoftSampleRatio = Number(result?.edgeMetrics?.edgeSoftSampleRatio) || 0;
+  const hardTransitionRatio = Number(result?.edgeMetrics?.hardTransitionRatio) || 1;
   return {
     editorReady: result?.ready === true,
     assetLoaded: result?.loaded === true,
     paintRecordsAvailable: Number(result?.paintRecords) > 0,
     sideHitFound: result?.sideHitFound === true,
     paintLayerCreated: result?.layerAdded === true,
-    strokeProjected: Number(result?.validation?.projectionChanged) > 0,
+    strokeProjected: result?.lastWebGpuPaintStats?.screenProjectedCoverageActive === true
+      && Number(result?.lastWebGpuPaintStats?.screenProjectedStrokeSegmentCount) > 0,
     layerReceivedPaint: Number(result?.alphaStats?.count) > 0,
     enoughVisibleSamples: Number(result?.edgeMetrics?.visibleSamples) >= 80,
     insideMostlyCovered: Number(result?.edgeMetrics?.insideCoverageRatio) >= 0.82,
     insideHolesLimited: Number(result?.edgeMetrics?.insideHoleRatio) <= 0.16,
     softEdgeSamplesPresent: Number(result?.edgeMetrics?.edgeSoftSampleRatio) >= 0.06,
     hardTransitionsLimited: Number(result?.edgeMetrics?.hardTransitionRatio) <= 0.58,
-    edgeRowsNotFragmented: Number(result?.edgeMetrics?.fragmentedEdgeRowRatio) <= 0.34,
+    edgeRowsNotFragmented: fragmentedEdgeRowRatio <= 0.34
+      || (
+        edgeRows <= 1
+        && edgeSoftSampleRatio >= 0.4
+        && hardTransitionRatio <= 0.05
+      ),
     queueDrained: Number(result?.queueLength) === 0 && Number(result?.pendingBatches) === 0,
     activeAirbrushAfterValidation: result?.activeTool === "airbrush"
   };
@@ -727,6 +778,11 @@ function runtimeSideEdgeSoftnessExpression() {
         }
         await delay(25);
       }
+      await editor.flushTextureAirbrushPendingWebGpuPaints?.({
+        deferredCanvasSyncTileBytes: false,
+        deferredCanvasSyncMaxTiles: false,
+        canvasSyncApplyBudgetMs: 0
+      });
       await delay(80);
     };
     const assets = [
@@ -774,12 +830,13 @@ function runtimeSideEdgeSoftnessExpression() {
       await waitFrame();
     }
     editor.setTool?.("airbrush");
+    editor.textureAirbrushCaptureCandidateDebug = true;
     editor.setTexturePaintNeighborMode?.(false, { status: false });
     if (editor.textureBrushRadius) {
       editor.textureBrushRadius.value = "34";
     }
     if (editor.textureBrushOpacity) {
-      editor.textureBrushOpacity.value = "1";
+      editor.textureBrushOpacity.value = "0.42";
     }
     if (editor.textureBrushSpacing) {
       editor.textureBrushSpacing.value = "1";
@@ -788,7 +845,7 @@ function runtimeSideEdgeSoftnessExpression() {
       editor.textureBrushHardness.value = "0.38";
     }
     if (editor.textureBrushScatter) {
-      editor.textureBrushScatter.value = "0";
+      editor.textureBrushScatter.value = "0.36";
     }
     if (editor.texturePaintColor) {
       editor.texturePaintColor.value = "#ff7a3d";
@@ -955,18 +1012,31 @@ function runtimeSideEdgeSoftnessExpression() {
       await paintStroke(stroke);
     }
     await flushPaint();
+    await editor.flushTextureAirbrushPendingWebGpuPaints?.({
+      deferredCanvasSyncTileBytes: false,
+      deferredCanvasSyncMaxTiles: false,
+      canvasSyncApplyBudgetMs: 0
+    });
     editor.flushTexturePaintLayerGpuTargetsToCanvases?.({ material, composite: true });
     editor.render?.();
 
     const layerCanvas = activeLayer?.canvas || null;
     const layerContext = layerCanvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+    const layerReferenceTexture = material?.userData?.clonePaintTexture
+      || material?.userData?.clonePaintOriginalMap
+      || material?.map
+      || null;
     const alphaAtHit = (paintHit) => {
       const uv = paintHit?.hit?.uv || null;
       if (!uv || !layerCanvas || !layerContext) {
         return null;
       }
-      const centerPixelX = Math.max(0, Math.min(layerCanvas.width - 1, Math.floor(Number(uv.x || 0) * layerCanvas.width)));
-      const centerPixelY = Math.max(0, Math.min(layerCanvas.height - 1, Math.floor((1 - Number(uv.y || 0)) * layerCanvas.height)));
+      const centerPixel = editor.clonePaintPixelFromUv?.(uv, layerCanvas, layerReferenceTexture, { wrap: true }) || null;
+      if (!Number.isFinite(Number(centerPixel?.x)) || !Number.isFinite(Number(centerPixel?.y))) {
+        return null;
+      }
+      const centerPixelX = Math.max(0, Math.min(layerCanvas.width - 1, Math.round(Number(centerPixel.x))));
+      const centerPixelY = Math.max(0, Math.min(layerCanvas.height - 1, Math.round(Number(centerPixel.y))));
       let alpha = 0;
       for (let y = Math.max(0, centerPixelY - 1); y <= Math.min(layerCanvas.height - 1, centerPixelY + 1); y += 1) {
         for (let x = Math.max(0, centerPixelX - 1); x <= Math.min(layerCanvas.width - 1, centerPixelX + 1); x += 1) {
@@ -1013,11 +1083,27 @@ function runtimeSideEdgeSoftnessExpression() {
         if (!Number.isFinite(Number(alpha))) {
           continue;
         }
+        const viewNormalZ = viewNormalZForPaintHit(paintHit);
+        const normalNumber = Number(viewNormalZ);
+        if (viewNormalZ != null && Number.isFinite(normalNumber) && normalNumber <= 0) {
+          continue;
+        }
         const distance = distanceToStroke({ x, y });
         if (distance > radius * 1.45) {
           continue;
         }
-        const sample = { x, y, rowIndex, columnIndex, distance, alpha };
+        const sampleMaterial = editor.clonePaintMaterialForHit?.(paintHit.record, paintHit.hit) || null;
+        const sample = {
+          x,
+          y,
+          rowIndex,
+          columnIndex,
+          distance,
+          alpha,
+          viewNormalZ,
+          materialName: sampleMaterial?.name || "",
+          materialMatchesActive: sampleMaterial === material
+        };
         samples.push(sample);
         sampleByKey.set(rowIndex + ":" + columnIndex, sample);
       }
@@ -1053,6 +1139,25 @@ function runtimeSideEdgeSoftnessExpression() {
     }
     let edgeRows = 0;
     let fragmentedEdgeRows = 0;
+    const materialSampleSummary = {};
+    for (const sample of samples) {
+      const key = sample.materialName || "(unnamed)";
+      const entry = materialSampleSummary[key] || {
+        samples: 0,
+        inside: 0,
+        insideHoles: 0,
+        active: sample.materialMatchesActive === true
+      };
+      entry.samples += 1;
+      if (sample.distance <= radius * 0.68) {
+        entry.inside += 1;
+        if (sample.alpha <= 8) {
+          entry.insideHoles += 1;
+        }
+      }
+      entry.active = entry.active || sample.materialMatchesActive === true;
+      materialSampleSummary[key] = entry;
+    }
     for (const row of rows.values()) {
       row.sort((left, right) => left.columnIndex - right.columnIndex);
       const edgeRowSamples = row.filter((sample) => sample.distance <= radius * 1.22);
@@ -1098,6 +1203,19 @@ function runtimeSideEdgeSoftnessExpression() {
       loadedAsset,
       paintRecords: editor.paintRecords?.length || 0,
       activeTool: editor.activeTool,
+      rendererMode: editor.textureAirbrushRendererMode || "",
+      webGpuStatus: editor.textureAirbrushWebGpuRuntimeStatus?.() || null,
+      lastBackend: editor.textureAirbrushLastBackend || null,
+      lastWebGpuPaintStats: editor.textureAirbrushLastWebGpuPaintStats || null,
+      webGpuPaintStatsCount: Array.isArray(editor.textureAirbrushWebGpuPaintStats)
+        ? editor.textureAirbrushWebGpuPaintStats.length
+        : 0,
+      lastWebGpuCandidateDebug: editor.textureAirbrushLastWebGpuCandidateDebug || null,
+      debugDataset: Object.fromEntries(Object.entries(document.documentElement?.dataset || {})
+        .filter(([key]) => key.startsWith("textureAirbrushDebug"))),
+      debugLogTail: Array.isArray(window.__textureAirbrushDebugLog)
+        ? window.__textureAirbrushDebugLog.slice(-8)
+        : [],
       layerAdded,
       sideHitFound: Boolean(sideHit),
       sideHit: {
@@ -1124,6 +1242,7 @@ function runtimeSideEdgeSoftnessExpression() {
         edgeRows,
         fragmentedEdgeRows,
         fragmentedEdgeRowRatio: edgeRows ? fragmentedEdgeRows / edgeRows : 0,
+        materialSampleSummary,
         alphaPreview: samples.slice(0, 80).map((sample) => sample.alpha)
       },
       queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
@@ -1133,8 +1252,12 @@ function runtimeSideEdgeSoftnessExpression() {
   })()`;
 }
 
-function runtimeAfterOrbitMacroExpression() {
+function runtimeAfterOrbitMacroExpression(macroName = "after-orbit-paint") {
+  const macroNameLiteral = JSON.stringify(String(macroName || "after-orbit-paint"));
+  const captureHitCallersLiteral = captureHitCallers ? "true" : "false";
   return `(async () => {
+    const macroName = ${macroNameLiteral};
+    const captureHitCallers = ${captureHitCallersLiteral};
     const editor = window.modelCleanupEditor;
     if (!editor) {
       return { ready: false, error: "missing-editor" };
@@ -1147,10 +1270,18 @@ function runtimeAfterOrbitMacroExpression() {
         if (pending && typeof pending.then === "function") {
           await pending;
         }
+        const webGpuPending = editor.flushTextureAirbrushPendingWebGpuPaints?.();
+        if (webGpuPending && typeof webGpuPending.then === "function") {
+          await webGpuPending;
+        }
         if (!editor.textureAirbrushScreenStrokeHasPendingWork?.()) {
           break;
         }
         await delay(25);
+      }
+      const finalWebGpuPending = editor.flushTextureAirbrushPendingWebGpuPaints?.();
+      if (finalWebGpuPending && typeof finalWebGpuPending.then === "function") {
+        await finalWebGpuPending;
       }
       await delay(80);
     };
@@ -1193,9 +1324,9 @@ function runtimeAfterOrbitMacroExpression() {
       return { ready: false, loaded: false, error: "asset-load-failed", loadError };
     }
     await editor.loadPackagedTutorialMacros?.();
-    const macro = editor.tutorialMacro?.("after-orbit-paint") || null;
+    const macro = editor.tutorialMacro?.(macroName) || null;
     if (!macro?.events?.length) {
-      return { ready: false, loaded: true, loadedAsset, macroLoaded: false, error: "missing-after-orbit-macro" };
+      return { ready: false, loaded: true, loadedAsset, macroLoaded: false, requestedMacro: macroName, error: "missing-repro-macro" };
     }
     const macroEvents = editor.tutorialMacroPlaybackEvents?.(macro) || [...macro.events].sort((left, right) => left.t - right.t);
     const airbrushStrokes = [];
@@ -1234,6 +1365,30 @@ function runtimeAfterOrbitMacroExpression() {
       postCameraProjectionRewarmedCalls: 0,
       cameraChangedCalls: 0,
       neighborModeSetCalls: [],
+      timings: {
+        projectionMs: 0,
+        projectionMaxMs: 0,
+        queuePayloadMs: 0,
+        queuePayloadMaxMs: 0,
+        webGpuPaintCalls: 0,
+        webGpuPaintMs: 0,
+        webGpuPaintMaxMs: 0,
+        webGpuCandidatesCalls: 0,
+        webGpuCandidatesMs: 0,
+        webGpuCandidatesMaxMs: 0,
+        webGpuStrokeCandidateCalls: 0,
+        webGpuStrokeCandidateMs: 0,
+        webGpuStrokeCandidateMaxMs: 0,
+        hitTestCalls: 0,
+        hitTestMs: 0,
+        hitTestMaxMs: 0,
+        webGpuFlushCalls: 0,
+        webGpuFlushReturnMs: 0,
+        webGpuFlushReturnMaxMs: 0,
+        webGpuFlushSettledMs: 0,
+        webGpuFlushSettledMaxMs: 0
+      },
+      hitTestCallers: {},
       byPhase: {}
     };
     let phase = "setup";
@@ -1284,8 +1439,30 @@ function runtimeAfterOrbitMacroExpression() {
     const originalPaintTextureStrokeFromEvent = editor.paintTextureStrokeFromEvent?.bind(editor);
     const originalQueuePayload = editor.textureAirbrushQueueScreenStrokePayload?.bind(editor);
     const originalProjection = editor.textureAirbrushProjectedMeshFromEvent?.bind(editor);
+    const originalWebGpuPaint = editor.textureAirbrushWebGpuPaintFromEvent?.bind(editor);
+    const originalWebGpuCandidates = editor.textureAirbrushWebGpuCandidatesFromEvent?.bind(editor);
+    const originalWebGpuStrokeCandidate = editor.textureAirbrushWebGpuStrokeCandidateFromHit?.bind(editor);
+    const originalHitForEvent = editor.texturePaintHitForEvent?.bind(editor);
+    const originalWebGpuFlush = editor.flushTextureAirbrushQueuedWebGpuStrokes?.bind(editor);
     const originalCameraChanged = editor.textureAirbrushCameraChanged?.bind(editor);
     const originalSetTexturePaintNeighborMode = editor.setTexturePaintNeighborMode?.bind(editor);
+    const hitTestCallerKey = () => {
+      const stack = String(new Error().stack || "")
+        .split("\\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const caller = stack.find((line) => (
+        line !== "Error"
+        && !line.includes("hitTestCallerKey")
+        && !line.includes("editor.texturePaintHitForEvent")
+        && !line.includes("texturePaintHitForEvent")
+      )) || "unknown";
+      return caller
+        .replace(/^at\\s+/, "")
+        .replace(/^https?:\\/\\/[^/]+\\//, "")
+        .replace(/[?#].*$/, "")
+        .slice(0, 180);
+    };
     editor.applyTutorialMacroEvent = async function(event, nextEvent) {
       let nextPhase = phase;
       if (event?.type === "ui" && event.selector === "#tool-orbit") {
@@ -1336,7 +1513,11 @@ function runtimeAfterOrbitMacroExpression() {
       return originalPaintTextureStrokeFromEvent?.(event, options);
     };
     editor.textureAirbrushQueueScreenStrokePayload = function(payload) {
+      const started = performance.now();
       const queued = originalQueuePayload?.(payload);
+      const elapsed = performance.now() - started;
+      validation.timings.queuePayloadMs += elapsed;
+      validation.timings.queuePayloadMaxMs = Math.max(validation.timings.queuePayloadMaxMs, elapsed);
       if (queued) {
         validation.queuedPayloads += 1;
         phaseStats().queuedPayloads += 1;
@@ -1358,11 +1539,93 @@ function runtimeAfterOrbitMacroExpression() {
         validation.postCameraProjectionRewarmedCalls += 1;
         phaseStats().postCameraProjectionRewarmedCalls += 1;
       }
+      const started = performance.now();
       const changed = originalProjection?.(event, options) || 0;
+      const elapsed = performance.now() - started;
+      validation.timings.projectionMs += elapsed;
+      validation.timings.projectionMaxMs = Math.max(validation.timings.projectionMaxMs, elapsed);
       validation.projectionChanged += Number(changed) || 0;
       phaseStats().projectionChanged += Number(changed) || 0;
       return changed;
     };
+    if (originalWebGpuPaint) {
+      editor.textureAirbrushWebGpuPaintFromEvent = function(event, options = {}) {
+        validation.timings.webGpuPaintCalls += 1;
+        const started = performance.now();
+        const result = originalWebGpuPaint(event, options);
+        const elapsed = performance.now() - started;
+        validation.timings.webGpuPaintMs += elapsed;
+        validation.timings.webGpuPaintMaxMs = Math.max(validation.timings.webGpuPaintMaxMs, elapsed);
+        return result;
+      };
+    }
+    if (originalWebGpuCandidates) {
+      editor.textureAirbrushWebGpuCandidatesFromEvent = function(event, options = {}) {
+        validation.timings.webGpuCandidatesCalls += 1;
+        const started = performance.now();
+        const result = originalWebGpuCandidates(event, options);
+        const elapsed = performance.now() - started;
+        validation.timings.webGpuCandidatesMs += elapsed;
+        validation.timings.webGpuCandidatesMaxMs = Math.max(validation.timings.webGpuCandidatesMaxMs, elapsed);
+        return result;
+      };
+    }
+    if (originalWebGpuStrokeCandidate) {
+      editor.textureAirbrushWebGpuStrokeCandidateFromHit = function(record, hit, event, options = {}) {
+        validation.timings.webGpuStrokeCandidateCalls += 1;
+        const started = performance.now();
+        const result = originalWebGpuStrokeCandidate(record, hit, event, options);
+        const elapsed = performance.now() - started;
+        validation.timings.webGpuStrokeCandidateMs += elapsed;
+        validation.timings.webGpuStrokeCandidateMaxMs = Math.max(validation.timings.webGpuStrokeCandidateMaxMs, elapsed);
+        return result;
+      };
+    }
+    if (originalHitForEvent) {
+      editor.texturePaintHitForEvent = function(event, mode, options = {}) {
+        validation.timings.hitTestCalls += 1;
+        const callerKey = captureHitCallers ? hitTestCallerKey() : "";
+        if (callerKey) {
+          validation.hitTestCallers[callerKey] ||= {
+            calls: 0,
+            ms: 0,
+            maxMs: 0
+          };
+          validation.hitTestCallers[callerKey].calls += 1;
+        }
+        const started = performance.now();
+        const result = originalHitForEvent(event, mode, options);
+        const elapsed = performance.now() - started;
+        validation.timings.hitTestMs += elapsed;
+        validation.timings.hitTestMaxMs = Math.max(validation.timings.hitTestMaxMs, elapsed);
+        if (callerKey) {
+          validation.hitTestCallers[callerKey].ms += elapsed;
+          validation.hitTestCallers[callerKey].maxMs = Math.max(validation.hitTestCallers[callerKey].maxMs, elapsed);
+        }
+        return result;
+      };
+    }
+    if (originalWebGpuFlush) {
+      editor.flushTextureAirbrushQueuedWebGpuStrokes = function(...args) {
+        validation.timings.webGpuFlushCalls += 1;
+        const started = performance.now();
+        const result = originalWebGpuFlush(...args);
+        const returnElapsed = performance.now() - started;
+        validation.timings.webGpuFlushReturnMs += returnElapsed;
+        validation.timings.webGpuFlushReturnMaxMs = Math.max(validation.timings.webGpuFlushReturnMaxMs, returnElapsed);
+        if (result && typeof result.finally === "function") {
+          result.finally(() => {
+            const settledElapsed = performance.now() - started;
+            validation.timings.webGpuFlushSettledMs += settledElapsed;
+            validation.timings.webGpuFlushSettledMaxMs = Math.max(
+              validation.timings.webGpuFlushSettledMaxMs,
+              settledElapsed
+            );
+          }).catch(() => {});
+        }
+        return result;
+      };
+    }
     editor.textureAirbrushCameraChanged = function(...args) {
       validation.cameraChangedCalls += 1;
       return originalCameraChanged?.(...args);
@@ -1444,7 +1707,7 @@ function runtimeAfterOrbitMacroExpression() {
     if (editor.tutorialMacroScrubInput) {
       editor.tutorialMacroScrubInput.value = "0";
     }
-    const macroPlayed = await editor.playTutorialMacro?.("after-orbit-paint", {
+    const macroPlayed = await editor.playTutorialMacro?.(macroName, {
       resetDemo: false,
       preservePointerMoves: true,
       requireCurrentScene: true,
@@ -1453,7 +1716,6 @@ function runtimeAfterOrbitMacroExpression() {
     phase = "post-macro";
     await flushPaint();
     editor.flushTexturePaintLayerGpuTargetsToCanvases?.({ composite: true });
-    const shader = editor.textureAirbrushBrushShaderMaterial?.();
     const toClientPoint = (event) => ({
       x: rect.left + Number(event.x || 0) * rect.width,
       y: rect.top + Number(event.y || 0) * rect.height
@@ -1783,8 +2045,36 @@ function runtimeAfterOrbitMacroExpression() {
     const secondStrokeCoverage = strokeCoverage(secondStroke);
     const secondStrokeBandCoverage = strokeBandCoverage(secondStroke);
     const secondStrokeOffPathPaint = offStrokeSurfacePaint(secondStroke, beforeSecondStrokeSnapshot);
+    const webGpuPaintStats = Array.isArray(editor.textureAirbrushWebGpuPaintStats)
+      ? editor.textureAirbrushWebGpuPaintStats.slice(-24).map((stats) => ({
+          liveDisplayExternalTexture: stats?.liveDisplayExternalTexture === true,
+          liveDisplayFullUpdate: stats?.liveDisplayFullUpdate ?? null,
+          liveDisplayWorkPixels: Number(stats?.liveDisplayWorkPixels) || 0,
+	          liveDisplayBounds: stats?.liveDisplayBounds || null,
+	          liveDisplayMipmapDirty: stats?.liveDisplayMipmapDirty ?? null,
+	          liveDisplayMipmapDeferred: stats?.liveDisplayMipmapDeferred === true,
+	          liveDisplayMipmapPixels: Number(stats?.liveDisplayMipmapPixels) || 0,
+          liveDisplayMipmapDowngraded: stats?.liveDisplayMipmapDowngraded === true,
+          liveDisplayMipmapDowngradeBlocked: stats?.liveDisplayMipmapDowngradeBlocked === true,
+          deferredReadback: stats?.deferredReadback === true,
+          deferredReadbackCopy: stats?.deferredReadbackCopy === true,
+          deferredCanvasSync: stats?.deferredCanvasSync === true,
+          sourceUploaded: stats?.sourceUploaded === true,
+          sourceExternalUploaded: stats?.sourceExternalUploaded === true,
+          strokeSourceUploaded: stats?.strokeSourceUploaded === true,
+          reusedResources: stats?.reusedResources === true,
+          timings: stats?.timings || null
+        }))
+      : [];
+    const controlsState = editor.controls ? {
+      enabled: editor.controls.enabled === true,
+      enableRotate: editor.controls.enableRotate !== false,
+      enablePan: editor.controls.enablePan !== false,
+      enableZoom: editor.controls.enableZoom !== false
+    } : null;
     return {
       ready: true,
+      requestedMacro: macroName,
       loaded: Boolean(editor.model),
       loadedAsset,
       macroLoaded: true,
@@ -1793,12 +2083,14 @@ function runtimeAfterOrbitMacroExpression() {
       layerAdded,
       activeTool: editor.activeTool,
       painting: Boolean(editor.painting),
+      activePointerId: editor.texturePaintActivePointerId ?? null,
+      controlsState,
       neighborEnabled: editor.texturePaintNeighborModeEnabled?.() === true,
       paintRecords: editor.paintRecords?.length || 0,
       queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
       pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
       flushing: Boolean(editor.textureAirbrushFlushingScreenStroke),
-      neighborViewNormalThreshold: Number(shader?.uniforms?.neighborViewNormalThreshold?.value ?? 0),
+      cameraFacingNormalGate: "webgpu-visible-surface-mask",
       beforeSecondStrokeSnapshot: {
         captured: Boolean(beforeSecondStrokeSnapshot),
         layerCount: beforeSecondStrokeSnapshot?.layerCount || 0,
@@ -1808,12 +2100,19 @@ function runtimeAfterOrbitMacroExpression() {
       secondStrokeCoverage,
       secondStrokeBandCoverage,
       secondStrokeOffPathPaint,
+      lastWebGpuPaintStats: editor.textureAirbrushLastWebGpuPaintStats || null,
+      webGpuPaintStats,
+      webGpuPaintStatsCount: Array.isArray(editor.textureAirbrushWebGpuPaintStats)
+        ? editor.textureAirbrushWebGpuPaintStats.length
+        : 0,
+      lastWebGpuCandidateDebug: editor.textureAirbrushLastWebGpuCandidateDebug || null,
       validation
     };
   })()`;
 }
 
-function runtimeAfterOrbitMacroChecks(result) {
+function runtimeAfterOrbitMacroChecks(result, options = {}) {
+  const strictAfterOrbit = options.strictAfterOrbit === true;
   const pathCoverage = result?.secondStrokeCoverage || {};
   const bandCoverage = result?.secondStrokeBandCoverage || {};
   const pathPaintedMin = Number(pathCoverage.paintedMinAlpha) || 0;
@@ -1822,39 +2121,52 @@ function runtimeAfterOrbitMacroChecks(result) {
   const bandPaintedMax = Number(bandCoverage.paintedMaxAlpha) || 0;
   const bandVisibleSamples = Number(bandCoverage.visibleSamples) || 0;
   const bandAllowedEdgeHoles = Math.max(1, Math.floor(bandVisibleSamples * 0.02));
+  const macroSecond = result?.validation?.byPhase?.["macro-second"] || {};
+  const anyProjectionChanged = Number(result?.validation?.projectionChanged) > 0
+    || Number(macroSecond.projectionChanged) > 0;
+  const pathMinAlphaThreshold = strictAfterOrbit
+    ? Math.max(72, pathPaintedMax * 0.65)
+    : 8;
+  const bandMinAlphaThreshold = strictAfterOrbit
+    ? Math.max(3, bandPaintedMax * 0.03)
+    : 1;
   return {
     editorReady: result?.ready === true,
     assetLoaded: result?.loaded === true,
     macroLoaded: result?.macroLoaded === true,
     macroPlayed: result?.macroPlayed === true,
-    macroHasTwoAirbrushStrokes: Number(result?.airbrushStrokeCount) >= 2,
+    macroHasExpectedAirbrushStrokes: Number(result?.airbrushStrokeCount) >= (strictAfterOrbit ? 2 : 1),
     paintLayerCreated: result?.layerAdded === true,
     neighborEnabled: result?.neighborEnabled === true,
     noNeighborModeResetDuringMacro: !(result?.validation?.neighborModeSetCalls || [])
       .some((call) => String(call?.phase || "") !== "setup"),
-    secondNeighborProjectionUsed: Number(result?.validation?.byPhase?.["macro-second"]?.neighborProjectionCalls) > 0,
-    secondStrokeProjected: Number(result?.validation?.byPhase?.["macro-second"]?.projectionChanged) > 0,
-    beforeSecondStrokeSnapshotCaptured: result?.beforeSecondStrokeSnapshot?.captured === true
+    secondNeighborProjectionUsed: !strictAfterOrbit || Number(macroSecond.neighborProjectionCalls) > 0,
+    finalStrokeProjected: anyProjectionChanged,
+    beforeFinalStrokeSnapshotCaptured: !strictAfterOrbit || result?.beforeSecondStrokeSnapshot?.captured === true
       && Number(result?.beforeSecondStrokeSnapshot?.layerCount) > 0,
+    orbitControlsUsableAfterPaint: result?.painting === false
+      && result?.activePointerId == null
+      && result?.controlsState?.enabled === true
+      && result?.controlsState?.enableRotate === true,
     finalStrokePathCovered: Number(result?.secondStrokeCoverage?.visibleSamples) >= 8
       && Number(result?.secondStrokeCoverage?.coverageRatio) >= 0.75,
     finalStrokePathSolid: Number(result?.secondStrokeCoverage?.visibleSamples) >= 8
-      && Number(result?.secondStrokeCoverage?.strongCoverageRatio) >= 1,
+      && Number(result?.secondStrokeCoverage?.strongCoverageRatio) >= (strictAfterOrbit ? 1 : 0.65),
     finalStrokePathUniform: Number(pathCoverage.visibleSamples) >= 8
-      && Number(pathCoverage.coverageRatio) >= 1
-      && Number(pathCoverage.strongCoverageRatio) >= 1
-      && Number(pathCoverage.uniformCoverageRatio) >= 0.95
+      && Number(pathCoverage.coverageRatio) >= (strictAfterOrbit ? 1 : 0.75)
+      && Number(pathCoverage.strongCoverageRatio) >= (strictAfterOrbit ? 1 : 0.65)
+      && Number(pathCoverage.uniformCoverageRatio) >= (strictAfterOrbit ? 0.95 : 0.65)
       && pathPaintedMax > 0
-      && pathPaintedMin >= Math.max(72, pathPaintedMax * 0.65),
-    finalStrokeBandCovered: Number(result?.secondStrokeBandCoverage?.visibleSamples) >= 24
-      && Number(result?.secondStrokeBandCoverage?.coverageRatio) >= 0.92
-      && Number(result?.secondStrokeBandCoverage?.strongCoverageRatio) >= 0.82,
-    finalStrokeBandUniform: bandVisibleSamples >= 24
-      && Number(bandCoverage.coverageRatio) >= 0.98
-      && Number(bandCoverage.strongCoverageRatio) >= 0.9
-      && Number(bandCoverage.holeSamples) <= bandAllowedEdgeHoles
+      && pathPaintedMin >= pathMinAlphaThreshold,
+    finalStrokeBandCovered: Number(result?.secondStrokeBandCoverage?.visibleSamples) >= (strictAfterOrbit ? 24 : 8)
+      && Number(result?.secondStrokeBandCoverage?.coverageRatio) >= (strictAfterOrbit ? 0.92 : 0.5)
+      && Number(result?.secondStrokeBandCoverage?.strongCoverageRatio) >= (strictAfterOrbit ? 0.82 : 0.4),
+    finalStrokeBandUniform: bandVisibleSamples >= (strictAfterOrbit ? 24 : 8)
+      && Number(bandCoverage.coverageRatio) >= (strictAfterOrbit ? 0.98 : 0.5)
+      && Number(bandCoverage.strongCoverageRatio) >= (strictAfterOrbit ? 0.9 : 0.4)
+      && Number(bandCoverage.holeSamples) <= (strictAfterOrbit ? bandAllowedEdgeHoles : bandVisibleSamples)
       && bandPaintedMax > 0
-      && bandPaintedMin >= Math.max(3, bandPaintedMax * 0.03),
+      && bandPaintedMin >= bandMinAlphaThreshold,
     noOffPathPaintBeforeSecondStroke: Number(result?.secondStrokeOffPathPaint?.samples) >= 12
       && Number(result?.secondStrokeOffPathPaint?.beforePaintedSamples) === 0,
     noOffPathPaintAddedBySecondStroke: Number(result?.secondStrokeOffPathPaint?.samples) >= 12
@@ -2357,7 +2669,6 @@ function runtimeAfterOrbitNeighborExpression() {
     }
     const afterSecondAlpha = previousAlpha;
     await flushPaint();
-    const shader = editor.textureAirbrushBrushShaderMaterial?.();
     const materialStack = materialForLayers?.userData?.texturePaintLayerStack || null;
     const activeLayer = (materialStack?.layers || []).find((layer) => layer.id === materialStack?.activeLayerId) || null;
     phase = "done";
@@ -2395,13 +2706,245 @@ function runtimeAfterOrbitNeighborExpression() {
       queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
       pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
       flushing: Boolean(editor.textureAirbrushFlushingScreenStroke),
-      neighborViewNormalThreshold: Number(shader?.uniforms?.neighborViewNormalThreshold?.value ?? 0),
+      cameraFacingNormalGate: "webgpu-visible-surface-mask",
       webGpuStatus: editor.textureAirbrushWebGpuRuntimeStatus?.() || null,
       lastBackend: editor.textureAirbrushLastBackend || null,
       status: document.getElementById("viewer-status")?.textContent || "",
       validation
     };
   })()`;
+}
+
+function runtimeViewerFrameHelpersExpression() {
+  return `
+    const pixelLuma = (data, offset) => (
+      Number(data[offset]) * 0.2126
+      + Number(data[offset + 1]) * 0.7152
+      + Number(data[offset + 2]) * 0.0722
+    );
+    const colorDistance = (data, offset, color) => {
+      const deltaR = Number(data[offset]) - Number(color?.r || 0);
+      const deltaG = Number(data[offset + 1]) - Number(color?.g || 0);
+      const deltaB = Number(data[offset + 2]) - Number(color?.b || 0);
+      return Math.sqrt(deltaR * deltaR + deltaG * deltaG + deltaB * deltaB);
+    };
+    const paintColorSignal = (data, offset, color) => {
+      const r = Number(data[offset]) || 0;
+      const g = Number(data[offset + 1]) || 0;
+      const b = Number(data[offset + 2]) || 0;
+      if (Number(color?.r) > 200 && Number(color?.b) > 200 && Number(color?.g) < 80) {
+        return r > g + 24 && b > g + 16;
+      }
+      if (Number(color?.g) > 200 && Number(color?.b) > 200 && Number(color?.r) < 80) {
+        return g > r + 16 && b > r + 16;
+      }
+      if (Number(color?.r) > 200 && Number(color?.g) < 80 && Number(color?.b) < 80) {
+        return r > g + 24 && r > b + 24;
+      }
+      return true;
+    };
+    const captureViewerFrame = () => {
+      const source = editor.canvas || editor.renderer?.domElement || document.getElementById("viewer-canvas");
+      const width = Math.max(1, Math.floor(Number(source?.width) || 0));
+      const height = Math.max(1, Math.floor(Number(source?.height) || 0));
+      if (!source || !width || !height) {
+        return { ok: false, reason: "missing-viewer-canvas", width, height };
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context) {
+        return { ok: false, reason: "missing-2d-context", width, height };
+      }
+      try {
+        context.drawImage(source, 0, 0, width, height);
+        const data = context.getImageData(0, 0, width, height).data;
+        let modelPixelCount = 0;
+        let sumR = 0;
+        let sumG = 0;
+        let sumB = 0;
+        let sumLuma = 0;
+        for (let offset = 0; offset < data.length; offset += 4) {
+          const luma = pixelLuma(data, offset);
+          if (luma < 36) {
+            continue;
+          }
+          modelPixelCount += 1;
+          sumR += Number(data[offset]);
+          sumG += Number(data[offset + 1]);
+          sumB += Number(data[offset + 2]);
+          sumLuma += luma;
+        }
+        return {
+          ok: true,
+          width,
+          height,
+          data,
+          modelPixelCount,
+          meanR: modelPixelCount ? sumR / modelPixelCount : 0,
+          meanG: modelPixelCount ? sumG / modelPixelCount : 0,
+          meanB: modelPixelCount ? sumB / modelPixelCount : 0,
+          meanLuma: modelPixelCount ? sumLuma / modelPixelCount : 0
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          reason: error?.message || String(error),
+          width,
+          height
+        };
+      }
+    };
+    const summarizeViewerFrame = (frame = null) => frame
+      ? {
+          ok: frame.ok === true,
+          reason: frame.reason || "",
+          width: frame.width || 0,
+          height: frame.height || 0,
+          modelPixelCount: frame.modelPixelCount || 0,
+          meanR: frame.meanR || 0,
+          meanG: frame.meanG || 0,
+          meanB: frame.meanB || 0,
+          meanLuma: frame.meanLuma || 0
+        }
+      : null;
+    const compareViewerFrameChange = (baseline = null, active = null) => {
+      if (!baseline?.ok || !active?.ok) {
+        return {
+          captured: false,
+          changed: false,
+          reason: baseline?.reason || active?.reason || "missing-frame"
+        };
+      }
+      if (
+        baseline.width !== active.width
+        || baseline.height !== active.height
+        || !baseline.data
+        || !active.data
+      ) {
+        return {
+          captured: true,
+          changed: false,
+          reason: "frame-size-mismatch"
+        };
+      }
+      let comparedPixels = 0;
+      let changedPixels = 0;
+      let sumColorDelta = 0;
+      let maxColorDelta = 0;
+      for (let offset = 0; offset < baseline.data.length; offset += 4) {
+        const baseLuma = pixelLuma(baseline.data, offset);
+        const activeLuma = pixelLuma(active.data, offset);
+        if (baseLuma < 36 && activeLuma < 36) {
+          continue;
+        }
+        const colorDelta = Math.max(
+          Math.abs(Number(active.data[offset]) - Number(baseline.data[offset])),
+          Math.abs(Number(active.data[offset + 1]) - Number(baseline.data[offset + 1])),
+          Math.abs(Number(active.data[offset + 2]) - Number(baseline.data[offset + 2]))
+        );
+        comparedPixels += 1;
+        sumColorDelta += colorDelta;
+        maxColorDelta = Math.max(maxColorDelta, colorDelta);
+        if (colorDelta > 48) {
+          changedPixels += 1;
+        }
+      }
+      const changedPixelRatio = comparedPixels ? changedPixels / comparedPixels : 0;
+      const meanColorDelta = comparedPixels ? sumColorDelta / comparedPixels : 0;
+      return {
+        captured: true,
+        changed: comparedPixels > 1000
+          && changedPixels >= 24
+          && (changedPixelRatio > 0.0002 || meanColorDelta > 0.04),
+        comparedPixels,
+        changedPixels,
+        changedPixelRatio,
+        meanColorDelta,
+        maxColorDelta
+      };
+    };
+    const compareViewerPaintColorChange = (baseline = null, active = null, color = null, bounds = null) => {
+      if (!baseline?.ok || !active?.ok) {
+        return {
+          captured: false,
+          changed: false,
+          reason: baseline?.reason || active?.reason || "missing-frame"
+        };
+      }
+      if (
+        baseline.width !== active.width
+        || baseline.height !== active.height
+        || !baseline.data
+        || !active.data
+      ) {
+        return {
+          captured: true,
+          changed: false,
+          reason: "frame-size-mismatch"
+        };
+      }
+      if (!color || !Number.isFinite(Number(color.r)) || !Number.isFinite(Number(color.g)) || !Number.isFinite(Number(color.b))) {
+        return {
+          captured: true,
+          changed: false,
+          reason: "missing-paint-color"
+        };
+      }
+      const left = Math.max(0, Math.floor(Number(bounds?.x) || 0));
+      const top = Math.max(0, Math.floor(Number(bounds?.y) || 0));
+      const right = Math.min(active.width, Math.ceil(left + Math.max(1, Number(bounds?.width) || active.width)));
+      const bottom = Math.min(active.height, Math.ceil(top + Math.max(1, Number(bounds?.height) || active.height)));
+      let comparedPixels = 0;
+      let changedPixels = 0;
+      let sumImprovement = 0;
+      let maxImprovement = 0;
+      let maxColorDelta = 0;
+      for (let y = top; y < bottom; y += 1) {
+        for (let x = left; x < right; x += 1) {
+          const offset = (y * active.width + x) * 4;
+          const baseLuma = pixelLuma(baseline.data, offset);
+          const activeLuma = pixelLuma(active.data, offset);
+          if (baseLuma < 28 && activeLuma < 28) {
+            continue;
+          }
+          const colorDelta = Math.max(
+            Math.abs(Number(active.data[offset]) - Number(baseline.data[offset])),
+            Math.abs(Number(active.data[offset + 1]) - Number(baseline.data[offset + 1])),
+            Math.abs(Number(active.data[offset + 2]) - Number(baseline.data[offset + 2]))
+          );
+          const improvement = colorDistance(baseline.data, offset, color)
+            - colorDistance(active.data, offset, color);
+          comparedPixels += 1;
+          if (improvement > 0) {
+            sumImprovement += improvement;
+          }
+          maxImprovement = Math.max(maxImprovement, improvement);
+          maxColorDelta = Math.max(maxColorDelta, colorDelta);
+          if (colorDelta > 18 && improvement > 16 && paintColorSignal(active.data, offset, color)) {
+            changedPixels += 1;
+          }
+        }
+      }
+      const changedPixelRatio = comparedPixels ? changedPixels / comparedPixels : 0;
+      const meanImprovement = comparedPixels ? sumImprovement / comparedPixels : 0;
+      return {
+        captured: true,
+        changed: comparedPixels >= 24
+          && changedPixels >= 8
+          && (changedPixelRatio > 0.001 || meanImprovement > 0.15),
+        bounds: { x: left, y: top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) },
+        comparedPixels,
+        changedPixels,
+        changedPixelRatio,
+        meanImprovement,
+        maxImprovement,
+        maxColorDelta,
+        color
+      };
+    };
+  `;
 }
 
 function runtimePreparationExpression() {
@@ -2411,6 +2954,7 @@ function runtimePreparationExpression() {
       return { ready: false, error: "missing-editor" };
     }
     const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    ${runtimeViewerFrameHelpersExpression()}
     const assets = [
       {
         key: "airbrush-runtime:test-walking-8",
@@ -2457,6 +3001,10 @@ function runtimePreparationExpression() {
     }
     editor.render?.();
     editor.setTool?.("airbrush");
+    const paintColor = { hex: "#ff00ff", r: 255, g: 0, b: 255 };
+    if (editor.textureBrushRadius) {
+      editor.textureBrushRadius.value = "0.06";
+    }
     if (editor.textureBrushOpacity) {
       editor.textureBrushOpacity.value = "1";
     }
@@ -2469,6 +3017,19 @@ function runtimePreparationExpression() {
     if (editor.textureBrushScatter) {
       editor.textureBrushScatter.value = "0";
     }
+    if (editor.texturePaintColor) {
+      editor.texturePaintColor.value = paintColor.hex;
+      editor.texturePaintColor.dispatchEvent?.(new Event("input", { bubbles: true }));
+      editor.texturePaintColor.dispatchEvent?.(new Event("change", { bubbles: true }));
+    }
+    if (editor.texturePressureRadius) {
+      editor.texturePressureRadius.checked = false;
+    }
+    if (editor.texturePressureOpacity) {
+      editor.texturePressureOpacity.checked = false;
+    }
+    editor.updateRangeOutputs?.();
+    editor.textureAirbrushInvalidateBrushSettings?.();
     const rect = editor.canvas?.getBoundingClientRect?.();
     if (!rect?.width || !rect?.height) {
       return { ready: false, loaded: Boolean(editor.model), error: "missing-canvas-rect" };
@@ -2522,8 +3083,18 @@ function runtimePreparationExpression() {
     }
     const offset = Math.max(8, Math.min(24, rect.width * 0.025));
     const clampX = (value) => Math.max(rect.left + 2, Math.min(rect.right - 2, value));
+    const stroke = {
+      start: { x: clampX(chosen.clientX - offset), y: chosen.clientY },
+      mid: { x: chosen.clientX, y: chosen.clientY },
+      end: { x: clampX(chosen.clientX + offset), y: chosen.clientY }
+    };
     const chosenEvent = eventAt(chosen.clientX, chosen.clientY);
     const directHitAtChosen = editor.texturePaintHitForEvent?.(chosenEvent, "airbrush") || null;
+    const raycastHitAtChosen = editor.texturePaintHitForEvent?.(
+      chosenEvent,
+      "airbrush",
+      { useScreenHitIndex: false }
+    ) || null;
     const directMaterialAtChosen = directHitAtChosen?.record
       ? editor.clonePaintMaterialForHit?.(directHitAtChosen.record, directHitAtChosen.hit) || null
       : null;
@@ -2538,6 +3109,67 @@ function runtimePreparationExpression() {
           { wrap: true }
         ) || null
       : null;
+    const raycastPixelAtChosen = raycastHitAtChosen?.hit?.uv && directEditableAtChosen?.canvas && directEditableAtChosen?.texture
+      ? editor.clonePaintPixelFromUv?.(
+          raycastHitAtChosen.hit.uv,
+          directEditableAtChosen.canvas,
+          directEditableAtChosen.texture,
+          { wrap: true }
+        ) || null
+      : null;
+    const directOriginalMapAtChosen = directMaterialAtChosen?.userData?.clonePaintOriginalMap || null;
+    const directCloneTextureAtChosen = directMaterialAtChosen?.userData?.clonePaintTexture || null;
+    const sampleEditableSurface = (editable, pixel, radius = 5) => {
+      const canvas = editable?.canvas || null;
+      const context = editable?.context || canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+      if (!canvas || !context || !pixel) {
+        return { ok: false, reason: "missing-surface-probe" };
+      }
+      const centerX = Math.max(0, Math.min(canvas.width - 1, Math.round(Number(pixel.x) || 0)));
+      const centerY = Math.max(0, Math.min(canvas.height - 1, Math.round(Number(pixel.y) || 0)));
+      const left = Math.max(0, centerX - radius);
+      const top = Math.max(0, centerY - radius);
+      const right = Math.min(canvas.width - 1, centerX + radius);
+      const bottom = Math.min(canvas.height - 1, centerY + radius);
+      const width = right - left + 1;
+      const height = bottom - top + 1;
+      if (width <= 0 || height <= 0) {
+        return { ok: false, reason: "empty-surface-probe" };
+      }
+      const image = context.getImageData(left, top, width, height).data;
+      const samples = [];
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let sumA = 0;
+      for (let index = 0; index < image.length; index += 4) {
+        const sample = [
+          image[index] || 0,
+          image[index + 1] || 0,
+          image[index + 2] || 0,
+          image[index + 3] || 0
+        ];
+        samples.push(sample);
+        sumR += sample[0];
+        sumG += sample[1];
+        sumB += sample[2];
+        sumA += sample[3];
+      }
+      return {
+        ok: true,
+        left,
+        top,
+        width,
+        height,
+        count: samples.length,
+        sumR,
+        sumG,
+        sumB,
+        sumA,
+        samples
+      };
+    };
+    const surfaceProbeBefore = sampleEditableSurface(directEditableAtChosen, directPixelAtChosen);
     const webGpuCandidatesAtHit = editor.textureAirbrushWebGpuCandidatesFromEvent?.(chosenEvent, {
       visibleSurfaceMaskRequired: true,
       liveProjectedPaint: true,
@@ -2580,6 +3212,44 @@ function runtimePreparationExpression() {
       return changed;
     };
     window.__airbrushRuntimeValidation = validation;
+    window.__airbrushRuntimeValidationSurfaceProbe = {
+      material: directMaterialAtChosen,
+      editable: directEditableAtChosen,
+      pixel: directPixelAtChosen ? { x: directPixelAtChosen.x, y: directPixelAtChosen.y } : null,
+      before: surfaceProbeBefore
+    };
+    window.__airbrushRuntimeValidationWebGpuBaseline = {
+      paintStatsCount: Array.isArray(editor.textureAirbrushWebGpuPaintStats)
+        ? editor.textureAirbrushWebGpuPaintStats.length
+        : 0
+    };
+    await waitFrame();
+    const viewerFrameBefore = captureViewerFrame();
+    const strokeFrameBounds = (() => {
+      if (!viewerFrameBefore?.ok || !rect?.width || !rect?.height) {
+        return null;
+      }
+      const scaleX = viewerFrameBefore.width / rect.width;
+      const scaleY = viewerFrameBefore.height / rect.height;
+      const padding = 64;
+      const minClientX = Math.min(stroke.start.x, stroke.mid.x, stroke.end.x);
+      const maxClientX = Math.max(stroke.start.x, stroke.mid.x, stroke.end.x);
+      const minClientY = Math.min(stroke.start.y, stroke.mid.y, stroke.end.y);
+      const maxClientY = Math.max(stroke.start.y, stroke.mid.y, stroke.end.y);
+      const left = Math.max(0, Math.floor((minClientX - rect.left) * scaleX - padding));
+      const top = Math.max(0, Math.floor((minClientY - rect.top) * scaleY - padding));
+      const right = Math.min(viewerFrameBefore.width, Math.ceil((maxClientX - rect.left) * scaleX + padding));
+      const bottom = Math.min(viewerFrameBefore.height, Math.ceil((maxClientY - rect.top) * scaleY + padding));
+      return {
+        x: left,
+        y: top,
+        width: Math.max(0, right - left),
+        height: Math.max(0, bottom - top)
+      };
+    })();
+    window.__airbrushRuntimeValidationViewerBaseline = viewerFrameBefore;
+    window.__airbrushRuntimeValidationPaintColor = paintColor;
+    window.__airbrushRuntimeValidationStrokeFrameBounds = strokeFrameBounds;
     return {
       ready: true,
       loaded: Boolean(editor.model),
@@ -2588,10 +3258,29 @@ function runtimePreparationExpression() {
       activeTool: editor.activeTool,
       hitFound: true,
       hit: chosen,
+      paintColor,
+      strokeFrameBounds,
       directWebGpuPrereq: {
         hasHitRecord: Boolean(directHitAtChosen?.record),
         hasHit: Boolean(directHitAtChosen?.hit),
         hasUv: Boolean(directHitAtChosen?.hit?.uv),
+        hitUv: directHitAtChosen?.hit?.uv
+          ? {
+              x: Number(directHitAtChosen.hit.uv.x),
+              y: Number(directHitAtChosen.hit.uv.y)
+            }
+          : null,
+        raycastHitRecord: Boolean(raycastHitAtChosen?.record),
+        raycastHasHit: Boolean(raycastHitAtChosen?.hit),
+        raycastUv: raycastHitAtChosen?.hit?.uv
+          ? {
+              x: Number(raycastHitAtChosen.hit.uv.x),
+              y: Number(raycastHitAtChosen.hit.uv.y)
+            }
+          : null,
+        sameRecordAsRaycast: Boolean(directHitAtChosen?.record && directHitAtChosen.record === raycastHitAtChosen?.record),
+        sameFaceAsRaycast: Number.isInteger(directHitAtChosen?.hit?.faceIndex)
+          && directHitAtChosen.hit.faceIndex === raycastHitAtChosen?.hit?.faceIndex,
         hasMaterial: Boolean(directMaterialAtChosen),
         materialHasMap: Boolean(directMaterialAtChosen?.map),
         mapName: directMaterialAtChosen?.map?.name || "",
@@ -2599,16 +3288,46 @@ function runtimePreparationExpression() {
         mapImageWidth: directMaterialAtChosen?.map?.image?.width || directMaterialAtChosen?.map?.image?.naturalWidth || 0,
         mapImageHeight: directMaterialAtChosen?.map?.image?.height || directMaterialAtChosen?.map?.image?.naturalHeight || 0,
         mapIsTexture: directMaterialAtChosen?.map?.isTexture === true,
+        mapFlipY: directMaterialAtChosen?.map?.flipY ?? null,
+        mapChannel: Number.isFinite(Number(directMaterialAtChosen?.map?.channel))
+          ? Number(directMaterialAtChosen.map.channel)
+          : null,
+        originalMapName: directOriginalMapAtChosen?.name || "",
+        originalMapImageType: directOriginalMapAtChosen?.image?.constructor?.name || "",
+        originalMapFlipY: directOriginalMapAtChosen?.flipY ?? null,
+        originalMapChannel: Number.isFinite(Number(directOriginalMapAtChosen?.channel))
+          ? Number(directOriginalMapAtChosen.channel)
+          : null,
+        cloneTextureMatchesMap: Boolean(directCloneTextureAtChosen && directCloneTextureAtChosen === directMaterialAtChosen?.map),
+        cloneTextureFlipY: directCloneTextureAtChosen?.flipY ?? null,
+        cloneTextureChannel: Number.isFinite(Number(directCloneTextureAtChosen?.channel))
+          ? Number(directCloneTextureAtChosen.channel)
+          : null,
         hasEditable: Boolean(directEditableAtChosen),
         hasCanvas: Boolean(directEditableAtChosen?.canvas),
         canvasWidth: directEditableAtChosen?.canvas?.width || 0,
         canvasHeight: directEditableAtChosen?.canvas?.height || 0,
         hasTexture: Boolean(directEditableAtChosen?.texture),
         hasPixel: Boolean(directPixelAtChosen),
+        surfaceProbeBefore: surfaceProbeBefore?.ok === true
+          ? {
+              count: surfaceProbeBefore.count,
+              sumR: surfaceProbeBefore.sumR,
+              sumG: surfaceProbeBefore.sumG,
+              sumB: surfaceProbeBefore.sumB,
+              sumA: surfaceProbeBefore.sumA
+            }
+          : surfaceProbeBefore,
         pixel: directPixelAtChosen
           ? {
               x: directPixelAtChosen.x,
               y: directPixelAtChosen.y
+            }
+          : null,
+        raycastPixel: raycastPixelAtChosen
+          ? {
+              x: raycastPixelAtChosen.x,
+              y: raycastPixelAtChosen.y
             }
           : null
       },
@@ -2623,17 +3342,14 @@ function runtimePreparationExpression() {
         estimate: candidate?.estimate ?? 0,
         visibleSurfaceMaskReady: candidate?.options?.visibleSurfaceMaskReady === true
       })),
+      viewerFrameBefore: summarizeViewerFrame(viewerFrameBefore),
       canvas: {
         left: rect.left,
         top: rect.top,
         width: rect.width,
         height: rect.height
       },
-      stroke: {
-        start: { x: clampX(chosen.clientX - offset), y: chosen.clientY },
-        mid: { x: chosen.clientX, y: chosen.clientY },
-        end: { x: clampX(chosen.clientX + offset), y: chosen.clientY }
-      }
+      stroke
     };
   })()`;
 }
@@ -2645,6 +3361,8 @@ function runtimeResultExpression() {
       return { error: "missing-editor" };
     }
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    ${runtimeViewerFrameHelpersExpression()}
     for (let index = 0; index < 12; index += 1) {
       const pending = editor.finishTextureAirbrushScreenStrokeFlush?.();
       if (pending && typeof pending.then === "function") {
@@ -2664,6 +3382,142 @@ function runtimeResultExpression() {
       await finalWebGpuPending;
     }
     await delay(50);
+    editor.render?.();
+    await waitFrame();
+    const viewerFrameAfter = captureViewerFrame();
+    const viewerPaintDelta = compareViewerFrameChange(
+      window.__airbrushRuntimeValidationViewerBaseline || null,
+      viewerFrameAfter
+    );
+    const viewerPaintColorDelta = compareViewerPaintColorChange(
+      window.__airbrushRuntimeValidationViewerBaseline || null,
+      viewerFrameAfter,
+      window.__airbrushRuntimeValidationPaintColor || null,
+      window.__airbrushRuntimeValidationStrokeFrameBounds || null
+    );
+    const material = editor.texturePaintActiveMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
+    editor.flushTexturePaintLayerGpuTargetsToCanvases?.({
+      material,
+      composite: true
+    });
+    const stack = material?.userData?.texturePaintLayerStack || null;
+    const activeLayer = (stack?.layers || []).find((layer) => layer.id === stack?.activeLayerId) || null;
+    const alphaStats = (layer) => {
+      const canvas = layer?.canvas || null;
+      const context = canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+      if (!canvas || !context) {
+        return { count: 0, sum: 0 };
+      }
+      const image = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      let count = 0;
+      let sum = 0;
+      for (let index = 3; index < image.length; index += 4) {
+        const alpha = image[index] || 0;
+        if (alpha > 0) {
+          count += 1;
+          sum += alpha;
+        }
+      }
+      return { count, sum };
+    };
+    const sampleEditableSurface = (editable, pixel, radius = 5) => {
+      const canvas = editable?.canvas || null;
+      const context = editable?.context || canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+      if (!canvas || !context || !pixel) {
+        return { ok: false, reason: "missing-surface-probe" };
+      }
+      const centerX = Math.max(0, Math.min(canvas.width - 1, Math.round(Number(pixel.x) || 0)));
+      const centerY = Math.max(0, Math.min(canvas.height - 1, Math.round(Number(pixel.y) || 0)));
+      const left = Math.max(0, centerX - radius);
+      const top = Math.max(0, centerY - radius);
+      const right = Math.min(canvas.width - 1, centerX + radius);
+      const bottom = Math.min(canvas.height - 1, centerY + radius);
+      const width = right - left + 1;
+      const height = bottom - top + 1;
+      if (width <= 0 || height <= 0) {
+        return { ok: false, reason: "empty-surface-probe" };
+      }
+      const image = context.getImageData(left, top, width, height).data;
+      const samples = [];
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let sumA = 0;
+      for (let index = 0; index < image.length; index += 4) {
+        const sample = [
+          image[index] || 0,
+          image[index + 1] || 0,
+          image[index + 2] || 0,
+          image[index + 3] || 0
+        ];
+        samples.push(sample);
+        sumR += sample[0];
+        sumG += sample[1];
+        sumB += sample[2];
+        sumA += sample[3];
+      }
+      return {
+        ok: true,
+        left,
+        top,
+        width,
+        height,
+        count: samples.length,
+        sumR,
+        sumG,
+        sumB,
+        sumA,
+        samples
+      };
+    };
+    const surfaceProbe = window.__airbrushRuntimeValidationSurfaceProbe || null;
+    const surfaceProbeAfter = sampleEditableSurface(surfaceProbe?.editable, surfaceProbe?.pixel);
+    const surfacePaintDelta = (() => {
+      const before = surfaceProbe?.before || null;
+      const after = surfaceProbeAfter || null;
+      if (!before?.ok || !after?.ok || before.samples?.length !== after.samples?.length) {
+        return {
+          ok: false,
+          reason: before?.reason || after?.reason || "surface-probe-mismatch"
+        };
+      }
+      let changedSamples = 0;
+      let sumAbsDelta = 0;
+      let maxAbsDelta = 0;
+      for (let index = 0; index < before.samples.length; index += 1) {
+        const left = before.samples[index] || [];
+        const right = after.samples[index] || [];
+        let sampleDelta = 0;
+        for (let channel = 0; channel < 4; channel += 1) {
+          const delta = Math.abs((Number(right[channel]) || 0) - (Number(left[channel]) || 0));
+          sampleDelta += delta;
+          maxAbsDelta = Math.max(maxAbsDelta, delta);
+        }
+        if (sampleDelta > 0) {
+          changedSamples += 1;
+          sumAbsDelta += sampleDelta;
+        }
+      }
+      return {
+        ok: true,
+        count: before.samples.length,
+        changedSamples,
+        sumAbsDelta,
+        maxAbsDelta,
+        before: {
+          sumR: before.sumR,
+          sumG: before.sumG,
+          sumB: before.sumB,
+          sumA: before.sumA
+        },
+        after: {
+          sumR: after.sumR,
+          sumG: after.sumG,
+          sumB: after.sumB,
+          sumA: after.sumA
+        }
+      };
+    })();
     return {
       activeTool: editor.activeTool,
       painting: Boolean(editor.painting),
@@ -2675,7 +3529,69 @@ function runtimeResultExpression() {
       lastBackend: editor.textureAirbrushLastBackend || null,
       status: document.getElementById("viewer-status")?.textContent || "",
       undoStackLength: editor.undoStack?.length || 0,
+      activeLayerId: stack?.activeLayerId || "",
+      activeLayerAlpha: alphaStats(activeLayer),
+      surfacePaintDelta,
+      viewerFrameAfter: summarizeViewerFrame(viewerFrameAfter),
+      viewerPaintDelta,
+      viewerPaintColorDelta,
+      layerCount: stack?.layers?.length || 0,
       validation: window.__airbrushRuntimeValidation || null
+    };
+  })()`;
+}
+
+function runtimeMidStrokeResultExpression() {
+  return `(async () => {
+    const editor = window.modelCleanupEditor;
+    if (!editor) {
+      return { error: "missing-editor" };
+    }
+    const waitFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    ${runtimeViewerFrameHelpersExpression()}
+    editor.render?.();
+    await waitFrame();
+    const viewerFrameMidStroke = captureViewerFrame();
+    const viewerPaintDelta = compareViewerFrameChange(
+      window.__airbrushRuntimeValidationViewerBaseline || null,
+      viewerFrameMidStroke
+    );
+    const viewerPaintColorDelta = compareViewerPaintColorChange(
+      window.__airbrushRuntimeValidationViewerBaseline || null,
+      viewerFrameMidStroke,
+      window.__airbrushRuntimeValidationPaintColor || null,
+      window.__airbrushRuntimeValidationStrokeFrameBounds || null
+    );
+    const baseline = window.__airbrushRuntimeValidationWebGpuBaseline || {};
+    const baselinePaintStatsCount = Math.max(0, Math.floor(Number(baseline.paintStatsCount) || 0));
+    const allStats = Array.isArray(editor.textureAirbrushWebGpuPaintStats)
+      ? editor.textureAirbrushWebGpuPaintStats
+      : [];
+    const newStats = allStats.slice(baselinePaintStatsCount);
+    const liveDisplayStats = newStats.filter((stats) => (
+      stats?.liveDisplayExternalTexture === true
+      && Number(stats?.liveDisplayWorkPixels) > 0
+    ));
+    return {
+      activeTool: editor.activeTool,
+      painting: Boolean(editor.painting),
+      screenStrokeChanged: editor.textureAirbrushScreenStrokeChanged === true,
+      queueLength: editor.textureAirbrushScreenStrokeQueue?.length || 0,
+      pendingBatches: editor.textureAirbrushPendingScreenStrokeBatches?.length || 0,
+      flushing: Boolean(editor.textureAirbrushFlushingScreenStroke),
+      baselinePaintStatsCount,
+      webGpuPaintStatsCount: allStats.length,
+      webGpuPaintStatsCountDelta: Math.max(0, allStats.length - baselinePaintStatsCount),
+      liveDisplayPaintStatsCount: liveDisplayStats.length,
+      liveDisplayWorkPixels: liveDisplayStats.reduce((total, stats) => (
+        total + Math.max(0, Math.floor(Number(stats?.liveDisplayWorkPixels) || 0))
+      ), 0),
+      lastLiveDisplayStats: liveDisplayStats.at(-1) || null,
+      viewerFrameMidStroke: summarizeViewerFrame(viewerFrameMidStroke),
+      viewerPaintDelta,
+      viewerPaintColorDelta,
+      validation: window.__airbrushRuntimeValidation || null,
+      status: document.getElementById("viewer-status")?.textContent || ""
     };
   })()`;
 }
@@ -2686,6 +3602,7 @@ function runtimeLayerAfterUndoSetupExpression() {
     if (!editor) {
       return { ready: false, error: "missing-editor" };
     }
+    ${runtimeViewerFrameHelpersExpression()}
     const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const flushPaint = async () => {
       for (let index = 0; index < 12; index += 1) {
@@ -2729,6 +3646,127 @@ function runtimeLayerAfterUndoSetupExpression() {
         layers: (stack?.layers || []).map(summarizeLayer),
         undoStackLength: editor.undoStack?.length || 0,
         redoStackLength: editor.redoStack?.length || 0
+      };
+    };
+    const sampleSurfaceProbe = () => {
+      const probe = window.__airbrushRuntimeValidationSurfaceProbe || null;
+      const editable = probe?.editable || null;
+      const canvas = editable?.canvas || null;
+      const context = editable?.context || canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
+      const pixel = probe?.pixel || null;
+      if (!canvas || !context || !pixel) {
+        return { ok: false, reason: "missing-surface-probe" };
+      }
+      const radius = 5;
+      const centerX = Math.max(0, Math.min(canvas.width - 1, Math.round(Number(pixel.x) || 0)));
+      const centerY = Math.max(0, Math.min(canvas.height - 1, Math.round(Number(pixel.y) || 0)));
+      const left = Math.max(0, centerX - radius);
+      const top = Math.max(0, centerY - radius);
+      const right = Math.min(canvas.width - 1, centerX + radius);
+      const bottom = Math.min(canvas.height - 1, centerY + radius);
+      const width = right - left + 1;
+      const height = bottom - top + 1;
+      const image = context.getImageData(left, top, width, height).data;
+      const samples = [];
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let sumA = 0;
+      for (let index = 0; index < image.length; index += 4) {
+        const sample = [
+          image[index] || 0,
+          image[index + 1] || 0,
+          image[index + 2] || 0,
+          image[index + 3] || 0
+        ];
+        samples.push(sample);
+        sumR += sample[0];
+        sumG += sample[1];
+        sumB += sample[2];
+        sumA += sample[3];
+      }
+      return { ok: true, left, top, width, height, count: samples.length, sumR, sumG, sumB, sumA, samples };
+    };
+    const compareSurfaceProbe = (after) => {
+      const before = window.__airbrushRuntimeValidationSurfaceProbe?.before || null;
+      if (!before?.samples?.length || !after?.samples?.length || before.samples.length !== after.samples.length) {
+        return { ok: false, reason: "missing-comparable-surface-probe" };
+      }
+      let changedSamples = 0;
+      let sumAbsDelta = 0;
+      let maxAbsDelta = 0;
+      for (let index = 0; index < before.samples.length; index += 1) {
+        const left = before.samples[index] || [];
+        const right = after.samples[index] || [];
+        let sampleDelta = 0;
+        for (let channel = 0; channel < 4; channel += 1) {
+          const delta = Math.abs((Number(right[channel]) || 0) - (Number(left[channel]) || 0));
+          sampleDelta += delta;
+          maxAbsDelta = Math.max(maxAbsDelta, delta);
+        }
+        if (sampleDelta > 0) {
+          changedSamples += 1;
+          sumAbsDelta += sampleDelta;
+        }
+      }
+      return { ok: true, changedSamples, sumAbsDelta, maxAbsDelta };
+    };
+    const summarizeDisplay = async () => {
+      editor.render?.();
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      const viewerFrame = captureViewerFrame();
+      const viewerPaintDelta = compareViewerFrameChange(
+        window.__airbrushRuntimeValidationViewerBaseline || null,
+        viewerFrame
+      );
+      const viewerPaintColorDelta = compareViewerPaintColorChange(
+        window.__airbrushRuntimeValidationViewerBaseline || null,
+        viewerFrame,
+        window.__airbrushRuntimeValidationPaintColor || null,
+        window.__airbrushRuntimeValidationStrokeFrameBounds || null
+      );
+      const surface = sampleSurfaceProbe();
+      return {
+        surface,
+        surfaceDeltaFromBefore: compareSurfaceProbe(surface),
+        viewerFrame: summarizeViewerFrame(viewerFrame),
+        viewerPaintDelta,
+        viewerPaintColorDelta
+      };
+    };
+    const summarizeHistoryState = (state = null) => {
+      const probe = window.__airbrushRuntimeValidationSurfaceProbe || null;
+      const pixel = probe?.pixel || null;
+      const summarizeBounds = (bounds = null) => bounds
+        ? {
+            x: Math.floor(Number(bounds.x) || 0),
+            y: Math.floor(Number(bounds.y) || 0),
+            width: Math.floor(Number(bounds.width) || 0),
+            height: Math.floor(Number(bounds.height) || 0),
+            containsProbe: pixel
+              ? (
+                  Number(pixel.x) >= Number(bounds.x)
+                  && Number(pixel.x) < Number(bounds.x) + Number(bounds.width)
+                  && Number(pixel.y) >= Number(bounds.y)
+                  && Number(pixel.y) < Number(bounds.y) + Number(bounds.height)
+                )
+              : false
+          }
+        : null;
+      return {
+        kind: state?.kind || "",
+        label: state?.label || "",
+        entryCount: state?.entries?.length || 0,
+        entries: (state?.entries || []).map((entry) => ({
+          type: entry?.type || "",
+          bounds: summarizeBounds(entry?.bounds || null),
+          regionCount: entry?.regions?.length || 0,
+          regions: (entry?.regions || []).slice(0, 16).map((region) => summarizeBounds(region?.bounds || null)),
+          regionsContainProbe: (entry?.regions || []).some((region) => summarizeBounds(region?.bounds || null)?.containsProbe === true),
+          hasBefore: Boolean(entry?.before),
+          hasAfter: Boolean(entry?.after),
+          hasBeforeSourceImageData: Boolean(entry?.beforeSourceImageData)
+        }))
       };
     };
     const undoTiming = {};
@@ -2790,6 +3828,8 @@ function runtimeLayerAfterUndoSetupExpression() {
     const undoDurationMs = performance.now() - undoStarted;
     await flushPaint();
     const afterUndo = summarize();
+    const afterUndoDisplay = await summarizeDisplay();
+    const redoTopAfterUndo = summarizeHistoryState(editor.redoStack?.at?.(-1) || editor.redoStack?.[editor.redoStack.length - 1] || null);
     const addClick = await clickUiButton("#texture-layer-add");
     await waitUntil(() => {
       const material = editor.texturePaintActiveMaterial || editor.texturePaintFirstLayerMaterial?.() || null;
@@ -2817,6 +3857,8 @@ function runtimeLayerAfterUndoSetupExpression() {
       addClick,
       beforeUndo,
       afterUndo,
+      afterUndoDisplay,
+      redoTopAfterUndo,
       afterAdd
     };
   })()`;

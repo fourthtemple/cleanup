@@ -1,20 +1,22 @@
-import "./texture-airbrush-projected-paint/region-and-prewarm.mjs";
-import "./texture-airbrush-projected-paint/layer-live-composite.mjs";
-import "./texture-airbrush-projected-paint/layer-underlay-fast-path.mjs";
-import "./texture-airbrush-projected-paint/layer-prewarm-scheduling.mjs";
-import "./texture-airbrush-projected-paint/brush-setting-invalidation.mjs";
-import "./texture-airbrush-projected-paint/projection-frame.mjs";
-import "./texture-airbrush-projected-paint/projection-cache.mjs";
-import "./texture-airbrush-projected-paint/projection-continuous-rendering.mjs";
-import "./texture-airbrush-projected-paint/projection-after-orbit-partial-cache.mjs";
-import "./texture-airbrush-projected-paint/layer-gpu-projection.mjs";
-import "./texture-airbrush-projected-paint/layer-projection-fast-paths.mjs";
-import "./texture-airbrush-projected-paint/pointer-and-flush-foundations.mjs";
-import "./texture-airbrush-projected-paint/neighbor-paint.mjs";
-import "./texture-airbrush-projected-paint/screen-queue-cached-start.mjs";
-import "./texture-airbrush-projected-paint/screen-after-orbit-discovery.mjs";
-import "./texture-airbrush-projected-paint/pressure-and-curves.mjs";
-import "./texture-airbrush-projected-paint/live-flush-budget.mjs";
-import "./texture-airbrush-projected-paint/scheduled-layer-flush.mjs";
-import "./texture-airbrush-projected-paint/reset-layer-budget.mjs";
-import "./texture-airbrush-projected-paint/cpu-and-fallbacks.mjs";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import test from "node:test";
+
+const root = new URL("..", import.meta.url).pathname;
+
+function readSource(path) {
+  return readFileSync(join(root, path), "utf8");
+}
+
+test("legacy projected/WebGL airbrush aggregate has been retired from the default suite", () => {
+  const installSource = readSource("src/weight-editor/airbrush/install.js");
+  const indexSource = readSource("src/weight-editor/airbrush/index.js");
+  const projectedWrapperSource = readSource("src/weight-editor/airbrush/projected-paint.js");
+
+  assert.doesNotMatch(installSource, /webgl-backend|webgl-materials|webgl-project/i);
+  assert.doesNotMatch(indexSource, /webgl-backend|webgl-materials|webgl-project/i);
+  assert.match(installSource, /installTextureAirbrushVisibleSurfacePaintMethods/);
+  assert.match(projectedWrapperSource, /visible-surface-paint/);
+  assert.doesNotMatch(projectedWrapperSource, /textureAirbrushGpuProjectFromEvent/);
+});

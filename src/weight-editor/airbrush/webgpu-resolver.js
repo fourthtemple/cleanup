@@ -1,43 +1,14 @@
 export const TEXTURE_AIRBRUSH_WEBGPU_QUERY_PARAM = "webgpu-airbrush";
 export const TEXTURE_AIRBRUSH_WEBGPU_RENDERER_QUERY_PARAM = "webgpu-renderer";
 
-const TRUE_QUERY_VALUES = new Set(["1", "true", "yes", "on"]);
-const FALSE_QUERY_VALUES = new Set(["0", "false", "no", "off"]);
-
-function queryFlagValue(search, keys = [], defaultValue = false) {
-  const params = new URLSearchParams(String(search || "").replace(/^\?/, ""));
-  for (const key of keys) {
-    if (!params.has(key)) {
-      continue;
-    }
-    const value = String(params.get(key) || "").trim().toLowerCase();
-    if (TRUE_QUERY_VALUES.has(value)) {
-      return true;
-    }
-    if (FALSE_QUERY_VALUES.has(value)) {
-      return false;
-    }
-  }
-  return defaultValue;
-}
-
 export function textureAirbrushWebGpuRequestedFromSearch(search = "") {
-  // Prefer the WebGPU compute path when it is safe for the requested operation.
-  // Live projected airbrush still passes visibleSurfaceMaskRequired so the
-  // unmasked texture kernel cannot paint hidden/non-visible UV islands.
-  return queryFlagValue(search, [
-    TEXTURE_AIRBRUSH_WEBGPU_QUERY_PARAM,
-    "airbrush-webgpu"
-  ], true);
+  void search;
+  return true;
 }
 
 export function textureAirbrushWebGpuRendererRequestedFromSearch(search = "") {
-  // WebGPU is the primary renderer now. Keep the query flag only as an escape
-  // hatch for browser or driver failures: ?webgpu-renderer=0 uses WebGL compat.
-  return queryFlagValue(search, [
-    TEXTURE_AIRBRUSH_WEBGPU_RENDERER_QUERY_PARAM,
-    "renderer-webgpu"
-  ], true);
+  void search;
+  return true;
 }
 
 export function textureAirbrushNativeWebGpuAvailable(scope = globalThis) {
@@ -48,38 +19,32 @@ export function textureAirbrushRendererWebGpuState(renderer = null) {
   const backend = renderer?.backend || null;
   return {
     isWebGpuRenderer: renderer?.isWebGPURenderer === true,
-    isNativeWebGpuBackend: backend?.isWebGPUBackend === true && backend?.isWebGLBackend !== true,
-    isWebGlFallbackBackend: backend?.isWebGLBackend === true
+    isNativeWebGpuBackend: backend?.isWebGPUBackend === true
   };
 }
 
 export function resolveTextureAirbrushRendererMode({
-  preferWebGpuRenderer = false,
+  preferWebGpuRenderer = true,
   webGpuAvailable = false,
   WebGPURenderer = null,
   webGpuRendererDisabled = false
 } = {}) {
-  if (!preferWebGpuRenderer) {
-    return {
-      renderer: "webgl",
-      webGpuRendererStatus: "not-requested"
-    };
-  }
+  void preferWebGpuRenderer;
   if (webGpuRendererDisabled) {
     return {
-      renderer: "webgl",
+      renderer: "none",
       webGpuRendererStatus: "disabled"
     };
   }
   if (!webGpuAvailable) {
     return {
-      renderer: "webgl",
+      renderer: "none",
       webGpuRendererStatus: "unavailable"
     };
   }
   if (typeof WebGPURenderer !== "function") {
     return {
-      renderer: "webgl",
+      renderer: "none",
       webGpuRendererStatus: "renderer-class-unavailable"
     };
   }
@@ -90,61 +55,47 @@ export function resolveTextureAirbrushRendererMode({
 }
 
 export function resolveTextureAirbrushBackend({
-  preferWebGpu = false,
+  preferWebGpu = true,
   webGpuAvailable = false,
   renderer = null,
   webGpuDisabled = false,
-  webGlDisabled = false,
   visibleSurfaceMaskRequired = false,
   visibleSurfaceMaskReady = false
 } = {}) {
+  void preferWebGpu;
   const rendererState = textureAirbrushRendererWebGpuState(renderer);
-  if (preferWebGpu) {
-    if (visibleSurfaceMaskRequired && !visibleSurfaceMaskReady) {
-      const webGlProjectionAvailable = webGlDisabled !== true
-        && (
-          !rendererState.isWebGpuRenderer
-          || renderer?.isWebGLRenderer === true
-          || rendererState.isWebGlFallbackBackend === true
-        );
-      return {
-        backend: webGlProjectionAvailable ? "webgl" : "none",
-        webGpuStatus: webGlProjectionAvailable
-          ? "visible-surface-mask-required"
-          : "visible-surface-mask-unavailable"
-      };
-    }
-    if (webGpuDisabled) {
-      return {
-        backend: webGlDisabled ? "cpu" : "webgl",
-        webGpuStatus: "disabled"
-      };
-    }
-    if (!webGpuAvailable) {
-      return {
-        backend: webGlDisabled ? "cpu" : "webgl",
-        webGpuStatus: "unavailable"
-      };
-    }
-    if (!rendererState.isWebGpuRenderer) {
-      return {
-        backend: webGlDisabled ? "cpu" : "webgl",
-        webGpuStatus: "needs-webgpu-renderer"
-      };
-    }
-    if (!rendererState.isNativeWebGpuBackend) {
-      return {
-        backend: webGlDisabled ? "cpu" : "webgl",
-        webGpuStatus: rendererState.isWebGlFallbackBackend ? "renderer-webgl-fallback" : "backend-uninitialized"
-      };
-    }
+  if (visibleSurfaceMaskRequired && !visibleSurfaceMaskReady) {
     return {
-      backend: "webgpu",
-      webGpuStatus: "ready"
+      backend: "none",
+      webGpuStatus: "visible-surface-mask-unavailable"
+    };
+  }
+  if (webGpuDisabled) {
+    return {
+      backend: "none",
+      webGpuStatus: "disabled"
+    };
+  }
+  if (!webGpuAvailable) {
+    return {
+      backend: "none",
+      webGpuStatus: "unavailable"
+    };
+  }
+  if (!rendererState.isWebGpuRenderer) {
+    return {
+      backend: "none",
+      webGpuStatus: "needs-webgpu-renderer"
+    };
+  }
+  if (!rendererState.isNativeWebGpuBackend) {
+    return {
+      backend: "none",
+      webGpuStatus: "native-webgpu-required"
     };
   }
   return {
-    backend: webGlDisabled ? "cpu" : "webgl",
-    webGpuStatus: "not-requested"
+    backend: "webgpu",
+    webGpuStatus: "ready"
   };
 }

@@ -19,18 +19,18 @@ function animationLibraryActionIdFromFileName(value) {
 const BUILT_IN_DEMO_LIBRARY_FOLDER = Object.freeze({
   name: "cat",
   label: "Cat Demo",
-  path: "assets/models/animation-library/cat",
+  path: "assets/models/animation-library/etes",
   files: Object.freeze([
     Object.freeze({
-      key: "built-in-demo:humanoid-cat-walking",
-      name: "humanoid-cat-walking.fbx",
+      key: "built-in-demo:walking-8",
+      name: "walking-8.fbx",
       label: "humanoid-cat-walking",
       extension: "fbx",
       folder: "cat",
-      path: "assets/models/animation-library/cat/humanoid-cat-walking.fbx",
-      url: "./assets/models/animation-library/cat/humanoid-cat-walking.fbx",
-      cleanupFile: "humanoid-cat-walking-weight-patch.json",
-      cleanupPath: "assets/models/animation-library/cat/humanoid-cat-walking-weight-patch.json",
+      path: "assets/models/animation-library/etes/walking-8.fbx",
+      url: "./assets/models/animation-library/etes/walking-8.fbx",
+      cleanupFile: "walking-8-weight-patch.json",
+      cleanupPath: "assets/models/animation-library/etes/walking-8-weight-patch.json",
       engine: true,
       demo: true
     })
@@ -45,7 +45,7 @@ function builtInDemoLibraryFolder({ includeFiles = true, folderName = BUILT_IN_D
     files: includeFiles
       ? BUILT_IN_DEMO_LIBRARY_FOLDER.files.map((file) => ({
         ...file,
-        key: `built-in-demo:${folderName}:humanoid-cat-walking`,
+        key: `built-in-demo:${folderName}:walking-8`,
         folder: folderName
       }))
       : []
@@ -787,7 +787,7 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       if (requested === "") {
         return "";
       }
-      if (this.tutorialSessionActive || this.tutorialDrawerOpen) {
+      if (this.tutorialSessionActive || this.tutorialDrawerOpen || this.tutorialReproMacroActive) {
         return requested || "cat";
       }
       return "";
@@ -939,7 +939,17 @@ export function installAnimationLibraryMethods(BirdWeightEditor) {
       if (this.tutorialDemoAnimationLibraryName() !== normalized) {
         return false;
       }
-      if (this.model || this.activeClipEntry) {
+      if (
+        this.model
+        && (this.paintRecords || []).some((record) => {
+          const geometry = record?.geometry || record?.object?.geometry || null;
+          return Boolean(
+            record?.object
+            && geometry?.attributes?.position
+            && geometry?.attributes?.uv
+          );
+        })
+      ) {
         return true;
       }
       const imported = await this.ensureTutorialDemoAnimationLibraryFile?.(demoName);

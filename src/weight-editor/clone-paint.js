@@ -21,6 +21,12 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
     };
   }
 
+  function editableTextureFlipYForSource(sourceTexture = null) {
+    return sourceTexture?.image?.constructor?.name === "ImageBitmap"
+      ? false
+      : sourceTexture?.flipY ?? false;
+  }
+
   function clampByte(value) {
     return Math.max(0, Math.min(255, Math.round(value)));
   }
@@ -1464,10 +1470,13 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
       }
       material.userData ||= {};
       if (material.userData?.clonePaintCanvas && material.userData?.clonePaintContext) {
+        const displayReferenceTexture = material.userData.textureAirbrushWebGpuCanvasMap
+          || material.map?.userData?.textureAirbrushWebGpuCanvasMap
+          || null;
         const editable = {
           canvas: material.userData.clonePaintCanvas,
           context: material.userData.clonePaintContext,
-          texture: material.userData.clonePaintTexture || material.map
+          texture: material.userData.clonePaintTexture || displayReferenceTexture || material.map
         };
         return this.texturePaintEditableLayerTarget?.(material, editable) || editable;
       }
@@ -1483,6 +1492,9 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
           } else {
             texture.colorSpace = gpuEntry.target.texture.colorSpace || THREE.SRGBColorSpace;
             texture.flipY = gpuEntry.target.texture.flipY ?? false;
+            if ("channel" in gpuEntry.target.texture) {
+              texture.channel = gpuEntry.target.texture.channel;
+            }
             texture.wrapS = gpuEntry.target.texture.wrapS || THREE.ClampToEdgeWrapping;
             texture.wrapT = gpuEntry.target.texture.wrapT || THREE.ClampToEdgeWrapping;
             texture.magFilter = gpuEntry.target.texture.magFilter || THREE.LinearFilter;
@@ -1507,9 +1519,12 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
           return this.texturePaintEditableLayerTarget?.(material, editableTexture) || editableTexture;
         }
       }
+      const displayReferenceTexture = material.userData.textureAirbrushWebGpuCanvasMap
+        || material.map?.userData?.textureAirbrushWebGpuCanvasMap
+        || null;
       const sourceMap = gpuEntry?.target?.texture && material.map === gpuEntry.target.texture && gpuEntry.sourceTexture
         ? gpuEntry.sourceTexture
-        : material.map || null;
+        : displayReferenceTexture || material.map || null;
       if (!Object.prototype.hasOwnProperty.call(material.userData, "clonePaintOriginalMap")) {
         material.userData.clonePaintOriginalMap = sourceMap;
       }
@@ -1547,7 +1562,10 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
       const texture = new THREE.CanvasTexture(canvas);
       texture.name = sourceMap?.name || "clone paint material color texture";
       texture.colorSpace = sourceMap?.colorSpace || THREE.SRGBColorSpace;
-      texture.flipY = sourceMap?.flipY ?? false;
+      texture.flipY = editableTextureFlipYForSource(sourceMap);
+      if (sourceMap && "channel" in sourceMap) {
+        texture.channel = sourceMap.channel;
+      }
       texture.wrapS = sourceMap?.wrapS || THREE.ClampToEdgeWrapping;
       texture.wrapT = sourceMap?.wrapT || THREE.ClampToEdgeWrapping;
       texture.magFilter = sourceMap?.magFilter || THREE.LinearFilter;
@@ -1602,14 +1620,46 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
 
       const hasOriginalMap = Object.prototype.hasOwnProperty.call(userData, "clonePaintOriginalMap");
       const cloneTexture = userData.clonePaintTexture;
-      const hasClonePaint = Boolean(userData.clonePaintCanvas || userData.clonePaintContext || cloneTexture || hasOriginalMap);
+      const cloneCanvas = userData.clonePaintCanvas || null;
+      const externalDisplayMap = material.map?.userData?.textureAirbrushExternalWebGpuDisplay === true
+        ? material.map
+        : null;
+      const externalDisplaySourceMap = externalDisplayMap?.userData?.textureAirbrushWebGpuCanvasMap || null;
+      const hasClonePaint = Boolean(
+        userData.clonePaintCanvas
+        || userData.clonePaintContext
+        || cloneTexture
+        || hasOriginalMap
+        || externalDisplayMap
+      );
       if (hasClonePaint) {
-        const originalMap = hasOriginalMap ? userData.clonePaintOriginalMap : null;
-        if (!material.map || material.map === cloneTexture || material.map === gpuEntry?.sourceTexture) {
+        const originalMap = hasOriginalMap
+          ? userData.clonePaintOriginalMap
+          : externalDisplaySourceMap || null;
+        const layerStack = userData.texturePaintLayerStack || null;
+        const cloneTextureIsTslSurfaceTarget = cloneTexture?.userData?.texturePaintTslSurfaceAirbrushTargetTexture === true;
+        if (
+          !material.map
+          || material.map === cloneTexture
+          || material.map === gpuEntry?.sourceTexture
+          || material.map === externalDisplayMap
+        ) {
           material.map = originalMap || null;
         }
-        if (cloneTexture && cloneTexture !== originalMap && cloneTexture !== material.map) {
+        this.textureAirbrushInvalidateWebGpuCache?.(cloneCanvas);
+        this.textureAirbrushInvalidateWebGpuCache?.(cloneTexture);
+        this.textureAirbrushInvalidateWebGpuCache?.(externalDisplayMap);
+        this.textureAirbrushInvalidateWebGpuCache?.(externalDisplaySourceMap);
+        this.textureAirbrushInvalidateWebGpuCache?.(material);
+        this.discardTexturePaintMaterialGpuComposite?.(material);
+        for (const layer of layerStack?.layers || []) {
+          this.disposeTexturePaintLayerGpuState?.(layer);
+        }
+        if (cloneTexture && !cloneTextureIsTslSurfaceTarget && cloneTexture !== originalMap && cloneTexture !== material.map) {
           cloneTexture.dispose?.();
+        }
+        if (externalDisplayMap && externalDisplayMap !== originalMap && externalDisplayMap !== material.map) {
+          externalDisplayMap.dispose?.();
         }
         delete userData.clonePaintCanvas;
         delete userData.clonePaintContext;
@@ -1652,7 +1702,12 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
     },
 
     clonePaintTextureUv(uv, texture) {
-      const mapped = uv?.clone?.() || new THREE.Vector2();
+      const mapped = typeof uv?.clone === "function"
+        ? uv.clone()
+        : new THREE.Vector2(
+            Number.isFinite(Number(uv?.x)) ? Number(uv.x) : 0,
+            Number.isFinite(Number(uv?.y)) ? Number(uv.y) : 0
+          );
       if (texture) {
         if (texture.matrixAutoUpdate && typeof texture.updateMatrix === "function") {
           texture.updateMatrix();
@@ -1782,6 +1837,8 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
 
     texturePaintHitFromIntersections(intersections = []) {
       let firstMeshHit = null;
+      let firstTransparentMeshHit = null;
+      const alphaSampleCache = new Map();
       const textureRecords = this.textureAirbrushRecords?.() || this.paintRecords || [];
       for (const hit of intersections) {
         const spotlightKind = hit.object?.userData?.cloneSpotlightKind;
@@ -1799,11 +1856,18 @@ export function installClonePaintMethods(BirdWeightEditor, deps) {
         if (!firstMeshHit) {
           const record = textureRecords.find((item) => item.object === hit.object);
           if (record) {
-            firstMeshHit = { record, hit };
+            const visibleTexel = this.textureAirbrushHitHasVisibleTexel?.(record, hit, {
+              cache: alphaSampleCache
+            }) !== false;
+            if (visibleTexel) {
+              firstMeshHit = { record, hit };
+            } else {
+              firstTransparentMeshHit ||= { record, hit };
+            }
           }
         }
       }
-      return firstMeshHit;
+      return firstMeshHit || firstTransparentMeshHit;
     },
 
     texturePaintOverlayMaterialIndex(geometry, triangleStart) {

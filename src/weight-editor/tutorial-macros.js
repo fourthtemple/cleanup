@@ -60,6 +60,21 @@ function macroToolUsesTextureBrush(tool = "") {
   return TEXTURE_BRUSH_MACRO_TOOLS.has(String(tool || ""));
 }
 
+function editorHasPaintableTextureScene(editor = null) {
+  return Boolean(
+    editor?.model
+    && editor?.canvas
+    && (editor.paintRecords || []).some((record) => {
+      const geometry = record?.geometry || record?.object?.geometry || null;
+      return Boolean(
+        record?.object
+        && geometry?.attributes?.position
+        && geometry?.attributes?.uv
+      );
+    })
+  );
+}
+
 function macroBrushSettingsWithReproDefaults(macroName = "", settings = null) {
   if (!settings || typeof settings !== "object") {
     return settings;
@@ -690,10 +705,11 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
           this.stopTutorialMacroPlayback();
           return;
         }
+        const hasCurrentScene = editorHasPaintableTextureScene(this);
         void this.playTutorialMacro(macroName, {
-          resetDemo: false,
+          resetDemo: !hasCurrentScene,
           preservePointerMoves: true,
-          requireCurrentScene: true
+          requireCurrentScene: hasCurrentScene
         });
       });
       this.tutorialMacroStopButton?.addEventListener("click", () => {
@@ -2122,6 +2138,9 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         click: event.kind === "down" || event.kind === "up"
       });
       if (event.kind === "wheel" || event.tool === "orbit") {
+        if (this.activeTool !== "orbit") {
+          this.setTool?.("orbit", { preserveViewportLayers: true });
+        }
         this.dispatchTutorialMacroPointerEvent(event);
         return;
       }
@@ -2169,7 +2188,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         this.resetTutorialDemoSceneForImportStep?.("cat");
       }
       const ready = useCurrentScene
-        ? Boolean(this.model && this.canvas)
+        ? editorHasPaintableTextureScene(this)
         : await this.ensureTutorialDemoModelLoaded?.("cat");
       if (!ready) {
         this.setStatus(useCurrentScene

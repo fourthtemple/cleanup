@@ -7,9 +7,11 @@ export { installTextureAirbrushTexturePickingMethods } from "./texture-picking.j
 export {
   TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,
   TEXTURE_AIRBRUSH_EDGE_EXPONENT_BASE,
+  TEXTURE_AIRBRUSH_EDGE_HARDNESS_POWER,
   TEXTURE_AIRBRUSH_EDGE_HARDNESS_SCALE,
   TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE,
   TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE,
+  TEXTURE_AIRBRUSH_SOFT_HALO_SCALE,
   airbrushAlphaForDistance,
   airbrushCoverageForDistance,
   airbrushHaloRadius
@@ -19,11 +21,9 @@ export { installTextureAirbrushProjectedPaintMethods } from "./projected-paint.j
 export { installTextureAirbrushProjectedRegionMethods } from "./projected-region.js";
 export { installTextureAirbrushNearBrushMethods } from "./uv-near.js";
 export { installTextureAirbrushUvBrushMethods } from "./uv-brush.js";
+export { installTextureAirbrushVisibleSurfacePaintMethods } from "./visible-surface-paint.js";
 export { installTextureAirbrushVisibleRegionGeometryMethods } from "./visible-region-geometry.js";
 export { installTextureAirbrushVisibleRegionMethods } from "./visible-region.js";
-export { installTextureAirbrushWebGlMaterialMethods } from "./webgl-materials.js";
-export { installTextureAirbrushWebGlBackendMethods } from "./webgl-backend.js";
-export { installTextureAirbrushWebGlProjectMethods } from "./webgl-project.js";
 export {
   textureAirbrushCreateWebGpuPaintResources,
   textureAirbrushDispatchWebGpuPaint,
@@ -36,6 +36,7 @@ export {
   textureAirbrushEditableCanvasSize,
   textureAirbrushApplyPixelsToEditable,
   textureAirbrushEditableWebGpuPayload,
+  textureAirbrushEditableWebGpuStrokeSourceCurrent,
   textureAirbrushInvalidateWebGpuCache,
   textureAirbrushPrewarmEditableWebGpuPaint,
   textureAirbrushRunEditableWebGpuPaint,

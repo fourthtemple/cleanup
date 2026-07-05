@@ -703,7 +703,20 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.collectBones();
         this.collectPaintableMeshes();
         this.renderTexturePaintLayerPanel?.();
-        this.scheduleTextureAirbrushPrewarm?.(null, null, { force: true });
+        this.scheduleTextureAirbrushPrewarm?.(null, null, {
+          all: false,
+          force: true,
+          liveDisplayExternalTexture: false,
+          allowPrewarmLiveDisplayMaterialSwap: false,
+          limit: 1,
+          prewarmPaintablesWithoutHit: true,
+          warmScreenHitIndex: true,
+          warmNeighborTopology: false,
+          tslSurfacePrewarmAll: true,
+          tslSurfacePrewarmLimit: 1,
+          renderCompilePass: true,
+          delay: 900
+        });
         this.populateBoneSelect();
         await this.loadPatchAsset({ silent: true });
         if (token !== this.loadToken || this.actorTarget.id !== target.id) {
@@ -1210,7 +1223,20 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.bindPose = this.captureBindPose();
       this.collectBones();
       this.collectPaintableMeshes();
-      this.scheduleTextureAirbrushPrewarm?.(null, null, { force: true });
+      this.scheduleTextureAirbrushPrewarm?.(null, null, {
+        all: false,
+        force: true,
+        liveDisplayExternalTexture: false,
+        allowPrewarmLiveDisplayMaterialSwap: false,
+        limit: 1,
+        prewarmPaintablesWithoutHit: true,
+        warmScreenHitIndex: true,
+        warmNeighborTopology: false,
+        tslSurfacePrewarmAll: true,
+        tslSurfacePrewarmLimit: 1,
+        renderCompilePass: true,
+        delay: 900
+      });
       this.populateBoneSelect();
       await this.loadPatchAsset({ silent: true });
       this.clipEntries = this.clipEntriesForImportedAnimations(imported.animations || [], fileName, {

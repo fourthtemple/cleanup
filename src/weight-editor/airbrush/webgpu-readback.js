@@ -32,6 +32,7 @@ export async function textureAirbrushReadWebGpuPaintResult(result, {
   if (!buffer || !layout || typeof buffer.mapAsync !== "function") {
     return null;
   }
+  await result?.device?.queue?.onSubmittedWorkDone?.();
   await buffer.mapAsync(mapRead);
   const mapped = buffer.getMappedRange();
   const pixels = textureAirbrushUnpackWebGpuReadbackRows(mapped, layout);

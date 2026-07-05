@@ -62,8 +62,7 @@ export function installTextureAirbrushWebGpuDiagnosticMethods(BirdWeightEditor) 
         preferWebGpu: airbrushRequested,
         webGpuAvailable: nativeWebGpuAvailable,
         renderer: this.renderer,
-        webGpuDisabled: this.textureAirbrushWebGpuDisabled === true,
-        webGlDisabled: this.textureAirbrushGpuDisabled === true
+        webGpuDisabled: this.textureAirbrushWebGpuDisabled === true
       });
       const device = this.textureAirbrushWebGpuDevice?.() || null;
       const visibleSurfaceMaskReady = Boolean(device)
@@ -73,7 +72,6 @@ export function installTextureAirbrushWebGpuDiagnosticMethods(BirdWeightEditor) 
         webGpuAvailable: nativeWebGpuAvailable,
         renderer: this.renderer,
         webGpuDisabled: this.textureAirbrushWebGpuDisabled === true,
-        webGlDisabled: this.textureAirbrushGpuDisabled === true,
         visibleSurfaceMaskRequired: true,
         visibleSurfaceMaskReady
       });
@@ -86,7 +84,7 @@ export function installTextureAirbrushWebGpuDiagnosticMethods(BirdWeightEditor) 
         nativeWebGpuAvailable,
         rendererMode,
         rendererState,
-        rendererRuntime: this.textureAirbrushRendererMode || (rendererState.isWebGpuRenderer ? "webgpu" : "webgl"),
+        rendererRuntime: this.textureAirbrushRendererMode || (rendererState.isWebGpuRenderer ? "webgpu" : "none"),
         rendererReady: this.textureAirbrushWebGpuRendererReady === true || rendererState.isNativeWebGpuBackend,
         backend,
         liveProjectedBackend,
