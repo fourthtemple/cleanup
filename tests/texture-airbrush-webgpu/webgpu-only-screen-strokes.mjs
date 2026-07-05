@@ -1058,7 +1058,7 @@ test("large direct WebGPU screen strokes drain the first live paint queue during
     assert.equal(flushOptions[0].maxBatchSegments, 48);
     assert.equal(flushOptions[0].maxSegments, 128);
     assert.equal(flushOptions[0].maxBatchMs, 8);
-    assert.equal(flushOptions[0].maxImmediateWebGpuFlushBatches, 8);
+    assert.equal(flushOptions[0].maxImmediateWebGpuFlushBatches, 32);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
   }

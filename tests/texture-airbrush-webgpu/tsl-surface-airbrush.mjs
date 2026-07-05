@@ -379,6 +379,7 @@ test("TSL visible-surface depth and normal buffer uses linear filtering", () => 
 
 test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
   const body = functionSource("createSurfaceMaterial");
+  const projectedBody = functionSource("createProjectedSurfaceMaterial");
   for (const token of [
     "TEXTURE_AIRBRUSH_CORE_MIN_SCALE",
     "TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER",
@@ -390,16 +391,20 @@ test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
     "TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD"
   ]) {
     assert.match(body, new RegExp(token));
+    assert.match(projectedBody, new RegExp(token));
   }
-  assert.ok(
-    [...body.matchAll(/radius\.mul\(float\(1\)\.add\(scatter\.mul\(0\.15\)\)\)\.toVar\(\)/g)].length >= 1,
-    "screen brush halo should keep scatter visible without doubling the configured brush radius"
-  );
+  assert.match(body, /const softness = float\(1\)\.sub\(hardness\)\.toVar\(\)/);
+  assert.match(body, /scatter\.mul\(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE\)/);
+  assert.match(body, /softness\.mul\(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE\)/);
+  assert.match(projectedBody, /const softness = float\(1\)\.sub\(hardness\)\.toVar\(\)/);
+  assert.match(projectedBody, /scatter\.mul\(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE\)/);
+  assert.match(projectedBody, /softness\.mul\(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE\)/);
+  assert.doesNotMatch(body, /scatter\.mul\(0\.15\)/);
+  assert.doesNotMatch(projectedBody, /scatter\.mul\(0\.15\)/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(1\)\.add\(scatter\.mul\(0\.15\)\)\)\.toVar\(\)/);
-  assert.doesNotMatch(body, /softness\.mul\(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE\)/);
-  assert.doesNotMatch(body, /scatter\.mul\(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE\)/);
   assert.doesNotMatch(body, /tailAlpha|tailCoverage|tailSmooth/);
   assert.match(body, /const fadeRadius = max\(haloRadius\.sub\(coreRadius\), 0\.0001\)/);
+  assert.match(projectedBody, /const fadeRadius = max\(haloRadius\.sub\(coreRadius\), 0\.0001\)/);
   assert.match(body, /const edgeCoverage = max\(0\.0, float\(1\)\.sub\(smoothEdge\)\)\.toVar\(\)/);
   assert.match(body, /const screenCoverage = edgeCoverage\.toVar\(\)/);
   assert.match(body, /const viewEnd = segmentViewEnds\.element\(i\)/);
@@ -726,9 +731,15 @@ test("TSL surface airbrush keeps GPU dilation live without CPU fallback", () => 
   const ensureDilationBody = functionSource("ensureDilationResources");
   const dilationMaterialBody = functionSource("createDilationMaterial");
   assert.doesNotMatch(body, /const liveSurfaceStroke = options\.liveProjectedPaint === true \|\| options\.screenStrokePaint === true/);
+  assert.match(body, /strokeMaskDilationPasses = layerMode \? 0 : surfaceAirbrushDilationPasses\(\)/);
+  assert.match(body, /runSurfaceDilation\([\s\S]*?strokeMaskTarget,[\s\S]*?strokeMaskDilationPasses,[\s\S]*?preserveSourceAlpha: true,[\s\S]*?alphaThreshold: 0\.000001/);
+  assert.match(body, /compositeMaskTarget\?\.texture \|\| strokeMaskTarget\.texture/);
   assert.match(body, /const surfaceDilationPasses = layerMode\s+\?\s+0\s+:\s+useStrokeMaskComposite\s+\?\s+0\s+:\s+projectedGutterTriangleCount > 0\s+\?\s+0\s+:\s+surfaceAirbrushDilationPasses\(\)/);
   assert.match(body, /runSurfaceDilation\([\s\S]*?surfaceDilationPasses,[\s\S]*?\{\s*preserveSourceAlpha: Boolean\(layerMode\)\s*\}/);
-  assert.match(body, /tslSurfaceDilationPasses: finalTarget !== target \? surfaceDilationPasses : 0/);
+  assert.match(body, /tslSurfaceDilationPasses: Math\.max\(/);
+  assert.match(body, /tslSurfaceStrokeMaskDilation: strokeMaskDilated/);
+  assert.match(body, /tslSurfaceStrokeMaskDilationPasses: strokeMaskDilated \? strokeMaskDilationPasses : 0/);
+  assert.match(source, /strokeMaskDilation: stats\.tslSurfaceStrokeMaskDilation === true/);
   assert.match(dilationBody, /passCount = surfaceAirbrushDilationPasses\(\),\s*options = \{\}/);
   assert.match(dilationBody, /const passes = Math\.max\(0, Math\.floor\(finiteNumber\(passCount/);
   assert.match(dilationSeedBody, /options = \{\}/);
@@ -741,6 +752,9 @@ test("TSL surface airbrush keeps GPU dilation live without CPU fallback", () => 
   assert.match(dilationBody, /const seedMaterial = options\.preserveSourceAlpha === true[\s\S]*?cache\.dilationSeedAlphaMaterial[\s\S]*?: cache\.dilationSeedMaterial/);
   assert.match(source, /const TSL_SURFACE_DILATION_SAMPLE_RADII = \[1, 2, 4, 8, 16\]/);
   assert.match(dilationMaterialBody, /TSL_SURFACE_DILATION_SAMPLE_RADII\.flatMap/);
+  assert.match(dilationMaterialBody, /const alphaThreshold = uniform\(0\.5, "float"\)/);
+  assert.match(dilationMaterialBody, /result\.a\.lessThan\(alphaThreshold\)/);
+  assert.match(functionSource("updateDilationMaterial"), /finiteNumber\(options\.alphaThreshold, 0\.5\)/);
   assert.match(dilationMaterialBody, /transparent: true/);
   assert.match(dilationMaterialBody, /blending: THREE\.NoBlending/);
 });

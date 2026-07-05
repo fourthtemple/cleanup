@@ -5680,7 +5680,7 @@ test("installed airbrush WebGPU live path can dispatch immediately without a sec
   assert.equal(flushed, 1);
   assert.equal(queuedAtFlush, 1);
   assert.equal(scheduled, 0);
-  assert.equal(flushOptions.maxBatches, 8);
+  assert.equal(flushOptions.maxBatches, 32);
   assert.equal(flushOptions.force, false);
 });
 
@@ -5741,7 +5741,7 @@ test("installed airbrush WebGPU large direct live path flushes direct batch budg
   });
 
   assert.ok(changed > 0);
-  assert.equal(flushOptions.maxBatches, 8);
+  assert.equal(flushOptions.maxBatches, 32);
   assert.equal(flushOptions.force, false);
 });
 

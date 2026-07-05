@@ -4615,6 +4615,7 @@ function createDilationMaterial(sourceTexture = null, texelSize = new THREE.Vect
   const { Fn, If, texture, uniform, uv, vec2, vec4 } = tsl;
   const sourceTextureNode = texture(sourceTexture, uv());
   const texelSizeNode = uniform(texelSize, "vec2");
+  const alphaThreshold = uniform(0.5, "float");
   const offsets = TSL_SURFACE_DILATION_SAMPLE_RADII.flatMap((radius) => [
     [-radius, -radius], [0, -radius], [radius, -radius],
     [-radius, 0], [radius, 0],
@@ -4623,7 +4624,7 @@ function createDilationMaterial(sourceTexture = null, texelSize = new THREE.Vect
   const fragmentNode = Fn(() => {
     const currentUv = uv().toVar();
     const result = sourceTextureNode.toVar();
-    If(result.a.lessThan(0.5), () => {
+    If(result.a.lessThan(alphaThreshold), () => {
       for (const offset of offsets) {
         const sample = sourceTextureNode.sample(currentUv.add(vec2(offset[0], offset[1]).mul(texelSizeNode))).toVar();
         If(sample.a.greaterThan(result.a), () => {
@@ -4644,18 +4645,22 @@ function createDilationMaterial(sourceTexture = null, texelSize = new THREE.Vect
   material.name = "texture-paint-tsl-surface-airbrush-dilation";
   material.userData.texturePaintTslSurfaceDilation = {
     sourceTextureNode,
-    texelSizeNode
+    texelSizeNode,
+    alphaThreshold
   };
   return material;
 }
 
-function updateDilationMaterial(material = null, sourceTexture = null, width = 1, height = 1) {
+function updateDilationMaterial(material = null, sourceTexture = null, width = 1, height = 1, options = {}) {
   const state = material?.userData?.texturePaintTslSurfaceDilation || null;
   if (!state) {
     return false;
   }
   state.sourceTextureNode.value = sourceTexture;
   state.texelSizeNode.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
+  if (state.alphaThreshold) {
+    state.alphaThreshold.value = Math.max(0, Math.min(1, finiteNumber(options.alphaThreshold, 0.5)));
+  }
   return true;
 }
 
@@ -4754,7 +4759,7 @@ function runSurfaceDilation(
     let source = cache.dilationTargets[0];
     let destination = cache.dilationTargets[1];
     for (let pass = 0; pass < passes; pass += 1) {
-      updateDilationMaterial(cache.dilationMaterial, source.texture, width, height);
+      updateDilationMaterial(cache.dilationMaterial, source.texture, width, height, options);
       cache.dilationMesh.material = cache.dilationMaterial;
       renderer.setRenderTarget(destination);
       renderer.autoClear = true;
@@ -5879,7 +5884,12 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
           .greaterThan(0.5)
           .select(visibleDepthCoverage, float(1))
           .toVar();
-        const haloRadius = radius.mul(float(1).add(scatter.mul(0.15))).toVar();
+        const softness = float(1).sub(hardness).toVar();
+        const haloRadius = radius.mul(
+          float(1)
+            .add(scatter.mul(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE))
+            .add(softness.mul(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE))
+        ).toVar();
         const segmentVector = end.xy.sub(start.xy).toVar();
         const lengthSq = max(dot(segmentVector, segmentVector), 0.000001);
         const segmentT = clamp(dot(surfaceScreen.xy.sub(start.xy), segmentVector).div(lengthSq), 0.0, 1.0).toVar();
@@ -6217,7 +6227,12 @@ function createSurfaceMaterial(
           .greaterThan(0.5)
           .select(visibleDepthCoverage, float(1))
           .toVar();
-        const haloRadius = radius.mul(float(1).add(scatter.mul(0.15))).toVar();
+        const softness = float(1).sub(hardness).toVar();
+        const haloRadius = radius.mul(
+          float(1)
+            .add(scatter.mul(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE))
+            .add(softness.mul(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE))
+        ).toVar();
         const segmentVector = end.xy.sub(start.xy).toVar();
         const lengthSq = max(dot(segmentVector, segmentVector), 0.000001);
         const segmentT = clamp(dot(surfaceScreen.xy.sub(start.xy), segmentVector).div(lengthSq), 0.0, 1.0).toVar();
@@ -7040,6 +7055,8 @@ function exposeSurfaceRunDebug(stats = null) {
     skippedDuplicateSegments: stats.tslSurfaceSkippedDuplicateSegments === true,
     strokeMask: stats.tslSurfaceStrokeMask === true,
     strokeMaskInitialized: stats.tslSurfaceStrokeMaskInitialized === true,
+    strokeMaskDilation: stats.tslSurfaceStrokeMaskDilation === true,
+    strokeMaskDilationPasses: stats.tslSurfaceStrokeMaskDilationPasses ?? 0,
     strokeBaseCopy: stats.tslSurfaceStrokeBaseCopy || "",
     baseCopy: stats.tslSurfaceBaseCopy || "",
     sourceColorSpace: stats.tslSurfaceSourceColorSpace || "",
@@ -8218,6 +8235,8 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
   let shaderCopiedBaseTexture = false;
   let clearedTransparentBaseTexture = false;
   let strokeMaskCleared = false;
+  let strokeMaskDilationPasses = 0;
+  let strokeMaskDilated = false;
   const previousTarget = typeof renderer.getRenderTarget === "function"
     ? renderer.getRenderTarget()
     : null;
@@ -8266,12 +8285,20 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
         }
         renderer.render(cache.scene, cache.camera);
       }
+      strokeMaskDilationPasses = layerMode ? 0 : surfaceAirbrushDilationPasses();
+      const compositeMaskTarget = strokeMaskDilationPasses > 0
+        ? runSurfaceDilation(renderer, cache, strokeMaskTarget, referenceTexture, width, height, strokeMaskDilationPasses, {
+            preserveSourceAlpha: true,
+            alphaThreshold: 0.000001
+          })
+        : strokeMaskTarget;
+      strokeMaskDilated = Boolean(compositeMaskTarget?.texture && compositeMaskTarget !== strokeMaskTarget);
       finalTarget = renderSurfaceStrokeComposite(
         renderer,
         cache,
         target,
         baseTexture,
-        strokeMaskTarget.texture,
+        compositeMaskTarget?.texture || strokeMaskTarget.texture,
         {
           ...options,
           blendOnly: layerMode,
@@ -8532,8 +8559,13 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     tslSurfaceVisibleSurface: Boolean(visibleTexture),
     tslSurfaceVisibleWidth: cache.visibleWidth || 0,
     tslSurfaceVisibleHeight: cache.visibleHeight || 0,
-    tslSurfaceDilation: finalTarget !== target,
-    tslSurfaceDilationPasses: finalTarget !== target ? surfaceDilationPasses : 0,
+    tslSurfaceDilation: strokeMaskDilated || finalTarget !== target,
+    tslSurfaceDilationPasses: Math.max(
+      strokeMaskDilated ? strokeMaskDilationPasses : 0,
+      finalTarget !== target ? surfaceDilationPasses : 0
+    ),
+    tslSurfaceStrokeMaskDilation: strokeMaskDilated,
+    tslSurfaceStrokeMaskDilationPasses: strokeMaskDilated ? strokeMaskDilationPasses : 0,
     tslSurfaceProjectedGutterTriangleCount: projectedGutterTriangleCount,
     tslSurfaceProjectedPrimary: useProjectedPrimary,
     tslSurfaceCandidateProjectedGutters: useCandidateProjectedGutters,
