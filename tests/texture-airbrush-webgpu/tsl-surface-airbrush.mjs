@@ -1125,7 +1125,8 @@ test("TSL surface brush coverage respects connected-component gated segments", (
   for (const materialBody of [projectedBody, surfaceBody]) {
     assert.match(materialBody, /const segmentComponent = segmentComponents\.element\(i\)/);
     assert.match(materialBody, /const connectedComponentGate = paintComponent\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.x\)\)\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.y\)\)\.lessThan\(0\.5\)/);
-    assert.match(materialBody, /const componentGate = visibleActive\.greaterThan\(0\.5\)[\s\S]*?\.select\(float\(1\), connectedComponentGate\)[\s\S]*?\.toVar\(\)/);
+    assert.match(materialBody, /const componentGate = connectedComponentGate\.toVar\(\)/);
+    assert.doesNotMatch(materialBody, /const componentGate = visibleActive\.greaterThan\(0\.5\)[\s\S]*?\.select\(float\(1\), connectedComponentGate\)/);
     assert.match(materialBody, /\.mul\(componentGate\)[\s\S]*?\.mul\(normalGate\)/);
   }
 });

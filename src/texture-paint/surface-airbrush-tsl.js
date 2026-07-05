@@ -5775,9 +5775,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
           .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
           .select(float(1), float(0))
           .toVar();
-        const componentGate = visibleActive.greaterThan(0.5)
-          .select(float(1), connectedComponentGate)
-          .toVar();
+        const componentGate = connectedComponentGate.toVar();
         const sampleCoverage = baseSampleCoverage
           .mul(componentGate)
           .mul(normalGate)
@@ -6087,9 +6085,7 @@ function createSurfaceMaterial(
           .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
           .select(float(1), float(0))
           .toVar();
-        const componentGate = visibleActive.greaterThan(0.5)
-          .select(float(1), connectedComponentGate)
-          .toVar();
+        const componentGate = connectedComponentGate.toVar();
         const gatedCoverage = surfaceFieldCoverage
           .mul(componentGate)
           .mul(normalGate)
