@@ -7505,7 +7505,7 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
         );
       }
       renderedCompilePass = true;
-      const prewarmDilationPasses = layerMode ? 0 : surfaceAirbrushDilationPasses();
+      const prewarmDilationPasses = surfaceAirbrushDilationPasses();
 	      const dilationResult = runSurfaceDilation(
 	        renderer,
 	        cache,
@@ -8285,7 +8285,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
         }
         renderer.render(cache.scene, cache.camera);
       }
-      strokeMaskDilationPasses = layerMode ? 0 : surfaceAirbrushDilationPasses();
+      strokeMaskDilationPasses = surfaceAirbrushDilationPasses();
       const compositeMaskTarget = strokeMaskDilationPasses > 0
         ? runSurfaceDilation(renderer, cache, strokeMaskTarget, referenceTexture, width, height, strokeMaskDilationPasses, {
             preserveSourceAlpha: true,
@@ -8341,9 +8341,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     renderer.setRenderTarget(previousTarget);
     renderer.autoClear = previousAutoClear;
   }
-  const surfaceDilationPasses = layerMode
-    ? 0
-    : useStrokeMaskComposite
+  const surfaceDilationPasses = useStrokeMaskComposite
     ? 0
     : projectedGutterTriangleCount > 0
     ? 0

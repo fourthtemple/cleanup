@@ -1015,7 +1015,7 @@ test("ordinary live WebGPU continuation strokes keep immediate rendering even af
   assert.equal(scheduledFrameFlushes, 0);
 });
 
-test("large direct WebGPU screen strokes drain the first live paint queue during drag", () => {
+test("large direct WebGPU screen strokes drain the first live paint queue during drag", async () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
   const editor = new ScreenEditor();
@@ -1047,10 +1047,9 @@ test("large direct WebGPU screen strokes drain the first live paint queue during
 
     assert.equal(scheduledFrameFlushes, 0);
     assert.equal(flushOptions.length, 0);
-    assert.equal(timers.length, 1);
-    assert.equal(timers[0].delayMs, 4);
+    assert.equal(timers.length, 0);
 
-    timers[0].callback();
+    await Promise.resolve();
 
     assert.equal(flushOptions.length, 1);
     assert.equal(flushOptions[0].immediateWebGpuFlush, true);
@@ -1064,7 +1063,7 @@ test("large direct WebGPU screen strokes drain the first live paint queue during
   }
 });
 
-test("layer live WebGPU continuation strokes keep immediate rendering during drag", () => {
+test("layer live WebGPU continuation strokes keep immediate rendering during drag", async () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
   const editor = new ScreenEditor();
@@ -1100,14 +1099,13 @@ test("layer live WebGPU continuation strokes keep immediate rendering during dra
 
     assert.equal(scheduledFrameFlushes, 0);
     assert.equal(flushOptions.length, 0);
-    assert.equal(timers.length, 1);
-    assert.equal(timers[0].delayMs, 4);
+    assert.equal(timers.length, 0);
 
-    timers[0].callback();
+    await Promise.resolve();
 
     assert.equal(flushOptions.length, 1);
     assert.equal(flushOptions[0].immediateWebGpuFlush, true);
-    assert.equal(flushOptions[0].continuationCoalesceMs, 4);
+    assert.equal(flushOptions[0].continuationCoalesceMs, 0);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
   }
@@ -1189,7 +1187,7 @@ test("first layer live WebGPU reset stroke is eligible for immediate painting", 
   assert.equal(editor.textureAirbrushImmediateWebGpuScreenFlushUsed, true);
 });
 
-test("ordinary live WebGPU continuation strokes coalesce before immediate flush", () => {
+test("ordinary live WebGPU continuation strokes flush on a microtask", async () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
   const editor = new ScreenEditor();
@@ -1222,14 +1220,13 @@ test("ordinary live WebGPU continuation strokes coalesce before immediate flush"
 
     assert.equal(scheduledFrameFlushes, 0);
     assert.equal(flushOptions.length, 0);
-    assert.equal(timers.length, 1);
-    assert.equal(timers[0].delayMs, 4);
+    assert.equal(timers.length, 0);
 
-    timers[0].callback();
+    await Promise.resolve();
 
     assert.equal(flushOptions.length, 1);
     assert.equal(flushOptions[0].immediateWebGpuFlush, true);
-    assert.equal(flushOptions[0].continuationCoalesceMs, 4);
+    assert.equal(flushOptions[0].continuationCoalesceMs, 0);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
   }
@@ -1496,7 +1493,7 @@ test("scheduled large WebGPU Neighbor flush uses the low-latency frame budget", 
   assert.equal(flushOptions[0].maxSegments, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
 });
 
-test("scheduled large WebGPU brush flush does not add a first-frame throttle", () => {
+test("scheduled large WebGPU brush flush does not add a first-frame throttle", async () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
   const editor = new ScreenEditor();
@@ -1541,7 +1538,8 @@ test("scheduled large WebGPU brush flush does not add a first-frame throttle", (
     globalThis.setTimeout = previousSetTimeout;
   }
 
-  assert.equal(rafCalls, 1);
+  assert.equal(rafCalls, 0);
+  await Promise.resolve();
   assert.deepEqual(timeoutDelays, []);
   assert.equal(flushOptions.length, 1);
   assert.equal(flushOptions[0].maxBatchMs, 8);

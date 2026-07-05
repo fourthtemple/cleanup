@@ -24,8 +24,8 @@ const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_SEGMENTS = TEXTURE_AIRBRUSH_MAX
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_BATCH_MS = 8;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MIN_MS = 0;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_NEIGHBOR_IMMEDIATE_MIN_MS = 0;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_CONTINUATION_COALESCE_MS = 4;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_CONTINUATION_COALESCE_MS = 4;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_CONTINUATION_COALESCE_MS = 0;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_CONTINUATION_COALESCE_MS = 0;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_SCREEN_FLUSH_MIN_MS = 0;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_BRUSH_MIN_RADIUS_PIXELS = 18;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_RESET_FOOTPRINT_MIN_RADIUS_PIXELS = 24;
@@ -3309,12 +3309,13 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         }
         return false;
       }
+      const webGpuPending = webGpuLiveScreenStrokePending(this);
       const requestFrame = typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
         ? window.requestAnimationFrame.bind(window)
         : typeof globalThis.setTimeout === "function"
           ? (callback) => globalThis.setTimeout(callback, 16)
           : null;
-      if (!requestFrame) {
+      if (!requestFrame && !webGpuPending) {
         return false;
       }
       const host = typeof window !== "undefined" ? window : globalThis;
@@ -3323,7 +3324,6 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         : typeof globalThis.setTimeout === "function"
           ? globalThis.setTimeout.bind(globalThis)
           : null;
-      const webGpuPending = webGpuLiveScreenStrokePending(this);
       const configuredMinIntervalMs = Number(this.textureAirbrushLiveWebGpuScreenFlushMinMs);
       const minIntervalMs = webGpuPending
         ? Number.isFinite(configuredMinIntervalMs)
@@ -3338,7 +3338,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         ? Math.max(0, minIntervalMs - (currentTimeMs() - previousFlushMs))
         : 0;
       this.textureAirbrushScreenFlushScheduled = true;
-      const run = () => requestFrame(() => {
+      const flushScheduledWork = () => {
         const root = typeof window !== "undefined" ? window.document?.documentElement : null;
         if (root?.dataset && new URLSearchParams(window.location?.search || "").has("debugAirbrush")) {
           root.dataset.textureAirbrushDebugScheduledFlushRunCount = String(
@@ -3387,7 +3387,17 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         } else {
           this.resolveTextureAirbrushScreenStrokeFlushWaiters?.();
         }
-      });
+      };
+      const run = () => {
+        if (webGpuPending && scheduleMicrotask(flushScheduledWork)) {
+          return;
+        }
+        if (!requestFrame) {
+          this.textureAirbrushScreenFlushScheduled = false;
+          return;
+        }
+        requestFrame(flushScheduledWork);
+      };
       if (delayMs > 1 && scheduleTimeout) {
         scheduleTimeout(run, delayMs);
       } else {

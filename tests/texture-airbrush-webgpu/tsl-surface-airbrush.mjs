@@ -731,11 +731,13 @@ test("TSL surface airbrush keeps GPU dilation live without CPU fallback", () => 
   const ensureDilationBody = functionSource("ensureDilationResources");
   const dilationMaterialBody = functionSource("createDilationMaterial");
   assert.doesNotMatch(body, /const liveSurfaceStroke = options\.liveProjectedPaint === true \|\| options\.screenStrokePaint === true/);
-  assert.match(body, /strokeMaskDilationPasses = layerMode \? 0 : surfaceAirbrushDilationPasses\(\)/);
+  assert.match(body, /strokeMaskDilationPasses = surfaceAirbrushDilationPasses\(\)/);
   assert.match(body, /runSurfaceDilation\([\s\S]*?strokeMaskTarget,[\s\S]*?strokeMaskDilationPasses,[\s\S]*?preserveSourceAlpha: true,[\s\S]*?alphaThreshold: 0\.000001/);
   assert.match(body, /compositeMaskTarget\?\.texture \|\| strokeMaskTarget\.texture/);
-  assert.match(body, /const surfaceDilationPasses = layerMode\s+\?\s+0\s+:\s+useStrokeMaskComposite\s+\?\s+0\s+:\s+projectedGutterTriangleCount > 0\s+\?\s+0\s+:\s+surfaceAirbrushDilationPasses\(\)/);
+  assert.match(body, /const surfaceDilationPasses = useStrokeMaskComposite\s+\?\s+0\s+:\s+projectedGutterTriangleCount > 0\s+\?\s+0\s+:\s+surfaceAirbrushDilationPasses\(\)/);
   assert.match(body, /runSurfaceDilation\([\s\S]*?surfaceDilationPasses,[\s\S]*?\{\s*preserveSourceAlpha: Boolean\(layerMode\)\s*\}/);
+  assert.match(functionSource("texturePaintPrewarmTslSurfaceAirbrush"), /const prewarmDilationPasses = surfaceAirbrushDilationPasses\(\)/);
+  assert.doesNotMatch(functionSource("texturePaintPrewarmTslSurfaceAirbrush"), /prewarmDilationPasses = layerMode \? 0 : surfaceAirbrushDilationPasses\(\)/);
   assert.match(body, /tslSurfaceDilationPasses: Math\.max\(/);
   assert.match(body, /tslSurfaceStrokeMaskDilation: strokeMaskDilated/);
   assert.match(body, /tslSurfaceStrokeMaskDilationPasses: strokeMaskDilated \? strokeMaskDilationPasses : 0/);
