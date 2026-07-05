@@ -4329,7 +4329,8 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
       };
       const runSplitPaintDescriptors = () => {
         const deferRemainingScreenSplitDescriptors = options.immediateWebGpuFlush === true
-          && paintRunDescriptors.length > 1;
+          && paintRunDescriptors.length > 1
+          && !useTslSurfaceAirbrush;
         if (deferRemainingScreenSplitDescriptors) {
           const firstRun = Promise.resolve(runPaintDescriptor(paintRunDescriptors[0]));
           const scheduleDeferredRuns = () => {

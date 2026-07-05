@@ -1046,6 +1046,13 @@ test("TSL live surface airbrush skips redundant projected texture segment genera
   assert.match(body, /const collectProjectedSeamStrokeSegments = !skipProjectedSeamStrokeSegmentsForTslSurface/);
 });
 
+test("TSL immediate screen strokes render split descriptors during live drag", () => {
+  const start = liveSource.indexOf("const runSplitPaintDescriptors = () => {");
+  assert.notEqual(start, -1, "split paint descriptor runner should exist");
+  const body = liveSource.slice(start, liveSource.indexOf("const executePaintRuns", start));
+  assert.match(body, /const deferRemainingScreenSplitDescriptors = options\.immediateWebGpuFlush === true\s*\n\s*&& paintRunDescriptors\.length > 1\s*\n\s*&& !useTslSurfaceAirbrush/);
+});
+
 test("TSL surface airbrush is used for early projected live samples once screen segments exist", () => {
   const start = liveSource.indexOf("const useTslSurfaceAirbrush = projectedLivePaint === true");
   assert.notEqual(start, -1, "useTslSurfaceAirbrush condition should exist");
