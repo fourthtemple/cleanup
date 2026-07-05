@@ -398,6 +398,43 @@ function rememberHitResult(cache = null, key = "", hit = null) {
   return hit || null;
 }
 
+function cachedScreenHitsKey(point = null, options = {}) {
+  if (!Number.isFinite(point?.clientX) || !Number.isFinite(point?.clientY)) {
+    return "";
+  }
+  return [
+    "hits",
+    options.firstOnly === true ? "first" : "all",
+    Math.round(point.clientX * 2),
+    Math.round(point.clientY * 2)
+  ].join(":");
+}
+
+function cachedScreenHits(cache = null, key = "") {
+  if (!(cache instanceof Map) || !key || !cache.has(key)) {
+    return undefined;
+  }
+  const entry = cache.get(key);
+  return entry?.__textureAirbrushScreenHits === true
+    ? Array.isArray(entry.hits) ? entry.hits : []
+    : undefined;
+}
+
+function rememberScreenHits(cache = null, key = "", hits = []) {
+  const normalized = Array.isArray(hits) ? hits : [];
+  if (!(cache instanceof Map) || !key) {
+    return normalized;
+  }
+  cache.set(key, {
+    __textureAirbrushScreenHits: true,
+    hits: normalized
+  });
+  while (cache.size > TEXTURE_AIRBRUSH_WEBGPU_HIT_SAMPLE_CACHE_LIMIT) {
+    cache.delete(cache.keys().next().value);
+  }
+  return normalized;
+}
+
 function screenIndexedHitResultForClientPoint(editor = null, pointEvent = null, event = null, options = {}) {
   if (
     !editor
@@ -416,11 +453,20 @@ function screenIndexedHitResultForClientPoint(editor = null, pointEvent = null, 
   const allowAnimationProgressMismatch = options.allowAnimationProgressMismatch === true
     || editor.painting === true
     || editor.textureAirbrushScreenStrokeHasPendingWork?.() === true;
-  const hits = editor.textureAirbrushScreenHitsForEvent(pointEvent, "airbrush", {
-    ...(rect ? { rect } : {}),
-    allowAnimationProgressMismatch,
-    firstOnly: true
-  }) || [];
+  const hitSampleCache = options.hitSampleCache instanceof Map ? options.hitSampleCache : null;
+  const screenHitsKey = cachedScreenHitsKey(pointEvent, { firstOnly: true });
+  const cachedHits = cachedScreenHits(hitSampleCache, screenHitsKey);
+  const hits = cachedHits !== undefined
+    ? cachedHits
+    : rememberScreenHits(
+        hitSampleCache,
+        screenHitsKey,
+        editor.textureAirbrushScreenHitsForEvent(pointEvent, "airbrush", {
+          ...(rect ? { rect } : {}),
+          allowAnimationProgressMismatch,
+          firstOnly: true
+        }) || []
+      );
   const indexedHit = hits[0] || null;
   if (indexedHit?.record && indexedHit?.hit) {
     return indexedHit;
@@ -5277,7 +5323,12 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
       );
     }
     const needsIndexedNormalAnchors = !anchors.length || !anchors.some((anchor) => anchor?.normal);
-    if (needsIndexedNormalAnchors && typeof editor?.textureAirbrushScreenHitsForEvent === "function") {
+    const canBuildIndexedNormalAnchors = Boolean(editor?.camera?.matrixWorldInverse);
+    if (
+      needsIndexedNormalAnchors
+      && canBuildIndexedNormalAnchors
+      && typeof editor?.textureAirbrushScreenHitsForEvent === "function"
+    ) {
       const rect = editor?.canvas?.getBoundingClientRect?.() || null;
       const clientFromScreenPoint = (point = null) => {
         const screenPoint = finitePoint(point);
@@ -5582,6 +5633,21 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
         scatter: resolvedScatter
       })
     : null;
+  const exposeSurfaceComponentIds = Boolean(
+    options.neighborPaintSeed?.enabled === true
+    || options.neighborPaintKey
+    || options.largeLiveNeighborPaint === true
+  );
+  const stripSurfaceComponents = (segments = []) => (
+    exposeSurfaceComponentIds
+      ? segments
+      : (Array.isArray(segments) ? segments : []).map((segment) => {
+          const { componentStart: _componentStart, componentEnd: _componentEnd, ...rest } = segment || {};
+          return rest;
+        })
+  );
+  const outputStrokeSegments = stripSurfaceComponents(strokeSegments);
+  const outputProjectedFieldStrokeSegments = stripSurfaceComponents(projectedFieldStrokeSegments);
   const brushOptions = {
     ...brushOptionSource,
     layerMode: editable.layerMode === true,
@@ -5602,11 +5668,11 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     color: options.color || editor?.textureAirbrushColor?.() || { r: 255, g: 255, b: 255 },
     screenRadiusPixels,
     keepVisibilitySamplesWithTriangles: usesScreenProjectedVisibility,
-    strokeSegments,
+    strokeSegments: outputStrokeSegments,
     ...(fullProjectedSurfacePaint ? { fullProjectedSurfaceRenderTriangles: true } : {}),
     ...(preferTslSurfaceProjectedPrimary && visibilityTriangles.length ? { projectedPrimary: true } : {}),
     ...(usesScreenProjectedVisibility
-      ? { screenProjectedStrokeSegments: projectedFieldStrokeSegments }
+      ? { screenProjectedStrokeSegments: outputProjectedFieldStrokeSegments }
       : {}),
     ...(projectedRenderTriangles.length ? { projectedRenderTriangles } : {}),
     ...(visibilityTriangles.length ? { visibilityMaskTriangles: visibilityTriangles } : {})
@@ -5647,7 +5713,7 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
       y: start.y
     },
     radiusPixels: liveTextureRadiusPixels,
-    strokeSegments,
+    strokeSegments: outputStrokeSegments,
     ...(projectedPaintBounds ? { paintBounds: projectedPaintBounds } : {}),
     ...(projectedPaintRegions.length ? { paintRegions: projectedPaintRegions } : {}),
     ...(fullProjectedSurfacePaint ? { fullProjectedSurfacePaint: true } : {}),

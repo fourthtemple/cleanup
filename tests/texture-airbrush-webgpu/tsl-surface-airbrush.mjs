@@ -165,8 +165,9 @@ test("TSL live projected field preserves hit normals for same-side surface gatin
   assert.match(strokeSource, /viewNormalStart: previous\.viewNormalEnd \|\| previous\.viewNormalStart/);
   assert.match(strokeSource, /viewNormalEnd: surfaceSegment\.viewNormalStart \|\| surfaceSegment\.viewNormalEnd/);
   assert.match(strokeSource, /const needsIndexedNormalAnchors = !anchors\.length \|\| !anchors\.some\(\(anchor\) => anchor\?\.normal\)/);
+  assert.match(strokeSource, /const canBuildIndexedNormalAnchors = Boolean\(editor\?\.camera\?\.matrixWorldInverse\)/);
   assert.match(strokeSource, /const indexedAnchorSegments = screenPaintStrokeSegments\.slice\(0, Math\.min\(screenPaintStrokeSegments\.length, 24\)\)/);
-  assert.match(strokeSource, /if \(needsIndexedNormalAnchors && typeof editor\?\.textureAirbrushScreenHitsForEvent === "function"\)/);
+  assert.match(strokeSource, /needsIndexedNormalAnchors[\s\S]*?&& canBuildIndexedNormalAnchors[\s\S]*?&& typeof editor\?\.textureAirbrushScreenHitsForEvent === "function"/);
   assert.match(strokeSource, /const sameDistance = Math\.abs\(distance - bestDistance\) <= 0\.001/);
   assert.match(strokeSource, /distance < bestDistance \|\| \(sameDistance && !best\?\.normal && anchor\?\.normal\)/);
   assert.match(strokeSource, /const useTslSourceMeshVisibilitySeed = skipProjectedSeamStrokeSegmentsForTslSurface/);

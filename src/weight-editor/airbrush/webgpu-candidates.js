@@ -1100,8 +1100,9 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
 
       const projectProbe = (probe, projectOptions = {}) => {
         if (!textureAirbrushPointInRect(probe, rect)) {
-          return;
+          return false;
         }
+        let probeConvertedCandidate = false;
         const probeAllowsNeighborUnderIntersections = allowNeighborUnderIntersections
           && projectOptions.allowNeighborUnderIntersections !== false;
         const probeEvent = {
@@ -1250,6 +1251,9 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
           if (duplicateProbeHitKey && candidate) {
             convertedProbeHitKeys.add(duplicateProbeHitKey);
           }
+          if (candidate) {
+            probeConvertedCandidate = true;
+          }
           if (projectOptions.connectPath === true && candidate) {
             const key = candidatePassKey(candidate);
             const previous = projectOptions.previousByKey?.get(key) || null;
@@ -1321,7 +1325,7 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
               }
             }
             if (indexedCandidates > 0) {
-              return;
+              return true;
             }
           }
           if (!screenIndexReady) {
@@ -1332,7 +1336,7 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
             ) === true;
           }
           if (screenIndexReady && options.raycastFallbackOnScreenMiss !== true) {
-            return;
+            return probeConvertedCandidate;
           }
           const indexedHit = hitForEvent(probeEvent, {
             refreshSkinnedBounds: false
@@ -1344,11 +1348,11 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
             }
             addProbeCandidate(indexedHit.record, indexedHit.hit);
             if (!probeAllowsNeighborUnderIntersections) {
-              return;
+              return probeConvertedCandidate;
             }
           }
           if (screenIndexReady && options.raycastFallbackOnScreenMiss !== true) {
-            return;
+            return probeConvertedCandidate;
           }
         }
         ensureRaycastBounds();
@@ -1388,6 +1392,7 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
             addProbeCandidate(record, hit);
           }
         }
+        return probeConvertedCandidate;
       };
 
       const paintProjectedSurfaceCandidates = options.paintProjectedSurfaceCandidates === true;
@@ -1523,11 +1528,12 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
         }
       }
       let orderedCandidateCount = 0;
+      let orderedConvertedProbeCount = 0;
       if (requiresVisibilityMask) {
         const previousByKey = new Map();
         const candidateCountBeforeOrderedProbes = candidates.length;
         for (const probe of orderedStrokeProbePoints(stroke, brushRadius, options)) {
-          projectProbe(probe, {
+          if (projectProbe(probe, {
             allowNeighborUnderIntersections,
             connectPath: true,
             collectDepthSample: paintProjectedSurfaceCandidates,
@@ -1535,17 +1541,21 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
             visibilityOnly: !paintProjectedSurfaceCandidates
               && Boolean(primaryProjectedPaintCandidate)
               && options.paintOrderedProbeCandidates !== true
-          });
+          })) {
+            orderedConvertedProbeCount += 1;
+          }
         }
         orderedCandidateCount = Math.max(0, candidates.length - candidateCountBeforeOrderedProbes);
         if (!candidates.length) {
           addCandidate(getDirectCandidate());
         }
       }
+      const orderedNeighborSamplesResolved = allowNeighborUnderIntersections
+        && orderedConvertedProbeCount > 0;
       const shouldProjectFootprintProbes = !requiresVisibilityMask
         || options.liveProjectedPaint !== true
         || options.fullBrushVisibilityProbes === true
-        || orderedCandidateCount <= 0;
+        || (orderedCandidateCount <= 0 && !orderedNeighborSamplesResolved);
       if (shouldProjectFootprintProbes) {
         const probes = denseVisibilityFootprintProbePoints(stroke, brushRadius, options);
         if (debug) {
