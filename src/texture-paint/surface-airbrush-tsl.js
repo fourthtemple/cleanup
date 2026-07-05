@@ -687,6 +687,9 @@ function surfaceAirbrushCacheOwnsTexture(cache = null, texture = null) {
   if (cache.layerCompositeTarget?.texture === texture) {
     return true;
   }
+  if ((cache.layerCompositeTargets || []).some((target) => target?.texture === texture)) {
+    return true;
+  }
   if (cache.uvOccupancyTarget?.texture === texture) {
     return true;
   }
@@ -2001,6 +2004,95 @@ function surfaceLayerBaseTexture(editor = null, material = null, editable = null
     || null;
 }
 
+function surfaceLayerIndex(stack = null, layer = null) {
+  return stack?.layers?.length && layer ? stack.layers.indexOf(layer) : -1;
+}
+
+function surfaceLayerMutationSerial(editor = null) {
+  return Math.max(
+    0,
+    Math.floor(
+      Number(
+        editor?.texturePaintLayerMutationSerialValue?.()
+        ?? editor?.texturePaintLayerMutationSerial
+        ?? 0
+      ) || 0
+    )
+  );
+}
+
+function surfaceLayerDisplayCompositeEntry(material = null) {
+  const userData = material?.userData || {};
+  for (const entry of [
+    userData.texturePaintCompositeGpuTarget,
+    userData.texturePaintTslSurfaceAirbrushTarget
+  ]) {
+    if (entry?.target?.texture || entry?.displayTarget?.texture) {
+      return entry;
+    }
+  }
+  return null;
+}
+
+function surfaceLayerCompositeTexture(entry = null, preferredTexture = null) {
+  if (preferredTexture && (
+    preferredTexture === entry?.target?.texture
+    || preferredTexture === entry?.displayTarget?.texture
+  )) {
+    return preferredTexture;
+  }
+  return entry?.target?.texture || entry?.displayTarget?.texture || null;
+}
+
+function surfaceLayerCompositeIsBelowActive(entry = null, editable = null) {
+  const stack = editable?.layerStack || entry?.layerStack || null;
+  const activeLayer = editable?.layer || null;
+  const entryLayer = entry?.layer || null;
+  if (!stack?.layers?.length || !activeLayer || !entryLayer || entryLayer === activeLayer) {
+    return false;
+  }
+  const activeIndex = surfaceLayerIndex(stack, activeLayer);
+  const entryIndex = surfaceLayerIndex(stack, entryLayer);
+  return entryIndex >= 0 && activeIndex >= 0 && entryIndex < activeIndex;
+}
+
+function surfaceLayerStoredUnderlayTexture(editor = null, editable = null) {
+  const layer = editable?.layer || null;
+  const targetEntry = layer?.gpuTarget || null;
+  const stack = editable?.layerStack || targetEntry?.layerStack || null;
+  if (
+    !targetEntry?.liveCompositeBaseTexture
+    || targetEntry.liveCompositeLayer !== layer
+    || targetEntry.liveCompositeLayerIndex !== surfaceLayerIndex(stack, layer)
+    || targetEntry.liveCompositeLayerCount !== (stack?.layers?.length || 0)
+    || targetEntry.liveCompositeLayerMutationSerial !== surfaceLayerMutationSerial(editor)
+  ) {
+    return null;
+  }
+  return targetEntry.liveCompositeBaseTexture;
+}
+
+function surfaceLayerDisplayUnderlayTexture(editor = null, material = null, editable = null, originalMap = null, fallbackTexture = null) {
+  if (editable?.layerMode !== true || !editable?.layer) {
+    return fallbackTexture || null;
+  }
+  const storedUnderlay = surfaceLayerStoredUnderlayTexture(editor, editable);
+  if (storedUnderlay) {
+    return storedUnderlay;
+  }
+  const currentDisplayTexture = material?.map || null;
+  const compositeEntry = surfaceLayerDisplayCompositeEntry(material);
+  if (surfaceLayerCompositeIsBelowActive(compositeEntry, editable)) {
+    const underlayTexture = surfaceLayerCompositeTexture(compositeEntry, currentDisplayTexture);
+    if (underlayTexture) {
+      return underlayTexture;
+    }
+  }
+  return surfaceLayerBaseTexture(editor, material, editable, originalMap)
+    || fallbackTexture
+    || null;
+}
+
 function surfaceLayerCanvasIsEmpty(layer = null) {
   const canvas = layer?.canvas || null;
   const context = canvas?.getContext?.("2d", { willReadFrequently: true }) || null;
@@ -2224,25 +2316,45 @@ function renderSurfaceDisplayTexture(
   return target;
 }
 
-function ensureSurfaceLayerCompositeTarget(cache = null, width = 1, height = 1, referenceTexture = null) {
+function ensureSurfaceLayerCompositeTarget(cache = null, width = 1, height = 1, referenceTexture = null, options = {}) {
   if (!cache) {
     return null;
   }
-  if (
-    !cache.layerCompositeTarget
-    || cache.layerCompositeTarget.width !== width
-    || cache.layerCompositeTarget.height !== height
-  ) {
-    retireSurfaceAirbrushResource(cache, cache.layerCompositeTarget);
-    cache.layerCompositeTarget = createRenderTarget(width, height, referenceTexture);
-    cache.layerCompositeTarget.texture.name = "texture-paint-tsl-surface-airbrush-layer-display";
-    cache.layerCompositeTarget.texture.flipY = false;
-  } else {
-    copyTextureSettings(cache.layerCompositeTarget.texture, referenceTexture);
-    cache.layerCompositeTarget.texture.name = "texture-paint-tsl-surface-airbrush-layer-display";
-    cache.layerCompositeTarget.texture.flipY = false;
+  const avoidTextures = new Set(
+    (Array.isArray(options.avoidTextures) ? options.avoidTextures : [])
+      .filter(Boolean)
+  );
+  const targets = cache.layerCompositeTargets ||= [];
+  if (cache.layerCompositeTarget && !targets.includes(cache.layerCompositeTarget)) {
+    targets.push(cache.layerCompositeTarget);
   }
-  bindSurfaceDisplayTextureMetadata(cache.layerCompositeTarget.texture, null, referenceTexture, null);
+  for (let index = targets.length - 1; index >= 0; index -= 1) {
+    const target = targets[index];
+    if (!target?.texture || target.width !== width || target.height !== height) {
+      retireSurfaceAirbrushResource(cache, target);
+      targets.splice(index, 1);
+    }
+  }
+  let target = targets.find((candidate) => (
+    candidate?.texture && !avoidTextures.has(candidate.texture)
+  )) || null;
+  if (!target) {
+    if (targets.length < 2) {
+      target = createRenderTarget(width, height, referenceTexture);
+      targets.push(target);
+    } else {
+      target = targets.find((candidate) => candidate?.texture) || null;
+    }
+  }
+  if (!target?.texture) {
+    cache.layerCompositeTarget = null;
+    return null;
+  }
+  cache.layerCompositeTarget = target;
+  copyTextureSettings(target.texture, referenceTexture);
+  target.texture.name = "texture-paint-tsl-surface-airbrush-layer-display";
+  target.texture.flipY = false;
+  bindSurfaceDisplayTextureMetadata(target.texture, null, referenceTexture, null);
   if (!cache.layerCompositeScene) {
     cache.layerCompositeScene = new THREE.Scene();
   }
@@ -2257,8 +2369,8 @@ function ensureSurfaceLayerCompositeTarget(cache = null, width = 1, height = 1, 
     cache.layerCompositeMesh.frustumCulled = false;
     cache.layerCompositeScene.add(cache.layerCompositeMesh);
   }
-  return cache.layerCompositeTarget?.texture && cache.layerCompositeMaterial && cache.layerCompositeMesh
-    ? cache.layerCompositeTarget
+  return target?.texture && cache.layerCompositeMaterial && cache.layerCompositeMesh
+    ? target
     : null;
 }
 
@@ -2276,7 +2388,9 @@ function renderSurfaceLayerComposite(
   if (!renderer || !baseTexture || !layerTexture) {
     return null;
   }
-  const target = ensureSurfaceLayerCompositeTarget(cache, width, height, referenceTexture || baseTexture);
+  const target = ensureSurfaceLayerCompositeTarget(cache, width, height, referenceTexture || baseTexture, {
+    avoidTextures: [baseTexture, layerTexture]
+  });
   const safeBaseTexture = baseTexture === target?.texture
     ? (
         surfaceAirbrushStableTextureFromLiveTarget(baseTexture)
@@ -4828,6 +4942,10 @@ function disposeSurfaceAirbrushCache(cache = null) {
   retireSurfaceAirbrushResource(cache, cache.maskTarget);
   retireSurfaceAirbrushResource(cache, cache.strokeMaskTarget);
   retireSurfaceAirbrushResource(cache, cache.strokeCompositeTarget);
+  retireSurfaceAirbrushResources(cache, cache.layerCompositeTargets);
+  if (!cache.layerCompositeTargets?.includes?.(cache.layerCompositeTarget)) {
+    retireSurfaceAirbrushResource(cache, cache.layerCompositeTarget);
+  }
   retireSurfaceAirbrushResources(cache, cache.dilationTargets);
   retireSurfaceAirbrushResources(cache, cache.targets);
 }
@@ -5166,7 +5284,10 @@ function ensureSurfaceAirbrushCache(editor = null, editable = null, referenceTex
     cache?.layerCompositeMesh?.material?.dispose?.();
     cache?.layerCompositeMaterial?.dispose?.();
     retireSurfaceAirbrushResource(cache, cache?.displayTarget);
-    retireSurfaceAirbrushResource(cache, cache?.layerCompositeTarget);
+    retireSurfaceAirbrushResources(cache, cache?.layerCompositeTargets);
+    if (!cache?.layerCompositeTargets?.includes?.(cache?.layerCompositeTarget)) {
+      retireSurfaceAirbrushResource(cache, cache?.layerCompositeTarget);
+    }
     retireSurfaceAirbrushResource(cache, cache?.strokeMaskTarget);
     retireSurfaceAirbrushResource(cache, cache?.strokeCompositeTarget);
     for (const entry of cache?.uvOccupancyMeshes || []) {
@@ -5399,6 +5520,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
       If(i.lessThan(segmentCount), () => {
         const start = segmentStarts.element(i);
         const end = segmentEnds.element(i);
+        const segmentComponent = segmentComponents.element(i);
         const radius = max(start.w, 0.0001);
         const haloRadius = radius.mul(float(1).add(scatter.mul(0.15))).toVar();
         const segmentVector = end.xy.sub(start.xy).toVar();
@@ -5463,7 +5585,14 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const baseSampleCoverage = projectedPaintGutterOnly.greaterThan(0.5)
           .select(gutterCoverage, gatedCoverage)
           .toVar();
+        const componentGate = paintComponent.lessThan(0.5)
+          .or(segmentComponent.x.lessThan(0.5).and(segmentComponent.y.lessThan(0.5)))
+          .or(abs(paintComponent.sub(segmentComponent.x)).lessThan(0.5))
+          .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
+          .select(float(1), float(0))
+          .toVar();
         const sampleCoverage = baseSampleCoverage
+          .mul(componentGate)
           .mul(normalGate)
           .toVar();
         coverage.assign(max(coverage, sampleCoverage));
@@ -5740,6 +5869,7 @@ function createSurfaceMaterial(
       If(i.lessThan(segmentCount), () => {
         const start = segmentStarts.element(i);
         const end = segmentEnds.element(i);
+        const segmentComponent = segmentComponents.element(i);
         const radius = max(start.w, 0.0001);
         const haloRadius = radius.mul(float(1).add(scatter.mul(0.15))).toVar();
         const segmentVector = end.xy.sub(start.xy).toVar();
@@ -5795,7 +5925,14 @@ function createSurfaceMaterial(
           .select(screenCoverage.mul(viewCoverage), screenCoverage)
           .toVar();
         const surfaceFieldCoverage = brushFieldCoverage.toVar();
+        const componentGate = paintComponent.lessThan(0.5)
+          .or(segmentComponent.x.lessThan(0.5).and(segmentComponent.y.lessThan(0.5)))
+          .or(abs(paintComponent.sub(segmentComponent.x)).lessThan(0.5))
+          .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
+          .select(float(1), float(0))
+          .toVar();
         const gatedCoverage = surfaceFieldCoverage
+          .mul(componentGate)
           .mul(normalGate)
           .toVar();
         const sourceCoverage = originalMeshUvRaster
@@ -7833,6 +7970,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
   let layerDisplayTarget = null;
   let layerDisplayBaseTexture = null;
   let layerDisplayMode = "";
+  let layerDisplayUsedLiveUnderlay = false;
   let displayTarget = null;
   let displayTexture = finalTarget.texture;
   if (layerMode) {
@@ -7841,22 +7979,47 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       height,
       updatedAt: endMs
     });
-    const displayBaseTexture = layerBaseTexture || surfaceLayerBaseTexture(editor, material, editable, originalMap);
+    const displayBaseTexture = surfaceLayerDisplayUnderlayTexture(
+      editor,
+      material,
+      editable,
+      originalMap,
+      layerBaseTexture || coordinateReferenceTexture || referenceTexture
+    );
     layerDisplayBaseTexture = displayBaseTexture || null;
-      layerDisplayTarget = renderSurfaceLayerComposite(
-        renderer,
-        cache,
-        displayBaseTexture,
-        finalTarget.texture,
-        displayBaseTexture || coordinateReferenceTexture || referenceTexture,
-        width,
-        height,
-        editable.layer?.opacity ?? 1,
-        { alphaFallback: true }
+    layerDisplayUsedLiveUnderlay = Boolean(
+      layerDisplayBaseTexture
+      && layerDisplayBaseTexture !== layerBaseTexture
+      && surfaceAirbrushTextureIsLiveTarget(layerDisplayBaseTexture)
+    );
+    layerDisplayTarget = renderSurfaceLayerComposite(
+      renderer,
+      cache,
+      displayBaseTexture,
+      finalTarget.texture,
+      displayBaseTexture || coordinateReferenceTexture || referenceTexture,
+      width,
+      height,
+      editable.layer?.opacity ?? 1,
+      { alphaFallback: true }
     );
     if (layerDisplayTarget?.texture) {
       layerDisplayMode = "texture-composite";
       displayTexture = layerDisplayTarget.texture;
+      if (layerTargetEntry) {
+        const stack = editable.layerStack || layerTargetEntry.layerStack || null;
+        const activeLayer = editable.layer || null;
+        layerTargetEntry.displayTarget = layerDisplayTarget;
+        layerTargetEntry.liveCompositeBaseTexture = layerDisplayBaseTexture;
+        layerTargetEntry.liveCompositeTarget = layerDisplayTarget;
+        layerTargetEntry.liveCompositeLayer = activeLayer;
+        layerTargetEntry.liveCompositeLayerIndex = surfaceLayerIndex(stack, activeLayer);
+        layerTargetEntry.liveCompositeLayerCount = stack?.layers?.length || 0;
+        layerTargetEntry.liveCompositeLayerOpacity = activeLayer?.opacity ?? 1;
+        layerTargetEntry.liveCompositeLayerBlendMode = activeLayer?.blendMode || "source-over";
+        layerTargetEntry.liveCompositeLayerMutationSerial = surfaceLayerMutationSerial(editor);
+        layerTargetEntry.liveCompositeUnderlayKey = editor?.texturePaintLiveLayerUnderlayKey?.(layerTargetEntry) || "";
+      }
     }
     if (layerDisplayTarget?.texture) {
       material.userData ||= {};
@@ -8014,6 +8177,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     tslSurfaceLayerBaseTextureName: surfaceTextureDebugName(layerBaseTexture),
     tslSurfaceLayerCoordinateReferenceTextureName: surfaceTextureDebugName(layerCoordinateReferenceTexture),
     tslSurfaceLayerDisplayBaseTextureName: surfaceTextureDebugName(layerDisplayBaseTexture),
+    tslSurfaceLayerDisplayUsedLiveUnderlay: layerDisplayUsedLiveUnderlay,
     tslSurfaceLayerTarget: Boolean(layerTargetEntry?.target?.texture),
     tslSurfaceLayerPaintRevision: Math.max(0, Math.floor(Number(layerTargetEntry?.paintRevision) || 0)),
     tslSurfaceLayerDisplayComposite: Boolean(layerDisplayTarget?.texture),

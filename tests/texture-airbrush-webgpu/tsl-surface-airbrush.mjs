@@ -1039,6 +1039,34 @@ test("TSL layer-mode strokes stay on the active paint layer GPU target", () => {
   assert.match(body, /tslSurfaceLayerDisplayComposite: Boolean\(layerDisplayTarget\?\.texture\)/);
 });
 
+test("TSL layer-mode live display keeps lower layer composites as underlays", () => {
+  const body = functionSource("texturePaintRunTslSurfaceAirbrush");
+  const underlayBody = functionSource("surfaceLayerDisplayUnderlayTexture");
+  const targetBody = functionSource("ensureSurfaceLayerCompositeTarget");
+  const compositeBody = functionSource("renderSurfaceLayerComposite");
+  assert.match(body, /surfaceLayerDisplayUnderlayTexture\(/);
+  assert.match(body, /layerTargetEntry\.liveCompositeBaseTexture = layerDisplayBaseTexture/);
+  assert.match(body, /layerTargetEntry\.liveCompositeLayerMutationSerial = surfaceLayerMutationSerial\(editor\)/);
+  assert.match(body, /tslSurfaceLayerDisplayUsedLiveUnderlay: layerDisplayUsedLiveUnderlay/);
+  assert.match(underlayBody, /surfaceLayerStoredUnderlayTexture\(editor, editable\)/);
+  assert.match(underlayBody, /surfaceLayerCompositeIsBelowActive\(compositeEntry, editable\)/);
+  assert.match(underlayBody, /surfaceLayerBaseTexture\(editor, material, editable, originalMap\)/);
+  assert.match(targetBody, /const avoidTextures = new Set/);
+  assert.match(targetBody, /cache\.layerCompositeTargets \|\|= \[\]/);
+  assert.match(targetBody, /!avoidTextures\.has\(candidate\.texture\)/);
+  assert.match(compositeBody, /avoidTextures: \[baseTexture, layerTexture\]/);
+});
+
+test("TSL surface brush coverage respects connected-component gated segments", () => {
+  const projectedBody = functionSource("createProjectedSurfaceMaterial");
+  const surfaceBody = functionSource("createSurfaceMaterial");
+  for (const materialBody of [projectedBody, surfaceBody]) {
+    assert.match(materialBody, /const segmentComponent = segmentComponents\.element\(i\)/);
+    assert.match(materialBody, /const componentGate = paintComponent\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.x\)\)\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.y\)\)\.lessThan\(0\.5\)/);
+    assert.match(materialBody, /\.mul\(componentGate\)[\s\S]*?\.mul\(normalGate\)/);
+  }
+});
+
 test("TSL surface airbrush does not stencil soft strokes through the visible-depth prepass", () => {
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
   const materialBody = functionSource("createSurfaceMaterial");
