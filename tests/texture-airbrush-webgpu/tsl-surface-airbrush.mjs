@@ -60,7 +60,7 @@ test("TSL surface airbrush keeps the final brush field surface-continuous", () =
   assert.match(source, /const VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE = 0\.38/);
   assert.match(source, /const VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE = 0\.55/);
   assert.match(body, /const visibleDepthCoverage = float\(1\)\.sub\(visibleDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(body, /const visibleGateCoverage = visibleActive[\s\S]*?\.select\(visibleDepthCoverage, float\(1\)\)/);
+  assert.match(body, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
   assert.doesNotMatch(body, /visiblePermission|visibleSoftPermission/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(0\.85\)/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(0\.9\)/);
@@ -204,7 +204,7 @@ test("TSL surface airbrush keeps brush falloff independent from visible-depth oc
   assert.match(surfaceBody, /const viewEnd = segmentViewEnds\.element\(i\)/);
   assert.doesNotMatch(surfaceBody, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
   assert.match(surfaceBody, /const visibleDepthCoverage = float\(1\)\.sub\(visibleDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(surfaceBody, /const visibleGateCoverage = visibleActive[\s\S]*?\.select\(visibleDepthCoverage, float\(1\)\)/);
+  assert.match(surfaceBody, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
   assert.doesNotMatch(surfaceBody, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(surfaceBody, /const componentPermission = hasComponentGate/);
   assert.doesNotMatch(surfaceBody, /normalCompatibility|surfacePlanePermission/);
@@ -233,7 +233,7 @@ test("TSL surface airbrush keeps brush falloff independent from visible-depth oc
   assert.match(projectedBody, /const viewEnd = segmentViewEnds\.element\(i\)/);
   assert.doesNotMatch(projectedBody, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
   assert.match(projectedBody, /const visibleDepthCoverage = float\(1\)\.sub\(visibleDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(projectedBody, /const visibleGateCoverage = visibleActive[\s\S]*?\.select\(visibleDepthCoverage, float\(1\)\)/);
+  assert.match(projectedBody, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
   assert.doesNotMatch(projectedBody, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(projectedBody, /const componentPermission = hasComponentGate/);
   assert.doesNotMatch(projectedBody, /normalCompatibility|surfacePlanePermission/);
@@ -265,7 +265,7 @@ test("TSL surface airbrush evaluates coverage in captured hit-screen space", () 
   );
 });
 
-test("TSL surface airbrush keeps a direct stroke-start base for mask composites", () => {
+test("TSL surface airbrush freezes live stroke-start bases for mask composites", () => {
   const body = functionSource("copySurfaceBaseTexture");
   const directBaseBody = functionSource("surfaceStrokeStartBaseTexture");
   const strokeBaseBody = functionSource("ensureSurfaceStrokeBaseTexture");
@@ -288,9 +288,11 @@ test("TSL surface airbrush keeps a direct stroke-start base for mask composites"
   assert.match(directBaseBody, /!surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);
   assert.match(directBaseBody, /surfaceAirbrushStableTextureFromLiveTarget\(sourceTexture\) \|\| sourceTexture/);
   assert.match(directBaseBody, /return sourceTexture/);
-  assert.match(runBody, /cache\.strokeBaseTexture = surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
+  assert.match(runBody, /const freezeLiveStrokeBase = Boolean\(/);
+  assert.match(runBody, /layerMode[\s\S]*?surfaceAirbrushTextureIsLiveTarget\(sourceTexture\)[\s\S]*?surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);
+  assert.match(runBody, /cache\.strokeBaseTexture = freezeLiveStrokeBase[\s\S]*?ensureSurfaceStrokeBaseTexture\([\s\S]*?renderer,[\s\S]*?cache,[\s\S]*?sourceTexture,[\s\S]*?coordinateReferenceTexture \|\| referenceTexture \|\| sourceTexture,[\s\S]*?width,[\s\S]*?height[\s\S]*?\)[\s\S]*?: surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
   assert.match(runBody, /texturePaintTslSurfaceLastStrokeBaseCopy = cache\.strokeBaseTexture === sourceTexture[\s\S]*?\? "direct-source"[\s\S]*?: "stable-source"/);
-  assert.doesNotMatch(runBody, /cache\.strokeBaseTexture = ensureSurfaceStrokeBaseTexture/);
+  assert.match(runBody, /if \(!freezeLiveStrokeBase\) \{/);
   assert.match(strokeBaseBody, /cache\.strokeBaseTarget = createRenderTarget/);
   assert.match(strokeBaseBody, /surfaceAirbrushTextureIsLiveTarget\(sourceTexture\)/);
   assert.match(strokeBaseBody, /surfaceAirbrushStableTextureFromLiveTarget\(sourceTexture\)/);
@@ -343,8 +345,8 @@ test("TSL surface airbrush feathers normal cutoff for soft strokes and hard-cuts
   assert.doesNotMatch(body, /\.mul\(strokeNormalGate\)/);
   assert.match(projectedBody, /const visibleFacingSampleZ = visibleSample\.g\.mul\(2\.0\)\.sub\(1\.0\)\.toVar\(\)/);
   assert.match(projectedBody, /const visibleNormalRescue = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?visibleDelta\.lessThanEqual\(VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS\)/);
-  assert.match(body, /const visibleGateCoverage = visibleActive[\s\S]*?\.select\(visibleDepthCoverage, float\(1\)\)/);
-  assert.match(projectedBody, /const visibleGateCoverage = visibleActive[\s\S]*?\.select\(visibleDepthCoverage, float\(1\)\)/);
+  assert.match(body, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
+  assert.match(projectedBody, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
   assert.doesNotMatch(body, /visibleBehindDepth|visibleDepthGate/);
   assert.doesNotMatch(projectedBody, /visibleBehindDepth|visibleDepthGate/);
   assert.doesNotMatch(body, /visibleRadius|visibleFeatherRadius/);
@@ -836,7 +838,7 @@ test("TSL layer airbrush keeps empty layer writes in base texture coordinates", 
   assert.match(body, /const layerCoordinateReferenceTexture = layerMode[\s\S]*?layerBaseTexture \|\| materialOriginalMap \|\| material\.map \|\| editable\.texture/);
   assert.match(body, /let coordinateReferenceTexture = layerMode[\s\S]*?\(layerCoordinateReferenceTexture \|\| referenceTexture\)/);
   assert.match(body, /ensureSurfaceAirbrushCache\(editor, editable, coordinateReferenceTexture \|\| referenceTexture, width, height\)/);
-  assert.match(body, /cache\.strokeBaseTexture = surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
+  assert.match(body, /cache\.strokeBaseTexture = freezeLiveStrokeBase[\s\S]*?ensureSurfaceStrokeBaseTexture\([\s\S]*?coordinateReferenceTexture \|\| referenceTexture \|\| sourceTexture[\s\S]*?: surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
   assert.match(body, /texturePaintTslSurfaceDisplayFlipY = \(coordinateReferenceTexture \|\| referenceTexture\)\?\.flipY === true/);
   assert.match(body, /renderSurfaceLayerComposite\([\s\S]*?displayBaseTexture \|\| coordinateReferenceTexture \|\| referenceTexture/);
   assert.match(body, /renderSurfaceLayerComposite\([\s\S]*?\{ alphaFallback: true \}/);
@@ -1014,6 +1016,7 @@ test("TSL live strokes use a max-blended stroke mask to cap opacity", () => {
   assert.match(body, /cache\.strokeBaseTexture = surfaceAirbrushTransparentTexture\(\)/);
   assert.match(body, /copiedBaseTexture = transparentBaseTexture[\s\S]*?\? false[\s\S]*?: copySurfaceBaseTexture\(renderer, baseTexture, target, cache\)/);
   assert.match(body, /clearedTransparentBaseTexture = clearRenderTargetTransparent\(renderer, target, cache\)/);
+  assert.match(body, /const freezeLiveStrokeBase = Boolean\(/);
   assert.match(body, /texturePaintTslSurfaceLastStrokeBaseCopy = cache\.strokeBaseTexture === sourceTexture[\s\S]*?\? "direct-source"[\s\S]*?: "stable-source"/);
   assert.match(compositeRunBody, /const clearTransparentBase = options\.emptyLayerSource === true/);
   assert.match(compositeRunBody, /clearRenderTargetTransparent\(renderer, target, cache\)/);
@@ -1165,7 +1168,7 @@ test("TSL surface brush coverage respects connected-component gated segments", (
   }
 });
 
-test("TSL surface airbrush uses visible-depth prepass as soft occlusion only", () => {
+test("TSL surface airbrush keeps visible-depth prepass out of brush opacity", () => {
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
   const materialBody = functionSource("createSurfaceMaterial");
   const updateBody = functionSource("updateSurfaceMaterial");
@@ -1177,7 +1180,7 @@ test("TSL surface airbrush uses visible-depth prepass as soft occlusion only", (
   assert.match(materialBody, /const visibleDepthFade = clamp\(/);
   assert.match(materialBody, /const visibleDepthSmoothFade = visibleDepthFade[\s\S]*?\.mul\(visibleDepthFade\)/);
   assert.match(materialBody, /const visibleDepthCoverage = float\(1\)\.sub\(visibleDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(materialBody, /const visibleGateCoverage = visibleActive[\s\S]*?\.select\(visibleDepthCoverage, float\(1\)\)/);
+  assert.match(materialBody, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
   assert.match(materialBody, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
   assert.doesNotMatch(materialBody, /visibleDepthGate|visibleBehindDepth/);
   assert.match(materialBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.mul\(visibleGateCoverage\)[\s\S]*?\.toVar\(\)/);
@@ -1316,7 +1319,7 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.match(body, /tslSurfaceStrokeSourceOwner: Boolean\(strokeSourceOwner\),[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /tslSurfaceStrokeMaskCleared: false,[\s\S]*?tslSurfaceSkippedDuplicateSegments: true/);
   assert.match(body, /cache\.strokeBaseTexture = null/);
-  assert.match(body, /cache\.strokeBaseTexture = surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
+  assert.match(body, /cache\.strokeBaseTexture = freezeLiveStrokeBase[\s\S]*?ensureSurfaceStrokeBaseTexture\([\s\S]*?renderer,[\s\S]*?cache,[\s\S]*?sourceTexture[\s\S]*?: surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
   assert.match(body, /const continuingEmptyLayerStroke = Boolean\(\s*layerMode\s*&& !startsNewSurfaceStroke\s*&& cache\.strokeBaseWasEmptyLayer === true/);
   assert.match(body, /const baseTexture = cache\.strokeBaseTexture \|\| sourceTexture/);
   assert.match(strokeBaseBody, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);

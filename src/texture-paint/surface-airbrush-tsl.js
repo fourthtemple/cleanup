@@ -5883,11 +5883,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
           .mul(float(3).sub(visibleDepthFade.mul(2)))
           .toVar();
         const visibleDepthCoverage = float(1).sub(visibleDepthSmoothFade).toVar();
-        const visibleGateCoverage = visibleActive
-          .mul(visibleSampleValid)
-          .greaterThan(0.5)
-          .select(visibleDepthCoverage, float(1))
-          .toVar();
+        const visibleGateCoverage = float(1).toVar();
         const softness = float(1).sub(hardness).toVar();
         const haloRadius = radius.mul(
           float(1)
@@ -6226,11 +6222,7 @@ function createSurfaceMaterial(
           .mul(float(3).sub(visibleDepthFade.mul(2)))
           .toVar();
         const visibleDepthCoverage = float(1).sub(visibleDepthSmoothFade).toVar();
-        const visibleGateCoverage = visibleActive
-          .mul(visibleSampleValid)
-          .greaterThan(0.5)
-          .select(visibleDepthCoverage, float(1))
-          .toVar();
+        const visibleGateCoverage = float(1).toVar();
         const softness = float(1).sub(hardness).toVar();
         const haloRadius = radius.mul(
           float(1)
@@ -8006,10 +7998,30 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
         ? "transparent-layer"
         : "transparent-layer-continuation";
     } else {
-      cache.strokeBaseTexture = surfaceStrokeStartBaseTexture(cache, sourceTexture);
-      cache.texturePaintTslSurfaceLastStrokeBaseCopy = cache.strokeBaseTexture === sourceTexture
-        ? "direct-source"
-        : "stable-source";
+      const freezeLiveStrokeBase = Boolean(
+        layerMode
+        || surfaceAirbrushTextureIsLiveTarget(sourceTexture)
+        || surfaceAirbrushCacheOwnsTexture(cache, sourceTexture)
+      );
+      cache.strokeBaseTexture = freezeLiveStrokeBase
+        ? ensureSurfaceStrokeBaseTexture(
+            renderer,
+            cache,
+            sourceTexture,
+            coordinateReferenceTexture || referenceTexture || sourceTexture,
+            width,
+            height
+          )
+        : surfaceStrokeStartBaseTexture(cache, sourceTexture);
+      if (!freezeLiveStrokeBase) {
+        cache.texturePaintTslSurfaceLastStrokeBaseCopy = cache.strokeBaseTexture === sourceTexture
+          ? "direct-source"
+          : "stable-source";
+      } else if (!cache.texturePaintTslSurfaceLastStrokeBaseCopy) {
+        cache.texturePaintTslSurfaceLastStrokeBaseCopy = cache.strokeBaseTexture === sourceTexture
+          ? "direct-source"
+          : "stable-source";
+      }
       cache.strokeBaseWasEmptyLayer = false;
       cache.strokeBaseEmptyLayerOwner = null;
     }
