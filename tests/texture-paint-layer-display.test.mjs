@@ -468,6 +468,52 @@ test("opacity input updates the row label without a synchronous panel rebuild", 
   assert.deepEqual(scheduledPanelRenders, [80]);
 });
 
+test("layer opacity changes refresh the live TSL layer display when available", () => {
+  const editor = new TestEditor();
+  const material = { userData: {} };
+  const layer = {
+    id: "paint-1",
+    name: "Paint 1",
+    visible: true,
+    opacity: 1
+  };
+  material.userData.texturePaintLayerStack = {
+    baseCanvas: fakeCanvas(),
+    activeLayerId: layer.id,
+    selectedLayerIds: [layer.id],
+    selectionAnchorLayerId: layer.id,
+    layers: [layer]
+  };
+  editor.texturePaintActiveMaterial = material;
+  editor.texturePaintLayerOpacity = { value: "1" };
+  editor.texturePaintLayerOpacityOutput = { textContent: "100%" };
+  const refreshes = [];
+  editor.texturePaintRefreshTslSurfaceLayerDisplay = (candidateMaterial, options) => {
+    refreshes.push({ material: candidateMaterial, options });
+    return true;
+  };
+  let canceled = 0;
+  editor.cancelTexturePaintLayerDisplayComposite = (candidateMaterial) => {
+    assert.equal(candidateMaterial, material);
+    canceled += 1;
+    return true;
+  };
+  editor.texturePaintApplyLayerDisplayChange = () => {
+    throw new Error("live TSL refresh should avoid CPU/display fallback");
+  };
+  editor.scheduleTexturePaintLayerDisplayPrewarm = () => true;
+  editor.scheduleTexturePaintLayerPanelRender = () => true;
+
+  assert.equal(editor.setTexturePaintLayerOpacity(layer.id, 0.42), true);
+  assert.equal(layer.opacity, 0.42);
+  assert.equal(refreshes.length, 1);
+  assert.equal(refreshes[0].material, material);
+  assert.equal(refreshes[0].options.changedLayer, layer);
+  assert.equal(refreshes[0].options.reason, "opacity");
+  assert.equal(canceled, 1);
+  assert.equal(editor.texturePaintLayerOpacityOutput.textContent, "42%");
+});
+
 test("setting a layer blend mode forces exact display for non-normal modes", () => {
   const editor = new TestEditor();
   const material = { userData: {} };
@@ -530,6 +576,55 @@ test("setting a layer blend mode forces exact display for non-normal modes", () 
   assert.equal(editor.pendingTexturePaintLayerDisplayComposites.has(pendingMaterial), true);
   assert.equal(editor.texturePaintLayerDisplayCompositeTimer, "timer");
   assert.equal(editor.setTexturePaintLayerBlendMode(layer.id, "multiply"), false);
+});
+
+test("layer blend mode changes refresh the live TSL layer display when available", () => {
+  const editor = new TestEditor();
+  const material = { userData: {} };
+  const layer = {
+    id: "paint-1",
+    name: "Paint 1",
+    visible: true,
+    opacity: 1,
+    blendMode: "normal"
+  };
+  material.userData.texturePaintLayerStack = {
+    baseCanvas: fakeCanvas(),
+    activeLayerId: layer.id,
+    selectedLayerIds: [layer.id],
+    selectionAnchorLayerId: layer.id,
+    layers: [layer]
+  };
+  editor.texturePaintActiveMaterial = material;
+  editor.texturePaintLayerBlendSelect = { value: "normal" };
+  const refreshes = [];
+  editor.texturePaintRefreshTslSurfaceLayerDisplay = (candidateMaterial, options) => {
+    refreshes.push({ material: candidateMaterial, options });
+    return true;
+  };
+  let canceled = 0;
+  editor.cancelTexturePaintLayerDisplayComposite = (candidateMaterial) => {
+    assert.equal(candidateMaterial, material);
+    canceled += 1;
+    return true;
+  };
+  editor.texturePaintCompositeMaterialLayerDisplay = () => {
+    throw new Error("live TSL refresh should avoid exact CPU/display composite");
+  };
+  editor.texturePaintApplyLayerDisplayChange = () => {
+    throw new Error("live TSL refresh should avoid display fallback");
+  };
+  editor.scheduleTexturePaintLayerDisplayPrewarm = () => true;
+  editor.scheduleTexturePaintLayerPanelRender = () => true;
+
+  assert.equal(editor.setTexturePaintLayerBlendMode(layer.id, "multiply"), true);
+  assert.equal(layer.blendMode, "multiply");
+  assert.equal(refreshes.length, 1);
+  assert.equal(refreshes[0].material, material);
+  assert.equal(refreshes[0].options.changedLayer, layer);
+  assert.equal(refreshes[0].options.previousMode, "normal");
+  assert.equal(refreshes[0].options.reason, "blend-mode");
+  assert.equal(canceled, 1);
 });
 
 test("hiding and showing cached top layer keeps the live underlay fast", () => {
@@ -652,7 +747,7 @@ test("hiding a TSL surface display layer drops the stale live display cache", ()
     liveCompositeLayerCount: 1,
     liveCompositeLayerIndex: 0,
     liveCompositeLayerOpacity: 1,
-    liveCompositeLayerBlendMode: "source-over",
+    liveCompositeLayerBlendMode: "normal",
     liveCompositeUnderlayKey: "",
     liveCompositeLayerMutationSerial: 0,
     emptyTransparent: false,
@@ -712,6 +807,57 @@ test("hiding a TSL surface display layer drops the stale live display cache", ()
   assert.equal(targetEntry.liveCompositeLayer, undefined);
   assert.equal(targetEntry.liveCompositeLayerIndex, undefined);
   assert.equal(targetEntry.liveCompositeLayerMutationSerial, undefined);
+});
+
+test("cached live layer display rejects stale blend modes", () => {
+  const editor = new TestEditor();
+  const material = { userData: {} };
+  const underlayTexture = { uuid: "cached-underlay" };
+  const layerTexture = { uuid: "layer-target" };
+  const displayTexture = { uuid: "display-texture" };
+  const targetEntry = {
+    target: { texture: layerTexture },
+    liveCompositeTarget: { texture: displayTexture, shaderComposite: true },
+    liveCompositeBaseTexture: underlayTexture,
+    liveCompositeLayerCount: 1,
+    liveCompositeLayerIndex: 0,
+    liveCompositeLayerOpacity: 1,
+    liveCompositeLayerBlendMode: "normal",
+    liveCompositeUnderlayKey: "",
+    liveCompositeLayerMutationSerial: 0,
+    emptyTransparent: false,
+    paintRevision: 1
+  };
+  const layer = {
+    id: "paint-1",
+    name: "Paint 1",
+    visible: true,
+    opacity: 1,
+    blendMode: "multiply",
+    canvas: fakeCanvas(),
+    context: fakeCanvas().getContext("2d"),
+    isEmpty: false,
+    gpuTarget: targetEntry
+  };
+  targetEntry.layer = layer;
+  targetEntry.liveCompositeLayer = layer;
+  material.userData.texturePaintLayerStack = {
+    baseCanvas: fakeCanvas(),
+    width: 2,
+    height: 1,
+    activeLayerId: layer.id,
+    selectedLayerIds: [layer.id],
+    selectionAnchorLayerId: layer.id,
+    layers: [layer]
+  };
+  editor.texturePaintActiveMaterial = material;
+  editor.texturePaintLiveLayerUnderlayKey = () => "";
+  editor.texturePaintRestoreLiveLayerShaderDisplayState = () => {
+    throw new Error("stale blend-mode cache should not restore the live display");
+  };
+
+  assert.equal(editor.texturePaintFastHiddenTopLayerDisplay(material, material.userData.texturePaintLayerStack, layer), false);
+  assert.equal(material.map, undefined);
 });
 
 test("showing a painted layer queues exact display instead of accepting stale non-live composite", () => {

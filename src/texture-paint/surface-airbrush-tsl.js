@@ -3137,6 +3137,154 @@ function renderSurfaceLayerComposite(
   return target;
 }
 
+export function texturePaintRefreshTslSurfaceLayerDisplay(editor = null, material = null, options = {}) {
+  const renderer = editor?.renderer || null;
+  const stack = material?.userData?.texturePaintLayerStack || null;
+  if (
+    !renderer?.isWebGPURenderer
+    || renderer?.backend?.isWebGPUBackend !== true
+    || !stack?.layers?.length
+  ) {
+    return false;
+  }
+  const displayLayer = [...stack.layers].reverse().find((layer) => surfaceLayerPaintLayerVisible(layer)) || null;
+  const targetEntry = displayLayer?.gpuTarget || null;
+  const finalTarget = targetEntry?.target || null;
+  if (!displayLayer?.canvas || !finalTarget?.texture) {
+    return false;
+  }
+  const width = Math.max(1, Math.floor(Number(
+    targetEntry.width
+    || finalTarget.width
+    || displayLayer.canvas.width
+    || stack.width
+  ) || 1));
+  const height = Math.max(1, Math.floor(Number(
+    targetEntry.height
+    || finalTarget.height
+    || displayLayer.canvas.height
+    || stack.height
+  ) || 1));
+  const editable = targetEntry.editable || {
+    canvas: displayLayer.canvas,
+    context: displayLayer.context || displayLayer.canvas.getContext?.("2d", { willReadFrequently: true }) || null,
+    texture: material.userData?.clonePaintTexture || material.map || null,
+    compositeCanvas: stack.baseCanvas || null
+  };
+  editable.layerMode = true;
+  editable.layer = displayLayer;
+  editable.layerStack = stack;
+  editable.canvas ||= displayLayer.canvas;
+  editable.context ||= displayLayer.context || displayLayer.canvas.getContext?.("2d", { willReadFrequently: true }) || null;
+  editable.texture ||= material.userData?.clonePaintTexture || material.map || null;
+  const originalMap = surfaceEditableOriginalMap(material, editable, [
+    targetEntry.liveCompositeBaseTexture,
+    targetEntry.displayTarget?.texture,
+    material.map,
+    editable.texture
+  ]);
+  const layerBaseTexture = surfaceLayerBaseTexture(editor, material, editable, originalMap);
+  const referenceTexture = layerBaseTexture
+    || originalMap
+    || surfaceLayerStableBaseCandidate(material, editable, material.map)
+    || targetEntry.liveCompositeBaseTexture
+    || finalTarget.texture;
+  const cache = ensureSurfaceAirbrushCache(editor, editable, referenceTexture, width, height);
+  if (!cache || !referenceTexture) {
+    return false;
+  }
+  const displayBaseTexture = surfaceLayerDisplayUnderlayTexture(
+    editor,
+    material,
+    editable,
+    originalMap,
+    layerBaseTexture || referenceTexture,
+    {
+      renderer,
+      cache,
+      width,
+      height,
+      referenceTexture,
+      avoidTextures: [
+        finalTarget.texture,
+        ...surfaceLayerCompositeAvoidTextures(material, editable)
+      ]
+    }
+  );
+  if (!displayBaseTexture) {
+    return false;
+  }
+  const layerDisplayTarget = renderSurfaceLayerComposite(
+    renderer,
+    cache,
+    displayBaseTexture,
+    finalTarget.texture,
+    displayBaseTexture || referenceTexture,
+    width,
+    height,
+    displayLayer.visible === false ? 0 : displayLayer.opacity ?? 1,
+    {
+      alphaFallback: false,
+      blendMode: displayLayer.blendMode || "normal",
+      avoidTextures: surfaceLayerCompositeAvoidTextures(material, editable)
+    }
+  );
+  if (!layerDisplayTarget?.texture) {
+    return false;
+  }
+  const now = surfaceAirbrushNowMs();
+  targetEntry.material = material;
+  targetEntry.layer = displayLayer;
+  targetEntry.layerStack = stack;
+  targetEntry.layerMode = true;
+  targetEntry.editable = editable;
+  targetEntry.displayTarget = layerDisplayTarget;
+  targetEntry.liveCompositeBaseTexture = displayBaseTexture;
+  targetEntry.liveCompositeTarget = layerDisplayTarget;
+  targetEntry.liveCompositeLayer = displayLayer;
+  targetEntry.liveCompositeLayerIndex = surfaceLayerIndex(stack, displayLayer);
+  targetEntry.liveCompositeLayerCount = stack.layers.length;
+  targetEntry.liveCompositeLayerOpacity = displayLayer.opacity ?? 1;
+  targetEntry.liveCompositeLayerBlendMode = displayLayer.blendMode || "normal";
+  targetEntry.liveCompositeLayerMutationSerial = surfaceLayerMutationSerial(editor);
+  targetEntry.liveCompositeUnderlayKey = surfaceLayerLiveUnderlayKey(editor, targetEntry);
+  targetEntry.updatedAt = now;
+  material.userData ||= {};
+  material.userData.texturePaintCompositeGpuTarget = {
+    target: layerDisplayTarget,
+    width,
+    height,
+    material,
+    layer: displayLayer,
+    layerStack: stack,
+    layerMode: true,
+    updatedAt: now
+  };
+  const surfaceTargetEntry = material.userData.texturePaintTslSurfaceAirbrushTarget || targetEntry;
+  surfaceTargetEntry.displayTarget = layerDisplayTarget;
+  surfaceTargetEntry.layer = displayLayer;
+  surfaceTargetEntry.layerStack = stack;
+  surfaceTargetEntry.layerMode = true;
+  surfaceTargetEntry.material = material;
+  surfaceTargetEntry.updatedAt = now;
+  material.userData.texturePaintTslSurfaceAirbrushTarget = surfaceTargetEntry;
+  if (material.map !== layerDisplayTarget.texture) {
+    material.map = layerDisplayTarget.texture;
+    material.needsUpdate = true;
+  }
+  editor.textureAirbrushLastLayerDisplayRefreshStats = {
+    refreshed: true,
+    reason: String(options.reason || ""),
+    layerName: String(displayLayer.name || ""),
+    layerOpacity: displayLayer.opacity ?? 1,
+    layerBlendMode: displayLayer.blendMode || "normal",
+    displayBaseTextureName: surfaceTextureDebugName(displayBaseTexture),
+    displayTextureName: surfaceTextureDebugName(layerDisplayTarget.texture),
+    changedLayerName: String(options.changedLayer?.name || "")
+  };
+  return true;
+}
+
 function renderSurfaceLayerPaintDisplay(
   renderer = null,
   cache = null,
@@ -5059,7 +5207,9 @@ function createLayerCompositeMaterial(baseTexture = null, layerTexture = null) {
     const layerRgb = sourceAlpha.greaterThan(0.0001)
       .select(clamp(layer.rgb.div(max(sourceAlpha, 0.0001)), 0.0, 1.0), layer.rgb)
       .toVar();
-    const baseAlpha = clamp(base.a, 0.0, 1.0).toVar();
+    // Imported diffuse textures can carry unreliable alpha, but the model
+    // backdrop is visually opaque. Blend layer pixels against the visible RGB.
+    const baseAlpha = float(1).toVar();
     const baseRgb = clamp(base.rgb, 0.0, 1.0).toVar();
     const multiplyBlend = baseRgb.mul(layerRgb).toVar();
     const screenBlend = float(1).sub(float(1).sub(baseRgb).mul(float(1).sub(layerRgb))).toVar();
@@ -6380,6 +6530,9 @@ function ensureSurfaceAirbrushCache(editor = null, editable = null, referenceTex
   if (!editor || !editable) {
     return null;
   }
+  editor.texturePaintRefreshTslSurfaceLayerDisplay ||= (material = null, options = {}) => (
+    texturePaintRefreshTslSurfaceLayerDisplay(editor, material, options)
+  );
   const cacheKey = stableSurfaceAirbrushCacheKey(editable);
   if (!cacheKey || (typeof cacheKey !== "object" && typeof cacheKey !== "function")) {
     return null;

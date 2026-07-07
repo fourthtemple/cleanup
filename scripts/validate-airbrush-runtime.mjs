@@ -1416,6 +1416,21 @@ function runtimeVisualAirbrushMatrixProofChecks(result) {
     editorReady: result?.ready === true,
     assetLoaded: result?.loaded === true,
     matrixLayerCreated: result?.sameLayer?.layerName === "Paint Matrix 1",
+    backgroundBlendModeApplied: result?.sameLayer?.backgroundBlend?.blendModeSet === true
+      && result?.sameLayer?.backgroundBlend?.blendModeRestored === true
+      && result?.sameLayer?.backgroundBlend?.stroke?.stats?.tslSurfaceLayerBlendMode === "multiply"
+      && result?.sameLayer?.backgroundBlend?.stroke?.stats?.tslSurfaceLayerDisplayBaseTextureName === "Diffuse Texture"
+      && result?.sameLayer?.backgroundBlend?.stroke?.stats?.tslSurfaceLayerDisplayUsedLiveUnderlay === false,
+    postStrokeOpacityRefresh: result?.sameLayer?.backgroundBlend?.opacityChanged === true
+      && result?.sameLayer?.backgroundBlend?.opacityRestored === true
+      && result?.sameLayer?.backgroundBlend?.opacityRefresh?.refreshed === true
+      && result?.sameLayer?.backgroundBlend?.opacityRefresh?.reason === "opacity"
+      && Number(result?.sameLayer?.backgroundBlend?.opacityRefresh?.layerOpacity) < 0.5
+      && result?.sameLayer?.backgroundBlend?.opacityRestoreRefresh?.refreshed === true
+      && Number(result?.sameLayer?.backgroundBlend?.opacityRestoreRefresh?.layerOpacity) > 0.99,
+    postStrokeBlendRefresh: result?.sameLayer?.backgroundBlend?.blendRestoreRefresh?.refreshed === true
+      && result?.sameLayer?.backgroundBlend?.blendRestoreRefresh?.reason === "blend-mode"
+      && result?.sameLayer?.backgroundBlend?.blendRestoreRefresh?.layerBlendMode === "normal",
     secondLayerCreated: result?.twoLayer?.layerName === "Paint Matrix 2",
     secondLayerBlendModeApplied: result?.twoLayer?.blendMode === "multiply"
       && result?.twoLayer?.stroke?.stats?.tslSurfaceLayerBlendMode === "multiply",
@@ -3652,6 +3667,7 @@ function runtimeVisualAirbrushMatrixProofExpression() {
     const baseLayer = reset.layer;
     const radius = Math.max(36, Number(editor.textureBrushRadiusScreenPixels?.()) || 48);
     const matrixStrokes = {
+      backgroundBlend: makeStroke(torsoHit, -radius * 0.9, radius * 1.0, -radius * 1.55),
       opacityLow: makeStroke(torsoHit, -radius * 1.3, radius * 1.05, radius * 0.85),
       opacityHigh: makeStroke(torsoHit, -radius * 1.15, radius * 1.2, radius * 1.45),
       sameLayerSecond: makeStroke(torsoHit, -radius * 1.0, radius * 1.35, radius * 2.0),
@@ -3665,6 +3681,27 @@ function runtimeVisualAirbrushMatrixProofExpression() {
       softEdge: makeStroke(torsoHit, -radius * 0.9, radius * 1.15, -radius * 0.75),
       hardEdge: makeStroke(torsoHit, -radius * 0.9, radius * 1.15, -radius * 1.2)
     };
+    const backgroundBlendSet = baseLayer?.id
+      ? editor.setTexturePaintLayerBlendMode?.(baseLayer.id, "multiply") === true
+      : false;
+    await waitFrame();
+    setBrush({ color: "#8fb2ff", radius: 0.19, opacity: 0.68, hardness: 0.15, scatter: 0.12, spacing: 0.1, visibleEdgeMode: "soft" });
+    const backgroundBlend = await paintStroke("matrix-background-multiply", matrixStrokes.backgroundBlend, baseLayer, material);
+    const backgroundOpacityChanged = baseLayer?.id
+      ? editor.setTexturePaintLayerOpacity?.(baseLayer.id, 0.34) === true
+      : false;
+    await waitFrame();
+    const backgroundOpacityRefresh = { ...(editor.textureAirbrushLastLayerDisplayRefreshStats || {}) };
+    const backgroundOpacityRestored = baseLayer?.id
+      ? editor.setTexturePaintLayerOpacity?.(baseLayer.id, 1) === true
+      : false;
+    await waitFrame();
+    const backgroundOpacityRestoreRefresh = { ...(editor.textureAirbrushLastLayerDisplayRefreshStats || {}) };
+    const backgroundBlendRestored = baseLayer?.id
+      ? editor.setTexturePaintLayerBlendMode?.(baseLayer.id, "normal") === true
+      : false;
+    await waitFrame();
+    const backgroundBlendRestoreRefresh = { ...(editor.textureAirbrushLastLayerDisplayRefreshStats || {}) };
     setBrush({ color: "#00ff60", radius: 0.22, opacity: 0.22, hardness: 0.14, scatter: 0.18, spacing: 0.1 });
     const opacityLow = await paintStroke("matrix-opacity-low", matrixStrokes.opacityLow, baseLayer, material);
     setBrush({ color: "#00ff60", radius: 0.22, opacity: 0.72, hardness: 0.14, scatter: 0.18, spacing: 0.1 });
@@ -3708,6 +3745,7 @@ function runtimeVisualAirbrushMatrixProofExpression() {
     editor.render?.();
     const screenshotClips = [
       clipForStrokes("matrix-opacity-spacing-scatter", [
+        matrixStrokes.backgroundBlend,
         matrixStrokes.opacityLow,
         matrixStrokes.opacityHigh,
         matrixStrokes.sameLayerSecond,
@@ -3736,6 +3774,16 @@ function runtimeVisualAirbrushMatrixProofExpression() {
       rendererMode: editor.textureAirbrushRendererMode || "",
       sameLayer: {
         layerName: baseLayer?.name || "",
+        backgroundBlend: {
+          blendModeSet: backgroundBlendSet,
+          opacityChanged: backgroundOpacityChanged,
+          opacityRefresh: backgroundOpacityRefresh,
+          opacityRestored: backgroundOpacityRestored,
+          opacityRestoreRefresh: backgroundOpacityRestoreRefresh,
+          blendModeRestored: backgroundBlendRestored,
+          blendRestoreRefresh: backgroundBlendRestoreRefresh,
+          stroke: backgroundBlend
+        },
         afterFirst,
         second: sameLayerSecond,
         afterSecond

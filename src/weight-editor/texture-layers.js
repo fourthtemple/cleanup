@@ -659,6 +659,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         || targetEntry.liveCompositeLayer !== layer
         || targetEntry.liveCompositeLayerIndex !== layerIndex
         || targetEntry.liveCompositeLayerCount !== stack.layers.length
+        || (targetEntry.liveCompositeLayerBlendMode || "normal") !== this.texturePaintLayerBlendMode(layer)
         || targetEntry.liveCompositeLayerMutationSerial !== (this.texturePaintLayerMutationSerialValue?.() ?? 0)
       ) {
         return false;
@@ -1495,6 +1496,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         material.needsUpdate = true;
       }
       targetEntry.liveCompositeLayerOpacity = layerOpacity;
+      targetEntry.liveCompositeLayerBlendMode = this.texturePaintLayerBlendMode(targetEntry.layer);
       return true;
     },
 
@@ -2462,9 +2464,17 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       this.prepareTexturePaintLayerDisplayMutation?.();
       for (const { material, layer } of changedEntries) {
         layer.opacity = nextOpacity;
-        this.texturePaintApplyLayerDisplayChange(material, {
-          changedLayer: layer
-        });
+        const refreshedLiveDisplay = this.texturePaintRefreshTslSurfaceLayerDisplay?.(material, {
+          changedLayer: layer,
+          reason: "opacity"
+        }) === true;
+        if (refreshedLiveDisplay) {
+          this.cancelTexturePaintLayerDisplayComposite?.(material);
+        } else {
+          this.texturePaintApplyLayerDisplayChange(material, {
+            changedLayer: layer
+          });
+        }
       }
       this.scheduleTexturePaintLayerDisplayPrewarm?.(activeEntry.material);
       this.updateTexturePaintLayerOpacityReadout?.(activeEntry.layer);
@@ -2498,6 +2508,15 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       this.prepareTexturePaintLayerDisplayMutation?.();
       for (const { material, layer, previousMode } of changedEntries) {
         layer.blendMode = nextMode;
+        const refreshedLiveDisplay = this.texturePaintRefreshTslSurfaceLayerDisplay?.(material, {
+          changedLayer: layer,
+          previousMode,
+          reason: "blend-mode"
+        }) === true;
+        if (refreshedLiveDisplay) {
+          this.cancelTexturePaintLayerDisplayComposite?.(material);
+          continue;
+        }
         const needsExactBlendDisplay = nextMode !== "normal" || previousMode !== "normal";
         if (needsExactBlendDisplay) {
           this.cancelTexturePaintLayerDisplayComposite?.(material);

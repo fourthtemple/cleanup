@@ -66,6 +66,8 @@ test("TSL layer composite shader exposes every texture paint blend mode", () => 
   assert.match(body, /const saturationBlend = setLum\(setSat\(baseRgb, layerSat\), baseLum\)/);
   assert.match(body, /const colorBlend = setLum\(layerRgb, baseLum\)/);
   assert.match(body, /const luminosityBlend = setLum\(baseRgb, layerLum\)/);
+  assert.match(body, /const baseAlpha = float\(1\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /const baseAlpha = clamp\(base\.a/);
   assert.match(body, /blendedRgb\.assign\(modeEnabled\(15\)\.select\(luminosityBlend, blendedRgb\)\)/);
 });
 
@@ -83,6 +85,14 @@ test("TSL layer composite receives blend mode from lower and active layers", () 
 });
 
 test("visual matrix proof exercises a non-normal live layer blend mode", () => {
+  assert.match(
+    validatorSource,
+    /setTexturePaintLayerBlendMode\?\.\(baseLayer\.id, "multiply"\)/
+  );
+  assert.match(
+    validatorSource,
+    /tslSurfaceLayerDisplayBaseTextureName === "Diffuse Texture"/
+  );
   assert.match(
     validatorSource,
     /setTexturePaintLayerBlendMode\?\.\(newLayer\.id, "multiply"\)/
