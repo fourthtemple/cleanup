@@ -653,6 +653,12 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.selectedBoneChainRootName = "";
       this.markerVertexCount = 0;
       this.vertexMarkerCount = 0;
+      this.selectionMarkerPositions = [];
+      if (this.selectionMarkers?.isInstancedMesh) {
+        this.selectionMarkers.count = 0;
+        this.selectionMarkers.visible = false;
+        this.selectionMarkers.instanceMatrix.needsUpdate = true;
+      }
       this.markerGeometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));
       this.markerGeometry.setAttribute("color", new THREE.Float32BufferAttribute([], 3));
       this.vertexGeometry.setAttribute("position", new THREE.Float32BufferAttribute([], 3));

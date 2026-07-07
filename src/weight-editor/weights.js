@@ -760,8 +760,6 @@ export function installWeightMethods(BirdWeightEditor, deps) {
       }
       this.model.updateMatrixWorld(true);
       const positions = [];
-      const colors = [];
-      const color = new THREE.Color();
 
       for (const record of this.paintRecords) {
         for (const vertexIndex of record.selected) {
@@ -773,25 +771,17 @@ export function installWeightMethods(BirdWeightEditor, deps) {
           this.tempWorld.copy(this.tempVector);
           record.object.localToWorld(this.tempWorld);
           positions.push(this.tempWorld.x, this.tempWorld.y, this.tempWorld.z);
-
-          const modified = record.modified.has(vertexIndex);
-          if (modified) {
-            color.copy(SELECTED_MODIFIED_COLOR);
-          } else {
-            color.copy(SELECTED_COLOR);
-          }
-          colors.push(color.r, color.g, color.b);
         }
       }
 
-      this.markerGeometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-      this.markerGeometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-      this.markerGeometry.computeBoundingSphere();
+      this.selectionMarkerPositions = positions;
       this.markerVertexCount = positions.length / 3;
+      this.ensureSelectionMarkerCapacity?.(this.markerVertexCount);
       this.updateSelectionMarkerStyle?.();
       this.selectionMarkers.visible = !this.cleanPreview
         && this.showSelectionLayer !== false
         && !this.cloneSpotlightActive
+        && this.activeTool !== "clone"
         && this.markerVertexCount > 0;
     },
 

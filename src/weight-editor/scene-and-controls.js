@@ -38,6 +38,55 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
   const SIDE_PANEL_PEN_SCROLL_THRESHOLD = 4;
   const PEN_ORBIT_BUTTON_ZOOM_SENSITIVITY = 0.012;
   const TIMELINE_DRAWER_HEIGHT_STORAGE_KEY = "fourth-temple-model-cleanup:timeline-drawer-height:v1";
+
+  const meshWireEdgePairs = (geometry = null) => {
+    const position = geometry?.attributes?.position || null;
+    const vertexCount = Math.max(0, Math.floor(Number(position?.count) || 0));
+    if (!vertexCount) {
+      return [];
+    }
+    const pairs = [];
+    const seen = new Set();
+    const addEdge = (left, right) => {
+      const a = Math.floor(Number(left));
+      const b = Math.floor(Number(right));
+      if (!Number.isInteger(a) || !Number.isInteger(b) || a < 0 || b < 0 || a >= vertexCount || b >= vertexCount || a === b) {
+        return;
+      }
+      const low = Math.min(a, b);
+      const high = Math.max(a, b);
+      const key = `${low}:${high}`;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      pairs.push(low, high);
+    };
+    const index = geometry?.index || null;
+    const indexCount = Math.max(0, Math.floor(Number(index?.count ?? index?.array?.length) || 0));
+    const indexAt = (offset) => (
+      typeof index?.getX === "function"
+        ? index.getX(offset)
+        : index?.array?.[offset]
+    );
+    if (index && indexCount >= 3) {
+      for (let offset = 0; offset + 2 < indexCount; offset += 3) {
+        const a = indexAt(offset);
+        const b = indexAt(offset + 1);
+        const c = indexAt(offset + 2);
+        addEdge(a, b);
+        addEdge(b, c);
+        addEdge(c, a);
+      }
+    } else {
+      for (let offset = 0; offset + 2 < vertexCount; offset += 3) {
+        addEdge(offset, offset + 1);
+        addEdge(offset + 1, offset + 2);
+        addEdge(offset + 2, offset);
+      }
+    }
+    return pairs;
+  };
   const TIMELINE_DRAWER_MIN_HEIGHT = 430;
   const TIMELINE_DRAWER_SNAP_HEIGHT = 280;
   const TIMELINE_DRAWER_DEFAULT_HEIGHT = 560;
@@ -320,18 +369,28 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.scene.add(floor);
 
       this.markerGeometry = new THREE.BufferGeometry();
-      this.markerMaterial = new THREE.PointsMaterial({
-        size: 4,
-        sizeAttenuation: false,
-        vertexColors: true,
+      this.selectionMarkerGeometry = new THREE.SphereGeometry(1, 8, 6);
+      this.markerMaterial = new THREE.MeshBasicMaterial({
+        color: 0xfff36a,
         transparent: true,
-        opacity: 0.72,
-        depthTest: true,
-        depthWrite: false
+        opacity: 1,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false
       });
-      this.selectionMarkers = new THREE.Points(this.markerGeometry, this.markerMaterial);
+      this.selectionMarkerPositions = [];
+      this.selectionMarkerCapacity = 256;
+      this.selectionMarkerDisplaySize = 6;
+      this.selectionMarkerWorldRadius = 0.3;
+      this.selectionMarkers = new THREE.InstancedMesh(
+        this.selectionMarkerGeometry,
+        this.markerMaterial,
+        this.selectionMarkerCapacity
+      );
+      this.selectionMarkers.count = 0;
+      this.selectionMarkers.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       this.selectionMarkers.frustumCulled = false;
-      this.selectionMarkers.renderOrder = 20;
+      this.selectionMarkers.renderOrder = 180;
       this.scene.add(this.selectionMarkers);
 
       this.selectedBoneLineGeometry = new THREE.BufferGeometry();
@@ -412,16 +471,12 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       this.vertexMarkers.visible = false;
       this.scene.add(this.vertexMarkers);
 
-      this.meshWireOverlayMaterial = new THREE.MeshBasicMaterial({
+      this.meshWireOverlayMaterial = new THREE.LineBasicMaterial({
         color: this.meshColor || "#80d8ff",
-        wireframe: true,
         transparent: true,
-        opacity: 0.42,
+        opacity: 0.36,
         depthTest: true,
-        depthWrite: false,
-        polygonOffset: true,
-        polygonOffsetFactor: -1,
-        polygonOffsetUnits: -1
+        depthWrite: false
       });
       this.meshWireOverlays = [];
 
@@ -439,7 +494,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         })
       );
       this.neighborHoverMarker.frustumCulled = false;
-      this.neighborHoverMarker.renderOrder = 34;
+      this.neighborHoverMarker.renderOrder = 122;
       this.neighborHoverMarker.visible = false;
       this.scene.add(this.neighborHoverMarker);
 
@@ -3306,6 +3361,14 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.applyMeshColor(this.cameraMeshColor.value);
         this.autoSaveCameraConfigurationSetting();
       });
+      const updateSelectionMarkerDisplay = () => {
+        this.updateRangeOutputs();
+        this.updateSelectionMarkerStyle();
+      };
+      this.selectionVertexSize?.addEventListener("input", updateSelectionMarkerDisplay);
+      this.selectionVertexSize?.addEventListener("change", updateSelectionMarkerDisplay);
+      this.selectionColorInput?.addEventListener("input", updateSelectionMarkerDisplay);
+      this.selectionColorInput?.addEventListener("change", updateSelectionMarkerDisplay);
       for (const input of [
         this.cameraAmbientLight,
         this.cameraKeyLight,
@@ -4508,25 +4571,135 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       }
     },
 
+    selectionMarkerRadiusFromDisplaySize(displaySize, position = null) {
+      const pixels = Math.max(1, Math.min(18, Number(displaySize) || 6));
+      const viewportHeight = Math.max(
+        1,
+        Number(this.renderer?.domElement?.clientHeight)
+          || Number(this.canvas?.clientHeight)
+          || (typeof window !== "undefined" ? Number(window.innerHeight) : 0)
+          || 720
+      );
+      const camera = this.camera || null;
+      if (camera?.isPerspectiveCamera) {
+        const distance = position
+          ? camera.position.distanceTo(position)
+          : Math.max(1, camera.position.distanceTo(this.controls?.target || new THREE.Vector3()));
+        const fovRadians = (Math.max(1, Math.min(175, Number(camera.fov) || 45)) * Math.PI) / 180;
+        return Math.max(0.0001, Math.tan(fovRadians * 0.5) * Math.max(0.001, distance) * pixels / viewportHeight);
+      }
+      if (camera?.isOrthographicCamera) {
+        const worldHeight = Math.max(0.0001, Math.abs((camera.top || 1) - (camera.bottom || -1)) / Math.max(0.0001, camera.zoom || 1));
+        return Math.max(0.0001, worldHeight * pixels / viewportHeight * 0.5);
+      }
+      return pixels * 0.05;
+    },
+
+    ensureSelectionMarkerCapacity(markerCount = 0) {
+      const count = Math.max(0, Math.floor(Number(markerCount) || 0));
+      if (!this.scene || !this.selectionMarkerGeometry || !this.markerMaterial) {
+        return null;
+      }
+      if (this.selectionMarkers?.isInstancedMesh && this.selectionMarkerCapacity >= count) {
+        return this.selectionMarkers;
+      }
+
+      let capacity = Math.max(1, this.selectionMarkerCapacity || 1);
+      while (capacity < count) {
+        capacity *= 2;
+      }
+
+      const previous = this.selectionMarkers;
+      previous?.parent?.remove(previous);
+      const next = new THREE.InstancedMesh(this.selectionMarkerGeometry, this.markerMaterial, capacity);
+      next.count = 0;
+      next.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      next.frustumCulled = false;
+      next.renderOrder = 180;
+      this.scene.add(next);
+      this.selectionMarkers = next;
+      this.selectionMarkerCapacity = capacity;
+      return next;
+    },
+
+    applySelectionMarkerInstanceScale() {
+      if (!this.selectionMarkers?.isInstancedMesh) {
+        return;
+      }
+
+      const positions = this.selectionMarkerPositions || [];
+      const count = Math.max(0, Math.floor(positions.length / 3));
+      this.ensureSelectionMarkerCapacity(count);
+      const markers = this.selectionMarkers;
+      if (!markers?.isInstancedMesh) {
+        return;
+      }
+
+      const matrix = this.tempMatrix || new THREE.Matrix4();
+      const position = this.tempWorld || new THREE.Vector3();
+      for (let index = 0; index < count; index += 1) {
+        position.set(
+          positions[index * 3],
+          positions[index * 3 + 1],
+          positions[index * 3 + 2]
+        );
+        const radius = this.selectionMarkerRadiusFromDisplaySize(this.selectionMarkerDisplaySize, position);
+        matrix.makeScale(radius, radius, radius);
+        matrix.setPosition(position);
+        markers.setMatrixAt(index, matrix);
+      }
+      markers.count = count;
+      markers.instanceMatrix.needsUpdate = true;
+      markers.computeBoundingSphere?.();
+    },
+
     updateSelectionMarkerStyle() {
       if (!this.markerMaterial || !this.selectionMarkers) {
         return;
       }
 
       const selectedCount = this.markerVertexCount || 0;
-      const crowded = selectedCount > 250;
-      const dense = selectedCount > 900;
-      const rendered = this.viewMode === "rendered" && this.showRenderedLayer !== false;
+      const sizeValue = Number(this.selectionVertexSize?.value);
+      const baseSize = Number.isFinite(sizeValue)
+        ? Math.max(1, Math.min(18, sizeValue))
+        : 6;
+      const selectionColor = /^#[0-9a-f]{6}$/i.test(String(this.selectionColorInput?.value || ""))
+        ? this.selectionColorInput.value
+        : "#fff36a";
+      const selectionVisible = !this.cleanPreview
+        && this.showSelectionLayer !== false
+        && !this.cloneSpotlightActive
+        && this.activeTool !== "clone"
+        && selectedCount > 0;
 
-      this.markerMaterial.size = rendered
-        ? (dense ? 2.5 : crowded ? 3.25 : 4)
-        : (dense ? 4 : crowded ? 5.5 : 7);
-      this.markerMaterial.opacity = rendered
-        ? (dense ? 0.44 : crowded ? 0.58 : 0.72)
-        : (dense ? 0.62 : crowded ? 0.78 : 0.92);
-      this.markerMaterial.depthTest = rendered || dense;
+      this.selectionMarkerDisplaySize = baseSize;
+      this.selectionMarkerWorldRadius = this.selectionMarkerRadiusFromDisplaySize(baseSize);
+      this.markerMaterial.size = baseSize;
+      this.markerMaterial.sizeAttenuation = false;
+      this.markerMaterial.opacity = 1;
+      this.markerMaterial.vertexColors = false;
+      this.markerMaterial.color.set(selectionColor);
+      this.markerMaterial.depthTest = false;
+      this.markerMaterial.depthFunc = THREE.LessEqualDepth;
+      this.markerMaterial.depthWrite = false;
+      this.markerMaterial.toneMapped = false;
       this.markerMaterial.needsUpdate = true;
-      this.selectionMarkers.renderOrder = rendered ? 12 : 20;
+      this.applySelectionMarkerInstanceScale();
+      this.selectionMarkers.visible = selectionVisible;
+      this.selectionMarkers.renderOrder = 180;
+      if (typeof window !== "undefined" && new URLSearchParams(window.location?.search || "").has("debugAirbrush")) {
+        window.document?.documentElement?.setAttribute("data-selection-marker-debug", JSON.stringify({
+          selectedCount,
+          visible: this.selectionMarkers.visible,
+          instanced: this.selectionMarkers.isInstancedMesh === true,
+          instanceCount: this.selectionMarkers.count ?? null,
+          capacity: this.selectionMarkerCapacity ?? null,
+          displaySize: baseSize,
+          radius: this.selectionMarkerWorldRadius,
+          color: selectionColor,
+          sample: (this.selectionMarkerPositions || []).slice(0, 6)
+        }));
+      }
     },
 
     getObjectMaterials(material) {
@@ -4540,25 +4713,30 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (!this.scene || !geometry) {
         return null;
       }
-      const material = this.meshWireOverlayMaterial || new THREE.MeshBasicMaterial({
+      const edgePairs = meshWireEdgePairs(geometry);
+      if (!edgePairs.length) {
+        return null;
+      }
+      const material = this.meshWireOverlayMaterial || new THREE.LineBasicMaterial({
         color: this.meshColor || "#80d8ff",
-        wireframe: true,
         transparent: true,
-        opacity: 0.42,
+        opacity: 0.36,
+        depthTest: true,
         depthWrite: false
       });
-      const overlay = object.isSkinnedMesh && object.skeleton
-        ? new THREE.SkinnedMesh(geometry, material)
-        : new THREE.Mesh(geometry, material);
+      const overlayGeometry = new THREE.BufferGeometry();
+      overlayGeometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(new Float32Array(edgePairs.length * 3), 3)
+      );
+      const overlay = new THREE.LineSegments(overlayGeometry, material);
       overlay.name = `${object.name || "mesh"} wire overlay`;
       overlay.frustumCulled = false;
-      overlay.renderOrder = 16;
+      overlay.renderOrder = 80;
       overlay.visible = false;
+      overlay.matrixAutoUpdate = false;
       overlay.userData.mixamoCleanupHelper = "wire-overlay";
-      if (overlay.isSkinnedMesh) {
-        overlay.bindMode = object.bindMode;
-        overlay.bind(object.skeleton, object.bindMatrix);
-      }
+      overlay.userData.meshWireEdgePairs = edgePairs;
       this.scene.add(overlay);
       this.meshWireOverlays.push(overlay);
       return overlay;
@@ -4567,6 +4745,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     disposeMeshWireOverlays() {
       for (const overlay of this.meshWireOverlays || []) {
         overlay.parent?.remove(overlay);
+        overlay.geometry?.dispose?.();
       }
       this.meshWireOverlays = [];
     },
@@ -4582,8 +4761,29 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         if (!visible) {
           continue;
         }
+        const edgePairs = overlay.userData?.meshWireEdgePairs || [];
+        const position = record.geometry?.attributes?.position || null;
+        const attribute = overlay.geometry?.attributes?.position || null;
+        const array = attribute?.array || null;
+        if (!edgePairs.length || !position || !array) {
+          overlay.visible = false;
+          continue;
+        }
         record.object.updateMatrixWorld(true);
-        record.object.matrixWorld.decompose(overlay.position, overlay.quaternion, overlay.scale);
+        let offset = 0;
+        for (let index = 0; index < edgePairs.length; index += 1) {
+          const vertexIndex = edgePairs[index];
+          this.tempVector.fromBufferAttribute(position, vertexIndex);
+          this.applyBoneTransform(record.object, vertexIndex, this.tempVector);
+          this.tempWorld.copy(this.tempVector);
+          record.object.localToWorld(this.tempWorld);
+          array[offset++] = this.tempWorld.x;
+          array[offset++] = this.tempWorld.y;
+          array[offset++] = this.tempWorld.z;
+        }
+        attribute.needsUpdate = true;
+        overlay.matrix.identity();
+        overlay.matrixWorld.identity();
         overlay.updateMatrixWorld(true);
       }
     },
@@ -6062,6 +6262,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
     updateRangeOutputs() {
       if (this.brushRadiusOutput && this.brushRadius) {
         this.brushRadiusOutput.textContent = Number(this.brushRadius.value).toFixed(3);
+      }
+      if (this.selectionVertexSizeOutput && this.selectionVertexSize) {
+        this.selectionVertexSizeOutput.textContent = Number(this.selectionVertexSize.value).toFixed(1);
       }
       if (this.sculptStrengthOutput) {
         this.sculptStrengthOutput.textContent = Number(this.sculptStrength.value).toFixed(4);

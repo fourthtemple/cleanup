@@ -225,6 +225,9 @@ class ModelCleanupEditor {
     this.convertAdaptiveKeyButton = document.getElementById("convert-adaptive-key");
     this.brushRadius = document.getElementById("brush-radius");
     this.brushRadiusOutput = document.getElementById("brush-radius-output");
+    this.selectionVertexSize = document.getElementById("selection-vertex-size");
+    this.selectionVertexSizeOutput = document.getElementById("selection-vertex-size-output");
+    this.selectionColorInput = document.getElementById("selection-color");
     this.throughSelectionToggle = document.getElementById("through-selection-toggle");
     this.sculptStrength = document.getElementById("sculpt-strength");
     this.sculptStrengthOutput = document.getElementById("sculpt-strength-output");
