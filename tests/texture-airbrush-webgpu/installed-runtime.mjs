@@ -5387,7 +5387,7 @@ test("installed airbrush WebGPU live queue splits large-brush UV-jump bounds", (
   ) <= maxArea));
 });
 
-test("installed airbrush WebGPU live queue merges repeated oversized large-brush bounds", () => {
+test("installed airbrush WebGPU live queue merges repeated bounded large-brush bounds", () => {
   class TestEditor {}
   installTextureAirbrushWebGpuMethods(TestEditor);
   const editor = new TestEditor();
@@ -5436,8 +5436,10 @@ test("installed airbrush WebGPU live queue merges repeated oversized large-brush
   assert.ok(second > 0);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].strokeSegments.length, 2);
-  assert.ok(queued[0].paintBounds.height > 1400);
-  assert.ok(queued[0].paintBounds.width > 1400);
+  assert.ok(queued[0].paintBounds.height >= 1280);
+  assert.ok(queued[0].paintBounds.width >= 1280);
+  assert.ok(queued[0].paintBounds.height < 1400);
+  assert.ok(queued[0].paintBounds.width < 1400);
   assert.ok(
     queued[0].paintBounds.width * queued[0].paintBounds.height < 4096 * 4096 * 0.35
   );
@@ -7052,7 +7054,10 @@ test("installed airbrush WebGPU live Neighbor path keeps segment visibility with
   assert.equal(changed, 1);
   assert.equal(candidateOptions.keepVisibilitySamplesWithTriangles, true);
   assert.equal(candidateOptions.requireVisibilityTriangles, false);
-  assert.equal(candidateOptions.paintProjectedSurfaceCandidates, false);
+  assert.equal(candidateOptions.directVisibilityOnly, false);
+  assert.equal(candidateOptions.paintProjectedSurfaceCandidates, true);
+  assert.equal(candidateOptions.dedupProjectedSurfacePaintCandidates, true);
+  assert.equal(candidateOptions.paintOrderedProbeCandidates, true);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].options.visibilityMaskTriangles.length, 1);
   assert.ok(queued[0].options.visibilityMaskSamples.some((sample) => (
@@ -7093,13 +7098,14 @@ test("installed airbrush WebGPU large live Neighbor brushes keep bounded project
   assert.equal(capturedOptions.skipVisibilityFootprintProbes, undefined);
   assert.equal(capturedOptions.largeLiveNeighborPaint, true);
   assert.equal(capturedOptions.requireVisibilityTriangles, false);
-  assert.equal(capturedOptions.paintProjectedSurfaceCandidates, false);
-  assert.equal(capturedOptions.dedupProjectedSurfacePaintCandidates, false);
-  assert.equal(capturedOptions.paintOrderedProbeCandidates, false);
+  assert.equal(capturedOptions.directVisibilityOnly, false);
+  assert.equal(capturedOptions.paintProjectedSurfaceCandidates, true);
+  assert.equal(capturedOptions.dedupProjectedSurfacePaintCandidates, true);
+  assert.equal(capturedOptions.paintOrderedProbeCandidates, true);
   assert.equal(capturedOptions.visibilityFootprintViewRadiusScale, 1.35);
-  assert.equal(capturedOptions.denseVisibilityFootprintProbes, undefined);
-  assert.equal(capturedOptions.maxVisibilityFootprintProbePoints, undefined);
-  assert.equal(capturedOptions.maxNeighborVisibilityIntersections, undefined);
+  assert.equal(capturedOptions.denseVisibilityFootprintProbes, false);
+  assert.ok(capturedOptions.maxVisibilityFootprintProbePoints >= 4);
+  assert.ok(capturedOptions.maxNeighborVisibilityIntersections >= 2);
 });
 
 test("installed airbrush WebGPU live path batches compatible queued strokes", async () => {

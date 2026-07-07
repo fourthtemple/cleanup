@@ -1108,20 +1108,42 @@ function textureAirbrushWebGpuLayerCompositeSource(editable = null) {
   };
 }
 
+function textureAirbrushStableLiveDisplayReferenceTexture(texture = null) {
+  if (!texture) {
+    return null;
+  }
+  const userData = texture.userData || {};
+  if (
+    userData.texturePaintTslSurfaceAirbrushDisplayTexture === true
+    || userData.texturePaintTslSurfaceAirbrushTargetTexture === true
+    || userData.textureAirbrushExternalWebGpuDisplay === true
+  ) {
+    return userData.textureAirbrushWebGpuCanvasMap
+      || userData.texturePaintTslSurfaceDisplayOriginalMap
+      || userData.clonePaintOriginalMap
+      || null;
+  }
+  return texture;
+}
+
 function textureAirbrushLiveDisplayReferenceTexture(material = null, editable = null) {
   const userData = material?.userData || {};
-  const canvasMap = userData.textureAirbrushWebGpuCanvasMap || null;
+  const canvasMap = textureAirbrushStableLiveDisplayReferenceTexture(userData.textureAirbrushWebGpuCanvasMap || null);
   if (canvasMap) {
     return canvasMap;
   }
   const materialMap = material?.map || null;
   const materialMapIsExternal = materialMap?.userData?.textureAirbrushExternalWebGpuDisplay === true;
+  const materialMapStable = textureAirbrushStableLiveDisplayReferenceTexture(materialMap);
+  const editableStable = textureAirbrushStableLiveDisplayReferenceTexture(editable?.texture || null);
+  const cloneStable = textureAirbrushStableLiveDisplayReferenceTexture(userData.clonePaintTexture || null);
+  const originalStable = textureAirbrushStableLiveDisplayReferenceTexture(userData.clonePaintOriginalMap || null);
   if (editable?.layerMode === true) {
     return materialMapIsExternal
-      ? editable?.texture || userData.clonePaintTexture || userData.clonePaintOriginalMap || null
-      : materialMap || editable?.texture || null;
+      ? editableStable || cloneStable || originalStable || null
+      : materialMapStable || editableStable || originalStable || null;
   }
-  return editable?.texture || (materialMapIsExternal ? null : materialMap) || userData.clonePaintTexture || null;
+  return editableStable || (materialMapIsExternal ? null : materialMapStable) || cloneStable || originalStable || null;
 }
 
 function textureAirbrushTextureNeedsLiveLinearDisplay(texture = null) {

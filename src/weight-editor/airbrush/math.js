@@ -6,7 +6,7 @@ export const TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER = 1.35;
 export const TEXTURE_AIRBRUSH_EDGE_EXPONENT_BASE = 1.0;
 export const TEXTURE_AIRBRUSH_EDGE_HARDNESS_SCALE = 15.0;
 export const TEXTURE_AIRBRUSH_EDGE_HARDNESS_POWER = 2.2;
-export const TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE = 0.0;
+export const TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE = 0.85;
 export const TEXTURE_AIRBRUSH_SOFT_TAIL_ALPHA_SCALE = 0.12;
 export const TEXTURE_AIRBRUSH_SCATTER_TAIL_ALPHA_SCALE = 0.08;
 export const TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD = 0.004;
@@ -98,14 +98,9 @@ export function airbrushCoverageForDistance(distancePixels, radiusPixels, scatte
 
 export function airbrushHaloRadius(radiusPixels, scatter, hardness = 0.35) {
   const radius = Math.max(1, radiusPixels);
-  const safeScatter = Math.max(0, Math.min(1, scatter));
-  const safeHardness = Math.max(0, Math.min(1, hardness));
-  const softness = 1 - safeHardness;
-  return radius * (
-    1
-    + safeScatter * TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE
-    + softness * TEXTURE_AIRBRUSH_SOFT_HALO_SCALE
-  );
+  void scatter;
+  void hardness;
+  return radius;
 }
 
 export function airbrushAlphaForDistance(distancePixels, radiusPixels, opacity, scatter, hardness, strength = 1) {

@@ -597,7 +597,11 @@ export function installOverlayAndRenderMethods(BirdWeightEditor, deps) {
       this.camera.lookAt(this.controls.target);
       this.controls.maxDistance = Math.max(120, distance * 4);
       this.updateSceneDepthForModelView?.(distance);
+      this.camera.updateProjectionMatrix?.();
       this.controls.update();
+      this.updateCameraRelativeLights?.();
+      this.textureAirbrushCameraChanged?.();
+      this.render?.();
       document.querySelectorAll("[data-camera]").forEach((button) => {
         button.classList.toggle("is-active", button.dataset.camera === presetName);
       });

@@ -13,20 +13,20 @@ const TEXTURE_AIRBRUSH_LIVE_MAX_BATCH_MS = 8;
 const TEXTURE_AIRBRUSH_LIVE_MAX_BATCH_SEGMENTS = 24;
 const TEXTURE_AIRBRUSH_LIVE_MAX_SEGMENTS = 48;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_MAX_BATCHES = 32;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_MAX_BATCH_SEGMENTS = 24;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_MAX_BATCH_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_MAX_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_MAX_SCREEN_SEGMENT_PIXELS = 96;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_MAX_BATCH_MS = 4;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_MAX_BATCH_MS = 12;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_BATCHES = 8;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_FIRST_PAINT_BATCHES = 32;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_BATCH_SEGMENTS = 64;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_BATCH_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_BATCH_MS = 8;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MIN_MS = 0;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_NEIGHBOR_IMMEDIATE_MIN_MS = 0;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_CONTINUATION_COALESCE_MS = 0;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_CONTINUATION_COALESCE_MS = 0;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_SCREEN_FLUSH_MIN_MS = 0;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_BATCH_MS = 12;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MIN_MS = 16;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_NEIGHBOR_IMMEDIATE_MIN_MS = 24;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_CONTINUATION_COALESCE_MS = 40;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_CONTINUATION_COALESCE_MS = 40;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_SCREEN_FLUSH_MIN_MS = 16;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_BRUSH_MIN_RADIUS_PIXELS = 18;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_RESET_FOOTPRINT_MIN_RADIUS_PIXELS = 24;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_RESET_FOOTPRINT_HOLD_MS = 48;
@@ -36,9 +36,9 @@ const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_NEIGHBOR_MAX_BATCH_SEGMENTS = 64;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_NEIGHBOR_MAX_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_NEIGHBOR_MAX_BATCH_MS = 8;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_MAX_BATCHES = 4;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_MAX_BATCH_SEGMENTS = 48;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_MAX_SEGMENTS = 128;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_MAX_BATCH_MS = 8;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_MAX_BATCH_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_MAX_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_MAX_BATCH_MS = 12;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_MAX_QUEUED_PAYLOADS = 10;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_NEIGHBOR_MIN_SAMPLE_PIXELS = 10;
 const TEXTURE_AIRBRUSH_LIVE_LAYER_RESET_MAX_BATCHES = 1;
@@ -436,10 +436,7 @@ function activeTexturePaintLayerMode(editor = null, material = null) {
   if (editor?.texturePaintLayerModeActive?.() !== true) {
     return false;
   }
-  if (typeof editor.texturePaintHasActivePaintLayer !== "function") {
-    return true;
-  }
-  return editor.texturePaintHasActivePaintLayer(material) === true;
+  return true;
 }
 
 function probePointForClientEvent(event = null, rect = null) {
@@ -2124,7 +2121,14 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         layerMutationSerial: this.texturePaintLayerMutationSerialValue?.() ?? 0,
         strokeReset: false
       };
-      const neighborPaintSeed = this.textureAirbrushActiveNeighborPaintSeed || null;
+      const neighborPaintActive = this.texturePaintNeighborModeEnabled?.() === true
+        && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
+      const neighborPaintSeed = neighborPaintActive
+        ? this.textureAirbrushActiveNeighborPaintSeed || null
+        : null;
+      if (!neighborPaintActive) {
+        this.textureAirbrushActiveNeighborPaintSeed = null;
+      }
       if (neighborPaintSeed?.enabled) {
         payload.neighborPaintSeed = neighborPaintSeed;
         payload.neighborPaintKey = this.textureAirbrushNeighborSeedKey?.(neighborPaintSeed)
@@ -3253,63 +3257,70 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const samplePayload = this.textureAirbrushScreenStrokePayload?.(event, strokeStart);
       const radiusPixels = Math.max(1, Number(samplePayload?.radiusPixels) || this.textureBrushRadiusScreenPixels?.() || 8);
       const spacingPercent = Math.max(0.1, Math.min(200, Number(samplePayload?.spacing ?? this.textureAirbrushSpacingPercent?.() ?? 1)));
+      const applyStrokePayloadFlags = (payload) => {
+        if (!payload) {
+          return null;
+        }
+        payload.strokeReset = strokeReset || neighborSeedSwitched;
+        if (options.preserveCurveSamples === true) {
+          payload.preserveCurveSample = true;
+        }
+        if (postCameraProjectionRewarmed) {
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // First post-camera layer paint gets complete visible-surface warm
+          // state immediately; it still paints only the shader-visible side.
+          payload.postCameraProjectionRewarmed = true;
+        }
+        if (neighborProjectionRewarmed) {
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // Carry the post-orbit warm state to the first live flush only so it
+          // can use complete visible-surface caches on the first stroke pass.
+          payload.neighborProjectionRewarmed = true;
+        }
+        if (postCameraProjectionAccumulates) {
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // Accumulation here is visible-only and post-camera specific. Do
+          // not replace this with hidden-side paint or a looser culling rule.
+          payload.postCameraProjectionAccumulates = true;
+        }
+        if (deferredNeighborProjectionRewarm) {
+          // DO NOT PAINT ON NON CAMERA FACING SIDES.
+          // The scheduled flush must resolve this marker before dispatching
+          // WebGPU paint, preserving the camera-facing visible-surface gate.
+          payload.deferredNeighborProjectionRewarm = true;
+        }
+        if (deferredNeighborPaintSeed) {
+          payload.deferredNeighborPaintSeed = true;
+        }
+        if (deferredPostCameraProjectionAccumulates) {
+          payload.deferredPostCameraProjectionAccumulates = true;
+        }
+        return payload;
+      };
       if (spacingPercent <= 100) {
         this.textureAirbrushStrokeSpacingState = null;
-        if (samplePayload) {
-          samplePayload.strokeReset = strokeReset || neighborSeedSwitched;
-          if (options.preserveCurveSamples === true) {
-            samplePayload.preserveCurveSample = true;
-          }
-          if (postCameraProjectionRewarmed) {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // First post-camera layer paint gets complete visible-surface warm
-            // state immediately; it still paints only the shader-visible side.
-            samplePayload.postCameraProjectionRewarmed = true;
-          }
-          if (neighborProjectionRewarmed) {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // Carry the post-orbit warm state to the first live flush only so it
-            // can use complete visible-surface caches on the first stroke pass.
-            samplePayload.neighborProjectionRewarmed = true;
-          }
-          if (postCameraProjectionAccumulates) {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // Accumulation here is visible-only and post-camera specific. Do
-            // not replace this with hidden-side paint or a looser culling rule.
-            samplePayload.postCameraProjectionAccumulates = true;
-          }
-          if (deferredNeighborProjectionRewarm) {
-            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-            // The scheduled flush must resolve this marker before dispatching
-            // WebGPU paint, preserving the camera-facing visible-surface gate.
-            samplePayload.deferredNeighborProjectionRewarm = true;
-          }
-          if (deferredNeighborPaintSeed) {
-            samplePayload.deferredNeighborPaintSeed = true;
-          }
-          if (deferredPostCameraProjectionAccumulates) {
-            samplePayload.deferredPostCameraProjectionAccumulates = true;
-          }
-        }
-        return this.textureAirbrushQueueScreenStrokePayload?.(samplePayload) || false;
+        return this.textureAirbrushQueueScreenStrokePayload?.(applyStrokePayloadFlags(samplePayload)) || false;
       }
       const spacingPixels = Math.max(
         0.1,
-        Number(options.spacingPixels) || this.textureAirbrushSpacingPixels?.(radiusPixels) || radiusPixels * 0.5
+        Number(options.spacingPixels)
+          || radiusPixels * 2 * spacingPercent / 100
+          || this.textureAirbrushSpacingPixels?.(radiusPixels)
+          || radiusPixels * 0.5
       );
       const queueStamp = (point) => {
         const stampEvent = clientEventAtPoint(this, event, point);
-        return Boolean(stampEvent && this.textureAirbrushQueueScreenStroke?.(stampEvent, {
-          strokeStart: point,
-          preview: options.preview,
-          postCameraProjectionRewarmed,
-          neighborProjectionRewarmed,
-          postCameraProjectionAccumulates,
-          deferredNeighborPaintSeed,
-          deferredNeighborProjectionRewarm,
-          deferredPostCameraProjectionAccumulates,
-          strokeReset: strokeReset || neighborSeedSwitched
-        }));
+        const stampPayload = stampEvent
+          ? this.textureAirbrushScreenStrokePayload?.(stampEvent, point)
+          : null;
+        if (!stampPayload) {
+          return false;
+        }
+        applyStrokePayloadFlags(stampPayload);
+        stampPayload.spacing = spacingPercent;
+        stampPayload.spacingPixels = spacingPixels;
+        stampPayload.spacedStamp = true;
+        return this.textureAirbrushQueueScreenStrokePayload?.(stampPayload) || false;
       };
 
       if (strokeReset || neighborSeedSwitched || !this.textureAirbrushStrokeSpacingState) {
@@ -4227,7 +4238,8 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
               cachedStrokeSamplesOnly: false,
               indexedStrokeSamplesOnly: true,
               deferQueuedWebGpuFlush: true,
-              immediateWebGpuFlush: options.immediateWebGpuFlush === true,
+              immediateWebGpuFlush: options.immediateWebGpuFlush === true
+                || options.flushQueuedWebGpuPerScreenBatch === true,
               ...(Number.isFinite(Number(options.maxImmediateWebGpuFlushBatches))
                 ? { maxImmediateWebGpuFlushBatches: Math.max(1, Math.floor(Number(options.maxImmediateWebGpuFlushBatches))) }
                 : {})

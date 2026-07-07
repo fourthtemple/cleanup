@@ -79,6 +79,40 @@ function viewRadiusForScreenRadius(editor = null, rect = null, viewZ = null, rad
   return radius * 0.03;
 }
 
+function relaxNeighborComponentGate(options = {}) {
+  return options.relaxNeighborComponentGate === true
+    && options.liveProjectedPaint === true
+    && options.useTslSurfaceAirbrush !== false;
+}
+
+function neighborSeedRecordMatches(editor = null, seed = null, record = null) {
+  if (!seed?.enabled) {
+    return true;
+  }
+  if (typeof editor?.textureAirbrushNeighborRecordMatches === "function") {
+    return editor.textureAirbrushNeighborRecordMatches(seed, record) !== false;
+  }
+  const seedRecord = textureAirbrushRecordIdentity(seed.record, "");
+  const hitRecord = textureAirbrushRecordIdentity(record, "");
+  return Boolean(seedRecord && hitRecord && seedRecord === hitRecord);
+}
+
+function neighborSeedAllowsTextureSurfaceHit(editor = null, seed = null, record = null, hit = null, material = null, materialIndex = null, options = {}) {
+  if (!seed?.enabled) {
+    return true;
+  }
+  if (relaxNeighborComponentGate(options)) {
+    return neighborSeedRecordMatches(editor, seed, record);
+  }
+  return editor?.textureAirbrushNeighborHitAllowed?.(
+    seed,
+    record,
+    hit,
+    material,
+    materialIndex
+  ) !== false;
+}
+
 function viewPointDistance(left = null, right = null) {
   if (
     !Number.isFinite(left?.x)
@@ -918,13 +952,7 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
         const baseEditable = this.editableClonePaintTexture?.(material) || null;
         let editable = baseEditable;
         const layerModeRequested = options.layerMode === true
-          || (
-            this.texturePaintLayerModeActive?.() === true
-            && (
-              typeof this.texturePaintHasActivePaintLayer !== "function"
-              || this.texturePaintHasActivePaintLayer(material) === true
-            )
-          );
+          || this.texturePaintLayerModeActive?.() === true;
         if (layerModeRequested && typeof this.texturePaintEditableLayerTarget === "function") {
           const layerEditable = this.texturePaintEditableLayerTarget(material, baseEditable);
           if (layerEditable?.layerMode === true && layerEditable?.canvas && layerEditable?.context) {
@@ -1005,13 +1033,15 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
           options.neighborPaintSeed?.enabled === true
           && directHitRecord
           && directHit
-          && this.textureAirbrushNeighborHitAllowed?.(
+          && !neighborSeedAllowsTextureSurfaceHit(
+            this,
             options.neighborPaintSeed,
             directHitRecord,
             directHit,
             directMaterial,
-            directMaterialIndex
-          ) === false
+            directMaterialIndex,
+            options
+          )
         ) {
           debugReject?.("neighbor-rejected", {
             recordId: textureAirbrushRecordIdentity(directHitRecord, ""),
@@ -1189,13 +1219,15 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
             : undefined;
           if (
             neighborPaintSeed?.enabled === true
-            && this.textureAirbrushNeighborHitAllowed?.(
+            && !neighborSeedAllowsTextureSurfaceHit(
+              this,
               neighborPaintSeed,
               record,
               hit,
               material,
-              materialIndex
-            ) === false
+              materialIndex,
+              options
+            )
           ) {
             debugReject?.("neighbor-rejected", {
               recordId: textureAirbrushRecordIdentity(record, ""),
@@ -1421,9 +1453,6 @@ export function installTextureAirbrushWebGpuCandidateMethods(BirdWeightEditor) {
           Math.max(brushRadius, brushRadius * (1.18 + Math.max(0, Math.min(1, Number(options.scatter) || 0)) * 0.42) + 4),
           {
             rect,
-            materialIndex: primaryProjectedPaintCandidate.materialIndex,
-            material: primaryProjectedPaintCandidate.material,
-            editable: primaryProjectedPaintCandidate.editable,
             allowAnimationProgressMismatch: true,
             surfaceContinuityFilter: options.screenSurfaceContinuityFilter !== false,
             surfaceContinuitySamplesIgnoreMaterial: true,

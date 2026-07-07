@@ -1829,10 +1829,16 @@ function candidateUsesProjectedSurfaceField(candidate = null) {
 }
 
 function candidateUsesTslSurfaceDescriptor(candidate = null) {
+  const options = candidate?.options || {};
   return candidateUsesProjectedSurfaceField(candidate)
-    && candidate?.options?.useTslSurfaceAirbrush !== false
-    && Array.isArray(candidate?.options?.visibilityMaskTriangles)
-    && candidate.options.visibilityMaskTriangles.length > 0;
+    && options.useTslSurfaceAirbrush !== false
+    && (
+      options.fullProjectedSurfaceRenderTriangles === true
+      || (
+        Array.isArray(options.visibilityMaskTriangles)
+        && options.visibilityMaskTriangles.length > 0
+      )
+    );
 }
 
 function screenPathPointClose(left = null, right = null, tolerance = 1.25) {
@@ -3052,6 +3058,50 @@ function directLiveCandidateBatches(candidates = []) {
       continue;
     }
     const candidateEstimate = Math.max(0, candidate.estimate || textureAirbrushWebGpuStrokeEstimate(candidate));
+    if (candidateUsesTslSurfaceDescriptor(candidate)) {
+      const surfaceSegments = segments.map((segment) => directLiveSegmentWithRadius(candidate, segment));
+      const surfaceScreenSegments = Array.isArray(candidate.options?.screenProjectedStrokeSegments)
+        && candidate.options.screenProjectedStrokeSegments.length
+        ? candidate.options.screenProjectedStrokeSegments
+        : screenProjectedSegmentsForTextureSegments(candidate, surfaceSegments);
+      const surfaceCandidate = {
+        ...candidate,
+        strokeSegments: surfaceSegments,
+        options: {
+          ...candidate.options,
+          strokeSegments: surfaceSegments,
+          screenProjectedStrokeSegments: []
+        }
+      };
+      const key = directLiveCandidateBatchKey(surfaceCandidate);
+      let batch = (activeBatchesByKey.get(key) || [])
+        .filter((candidateBatch) => (
+          candidateBatch.strokeSegments.length + surfaceSegments.length <= TEXTURE_AIRBRUSH_WEBGPU_VISIBLE_MAX_BATCH_SEGMENTS
+          && webGpuCandidateBatchCanAccept(candidateBatch, surfaceCandidate, surfaceSegments.length)
+        ))[0] || null;
+      if (!batch) {
+        batch = startBatch(surfaceCandidate, key, surfaceSegments[0]);
+      }
+      batch.strokeSegments.push(...surfaceSegments);
+      batch.options.strokeSegments = batch.strokeSegments;
+      appendScreenProjectedStrokeSegments(batch.options, surfaceScreenSegments);
+      appendVisibilitySamples(
+        batch.options,
+        candidateVisibilitySamples(candidate).length
+          ? candidateVisibilitySamples(candidate)
+          : surfaceSegments.map((segment) => ({ segment }))
+      );
+      appendVisibilityTriangles(batch.options, candidateVisibilityTriangles(candidate));
+      batch.radiusPixels = Math.max(
+        0.75,
+        styleNumber(batch.radiusPixels, 0.75),
+        ...surfaceSegments.map((segment) => directLiveSegmentRadiusPixels(candidate, segment))
+      );
+      batch.options.radiusPixels = batch.radiusPixels;
+      mergeProjectedPaintRegionsIntoBatch(batch, surfaceCandidate, surfaceCandidate);
+      batch.estimate += candidateEstimate;
+      continue;
+    }
     const estimatePerSegment = candidateEstimate / Math.max(1, segments.length);
     for (const sourceSegment of segments) {
       const segment = directLiveSegmentWithRadius(candidate, sourceSegment);
@@ -4024,7 +4074,11 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
       markStartCandidateTiming("undo-scope");
       if (candidate.undoCaptured !== true) {
         const tslSurfaceUndoTarget = useTslSurfaceUndoScope
-          ? candidate.material?.userData?.texturePaintTslSurfaceAirbrushTarget || null
+          ? (
+              candidate.material?.userData?.texturePaintTslSurfaceAirbrushTarget
+              || candidate.editable?.layer?.gpuTarget
+              || null
+            )
           : null;
         const capturedGpuUndo = tslSurfaceUndoTarget?.target?.texture
           ? withWebGpuStrokeUndoContext(this, strokeUndo, () => this.captureTexturePaintGpuUndoTarget?.(
@@ -4035,12 +4089,28 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
             )) === true
           : false;
         if (!capturedGpuUndo) {
-          const beforeImageData = textureAirbrushCachedWebGpuStrokeSourceImage(this, candidate.editable, {
-            ...options,
-            bounds: undoPaintBounds || paintBounds,
-            boundsRegions: undoPaintRegions.length ? undoPaintRegions : paintRegions,
-            ensureSourceImageData: useTslSurfaceUndoScope !== true
-          });
+          const undoLayer = candidate.editable?.layer || null;
+          const undoLayerTarget = undoLayer?.gpuTarget || null;
+          const undoLayerHasKnownPaint = Boolean(
+            undoLayer?.texturePaintCpuPainted === true
+            || undoLayer?.texturePaintGpuPainted === true
+            || undoLayerTarget?.texturePaintLayerHasPaint === true
+            || undoLayerTarget?.emptyTransparent === false
+            || (undoLayer?.isEmpty === false && undoLayer?.texturePaintHasPaint === true)
+          );
+          const undoBeforeIsTransparent = Boolean(
+            candidate.editable?.layerMode === true
+            && undoLayer
+            && undoLayerHasKnownPaint !== true
+          );
+          const beforeImageData = undoBeforeIsTransparent
+            ? null
+            : textureAirbrushCachedWebGpuStrokeSourceImage(this, candidate.editable, {
+                ...options,
+                bounds: undoPaintBounds || paintBounds,
+                boundsRegions: undoPaintRegions.length ? undoPaintRegions : paintRegions,
+                ensureSourceImageData: useTslSurfaceUndoScope !== true
+              });
           withWebGpuStrokeUndoContext(this, strokeUndo, () => this.captureTexturePaintCanvasUndoTarget?.(
             candidate.record,
             candidate.material,
@@ -4048,6 +4118,7 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
             candidate.materialIndex,
             {
               ...(beforeImageData ? { beforeImageData } : {}),
+              ...(undoBeforeIsTransparent ? { emptyBefore: true } : {}),
               bounds: undoPaintBounds || paintBounds,
               boundsRegions: undoPaintRegions.length ? undoPaintRegions : paintRegions
             }
@@ -4639,8 +4710,7 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
         && liveNeighborPaint
         && options.useTslSurfaceAirbrush !== false;
       const projectedSurfacePaintCandidates = fullSurfaceTslPaint
-        && liveNeighborPaint
-        && !sourceMeshTslNeighborPaint;
+        && liveNeighborPaint;
       const boundedDisjointLiveBatch = liveVisibleGpuPaint
         && (
           !liveNeighborPaint
@@ -4652,7 +4722,7 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
       const useFootprintVisibilityProbes = liveVisibleGpuPaint
         && (
           options.directVisibilityOnly === false
-          || (liveNeighborPaint && !sourceMeshTslNeighborPaint)
+          || (liveNeighborPaint && projectedSurfacePaintCandidates)
           || requireFullBrushVisibilityProbes
         );
       const liveNeighborProbeBudget = liveNeighborPaint
@@ -4805,6 +4875,9 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
                   visibilityFootprintViewRadiusScale: 1.35,
                   allowDisjointLiveBatchBounds: true
                 }
+              : {}),
+            ...(sourceMeshTslNeighborPaint
+              ? { relaxNeighborComponentGate: true }
               : {}),
             ...(boundedDisjointLiveBatch
               ? {

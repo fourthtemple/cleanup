@@ -69,6 +69,15 @@ function layerHasGpuPaint(layer = null, targetEntry = layer?.gpuTarget || null) 
     return false;
   }
   if (
+    layer?.isEmpty === true
+    && layer?.texturePaintGpuPainted !== true
+    && layer?.texturePaintHasPaint !== true
+  ) {
+    targetEntry.emptyTransparent = true;
+    targetEntry.texturePaintLayerHasPaint = false;
+    return false;
+  }
+  if (
     layer?.texturePaintGpuPainted === true
     || targetEntry.texturePaintLayerHasPaint === true
   ) {
@@ -127,6 +136,56 @@ function layerContributesVisiblePaint(layer = null) {
   );
 }
 
+function texturePaintRawLayerTargetTexture(material = null, texture = null) {
+  if (!texture) {
+    return false;
+  }
+  const stack = material?.userData?.texturePaintLayerStack || null;
+  return (stack?.layers || []).some((layer) => layer?.gpuTarget?.target?.texture === texture);
+}
+
+function texturePaintLayerStableReferenceTexture(material = null, texture = null) {
+  if (!texture) {
+    return null;
+  }
+  const userData = texture.userData || {};
+  const isLiveDisplay = userData.texturePaintTslSurfaceAirbrushDisplayTexture === true
+    || userData.texturePaintTslSurfaceAirbrushTargetTexture === true
+    || userData.textureAirbrushExternalWebGpuDisplay === true;
+  const candidate = isLiveDisplay
+    ? (
+        userData.textureAirbrushWebGpuCanvasMap
+        || userData.texturePaintTslSurfaceDisplayOriginalMap
+        || userData.clonePaintOriginalMap
+        || null
+      )
+    : texture;
+  if (
+    !candidate
+    || candidate.userData?.texturePaintTslSurfaceAirbrushDisplayTexture === true
+    || candidate.userData?.texturePaintTslSurfaceAirbrushTargetTexture === true
+    || candidate.userData?.textureAirbrushExternalWebGpuDisplay === true
+    || texturePaintRawLayerTargetTexture(material, candidate)
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
+function texturePaintCompositeDisplayTexture(material = null, targetEntry = null) {
+  const displayTexture = targetEntry?.displayTarget?.texture
+    || targetEntry?.liveCompositeTarget?.texture
+    || null;
+  if (
+    displayTexture
+    && displayTexture !== targetEntry?.target?.texture
+    && !texturePaintRawLayerTargetTexture(material, displayTexture)
+  ) {
+    return displayTexture;
+  }
+  return null;
+}
+
 function displayLayerGpuTarget(material = null, stack = null, layer = null) {
   const targetEntry = layer?.gpuTarget || null;
   if (!targetEntry?.target?.texture) {
@@ -155,6 +214,145 @@ function resetLayerGpuDisplayCache(targetEntry = null) {
   delete targetEntry.liveCompositeLayerMutationSerial;
   delete targetEntry.liveShaderComposite;
   return true;
+}
+
+function texturePaintIsTslSurfaceDisplayTexture(texture = null) {
+  return texture?.userData?.texturePaintTslSurfaceAirbrushDisplayTexture === true;
+}
+
+function layerGpuTargetHasTslSurfaceDisplayCache(layer = null) {
+  const targetEntry = layer?.gpuTarget || null;
+  if (!targetEntry) {
+    return false;
+  }
+  return [
+    targetEntry.displayTarget?.texture,
+    targetEntry.liveCompositeTarget?.texture,
+    targetEntry.liveCompositeTarget?.target?.texture,
+    targetEntry.liveCompositeBaseTexture
+  ].some(texturePaintIsTslSurfaceDisplayTexture);
+}
+
+function collectTexturePaintMaterialGpuCacheTargets(material = null) {
+  const targets = [];
+  const add = (target = null) => {
+    if (target && !targets.includes(target)) {
+      targets.push(target);
+    }
+  };
+  const addEntry = (entry = null) => {
+    if (!entry) {
+      return;
+    }
+    add(entry);
+    add(entry.target);
+    add(entry.target?.texture);
+    add(entry.displayTarget);
+    add(entry.displayTarget?.texture);
+    add(entry.liveCompositeTarget);
+    add(entry.liveCompositeTarget?.texture);
+    add(entry.liveCompositeBaseTexture);
+    add(entry.editable);
+    add(entry.editable?.canvas);
+    add(entry.editable?.texture);
+  };
+  const userData = material?.userData || {};
+  add(material);
+  add(material?.map);
+  add(userData.clonePaintCanvas);
+  add(userData.clonePaintTexture);
+  add(userData.clonePaintOriginalMap);
+  add(userData.textureAirbrushWebGpuCanvasMap);
+  add(userData.textureAirbrushWebGpuExternalMap);
+  addEntry(userData.textureAirbrushGpuTarget);
+  addEntry(userData.texturePaintCompositeGpuTarget);
+  addEntry(userData.texturePaintTslSurfaceAirbrushTarget);
+  const stack = userData.texturePaintLayerStack || null;
+  add(stack);
+  add(stack?.baseCanvas);
+  for (const layer of stack?.layers || []) {
+    for (const target of collectTexturePaintLayerGpuCacheTargets(layer)) {
+      add(target);
+    }
+  }
+  return targets;
+}
+
+function collectTexturePaintLayerGpuCacheTargets(layer = null) {
+  const targets = [];
+  const add = (target = null) => {
+    if (target && !targets.includes(target)) {
+      targets.push(target);
+    }
+  };
+  const targetEntry = layer?.gpuTarget || null;
+  add(layer);
+  add(layer?.canvas);
+  add(layer?.texture);
+  add(layer?.gpuLayerTexture);
+  add(targetEntry);
+  add(targetEntry?.target);
+  add(targetEntry?.target?.texture);
+  add(targetEntry?.displayTarget);
+  add(targetEntry?.displayTarget?.texture);
+  add(targetEntry?.liveCompositeTarget);
+  add(targetEntry?.liveCompositeTarget?.texture);
+  add(targetEntry?.liveCompositeBaseTexture);
+  add(targetEntry?.editable);
+  add(targetEntry?.editable?.canvas);
+  add(targetEntry?.editable?.texture);
+  return targets;
+}
+
+function layerGpuReadbackBytes(readback = null) {
+  if (!readback) {
+    return null;
+  }
+  if (readback instanceof Uint8Array || readback instanceof Uint8ClampedArray) {
+    return new Uint8Array(readback.buffer, readback.byteOffset || 0, readback.byteLength);
+  }
+  if (readback.buffer) {
+    return new Uint8Array(readback.buffer, readback.byteOffset || 0, readback.byteLength);
+  }
+  return null;
+}
+
+function copyLayerGpuBytesToCanvas(bytes = null, canvas = null, width = 1, height = 1, options = {}) {
+  const context = canvasContext2d(canvas);
+  const targetWidth = Math.max(1, Math.floor(Number(width) || 1));
+  const targetHeight = Math.max(1, Math.floor(Number(height) || 1));
+  if (!bytes || !canvas || !context || !targetWidth || !targetHeight) {
+    return false;
+  }
+  if (canvas.width !== targetWidth) {
+    canvas.width = targetWidth;
+  }
+  if (canvas.height !== targetHeight) {
+    canvas.height = targetHeight;
+  }
+  const image = context.createImageData(targetWidth, targetHeight);
+  const source = bytes instanceof Uint8ClampedArray ? bytes : new Uint8ClampedArray(bytes.buffer, bytes.byteOffset || 0, bytes.byteLength);
+  const premultiplied = options.premultiplied !== false;
+  let hasAlpha = false;
+  for (let index = 0; index + 3 < image.data.length && index + 3 < source.length; index += 4) {
+    const alpha = source[index + 3] || 0;
+    if (alpha > 0) {
+      hasAlpha = true;
+    }
+    if (premultiplied && alpha > 0 && alpha < 255) {
+      const scale = 255 / alpha;
+      image.data[index] = clampByte(source[index] * scale);
+      image.data[index + 1] = clampByte(source[index + 1] * scale);
+      image.data[index + 2] = clampByte(source[index + 2] * scale);
+    } else {
+      image.data[index] = source[index] || 0;
+      image.data[index + 1] = source[index + 1] || 0;
+      image.data[index + 2] = source[index + 2] || 0;
+    }
+    image.data[index + 3] = alpha;
+  }
+  context.putImageData(image, 0, 0);
+  return { hasAlpha };
 }
 
 function scheduleLater(callback, delayMs = 0) {
@@ -253,6 +451,26 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
     bumpTexturePaintLayerMutationSerial() {
       this.texturePaintLayerMutationSerial = this.texturePaintLayerMutationSerialValue() + 1;
       return this.texturePaintLayerMutationSerial;
+    },
+
+    invalidateTexturePaintMaterialGpuCaches(material = null, options = {}) {
+      const targets = collectTexturePaintMaterialGpuCacheTargets(material);
+      let invalidated = false;
+      for (const target of targets) {
+        invalidated = this.textureAirbrushInvalidateWebGpuCache?.(target) === true || invalidated;
+      }
+      if (options.resetSurfaceStroke === true) {
+        this.textureAirbrushResetSurfaceStroke?.();
+      }
+      return invalidated;
+    },
+
+    invalidateTexturePaintLayerGpuCaches(layer = null) {
+      let invalidated = false;
+      for (const target of collectTexturePaintLayerGpuCacheTargets(layer)) {
+        invalidated = this.textureAirbrushInvalidateWebGpuCache?.(target) === true || invalidated;
+      }
+      return invalidated;
     },
 
     clearPendingTexturePaintLayerBrushWork() {
@@ -411,6 +629,14 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         return false;
       }
       const liveComposite = targetEntry.liveCompositeTarget || null;
+      const displayTexture = texturePaintCompositeDisplayTexture(material, targetEntry);
+      if (displayTexture) {
+        if (material.map !== displayTexture) {
+          material.map = displayTexture;
+          material.needsUpdate = true;
+        }
+        return true;
+      }
       if (
         liveComposite?.shaderComposite === true
         && material.map === underlayTexture
@@ -422,11 +648,11 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       if (liveShader && this.texturePaintMuteLiveLayerShaderComposite?.(material) === false) {
         return false;
       }
-      if (material.map !== underlayTexture) {
+      if (material.map !== underlayTexture && !texturePaintRawLayerTargetTexture(material, underlayTexture)) {
         material.map = underlayTexture;
         material.needsUpdate = true;
       }
-      return true;
+      return material.map === underlayTexture;
     },
 
     texturePaintFastMaterialLayerDisplay(material = null, options = {}) {
@@ -470,7 +696,15 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
           )
         : null;
       if (!liveComposite?.shaderComposite) {
-        return false;
+        const displayTexture = texturePaintCompositeDisplayTexture(material, targetEntry);
+        if (!displayTexture) {
+          return false;
+        }
+        if (material.map !== displayTexture) {
+          material.map = displayTexture;
+          material.needsUpdate = true;
+        }
+        return true;
       }
       this.texturePaintRestoreLiveLayerShaderDisplayState?.(material, targetEntry, liveComposite);
       return true;
@@ -593,6 +827,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         return false;
       }
       this.cancelTexturePaintLayerDisplayComposite?.(material);
+      this.invalidateTexturePaintMaterialGpuCaches?.(material, {
+        resetSurfaceStroke: true
+      });
       this.discardTexturePaintMaterialAirbrushGpuTarget?.(material);
       this.discardTexturePaintMaterialGpuComposite?.(material);
       this.texturePaintDisableLiveLayerShaderComposite?.(material);
@@ -658,6 +895,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       this.texturePaintCompositeMaterialLayers?.(material, {
         skipGpuFlush: true,
         preferCpuDisplay: true
+      });
+      this.invalidateTexturePaintMaterialGpuCaches?.(material, {
+        resetSurfaceStroke: true
       });
       this.bumpTexturePaintLayerMutationSerial?.();
       this.textureAirbrushResetLiveProjectionFrame?.();
@@ -1053,11 +1293,17 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
           this.texturePaintBackgroundSelectionActive === true
             ? null
             : this.texturePaintActivePaintLayerForStack(stack, { fallback: false })
-        );
+        )
+        || this.texturePaintActiveLayerForMaterial?.(material, editable, {
+          create: true,
+          renderPanel: false,
+          setActiveMaterial: false
+        });
       if (!active?.layer) {
         this.texturePaintActiveMaterial = material;
         return editable;
       }
+      this.rememberTexturePaintLayerSelection?.(active.stack, active.layer);
       this.texturePaintActiveMaterial = material;
       return {
         ...editable,
@@ -1154,7 +1400,10 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         // WebGPU texture bound so consecutive live strokes do not disappear.
       } else if (options.preferCpuDisplay === true && userData.clonePaintTexture) {
         material.map = userData.clonePaintTexture;
-      } else if (userData.texturePaintCompositeGpuTarget) {
+      } else if (
+        userData.texturePaintCompositeGpuTarget
+        && !texturePaintRawLayerTargetTexture(material, userData.texturePaintCompositeGpuTarget?.target?.texture)
+      ) {
         this.texturePaintCompositeMaterialLayerGpuTargets?.(material);
       } else if (userData.clonePaintTexture) {
         material.map = userData.clonePaintTexture;
@@ -1210,6 +1459,87 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       return true;
     },
 
+    async flushTexturePaintLayerGpuTargetsToCanvases(options = {}) {
+      const renderer = this.renderer || null;
+      if (
+        !renderer?.isWebGPURenderer
+        || !renderer?.backend?.isWebGPUBackend
+        || typeof renderer.readRenderTargetPixelsAsync !== "function"
+      ) {
+        return 0;
+      }
+      const materialFilter = options.material || null;
+      const materials = materialFilter
+        ? [materialFilter]
+        : (this.textureAirbrushPaintableMaterials?.() || [])
+          .map((entry) => entry?.material || entry)
+          .filter(Boolean);
+      const uniqueMaterials = [...new Set(materials)];
+      let flushed = 0;
+      const compositedMaterials = new Set();
+      for (const material of uniqueMaterials) {
+        const stack = material?.userData?.texturePaintLayerStack || null;
+        if (!stack?.layers?.length) {
+          continue;
+        }
+        let materialFlushed = 0;
+        for (const layer of stack.layers) {
+          const targetEntry = layer?.gpuTarget || null;
+          const target = targetEntry?.target || null;
+          const canvas = layer?.canvas || null;
+          if (!target?.texture || !canvas) {
+            continue;
+          }
+          const paintRevision = Math.max(0, Math.floor(Number(targetEntry.paintRevision) || 0));
+          if (options.force !== true && targetEntry.canvasSyncedRevision === paintRevision) {
+            continue;
+          }
+          const width = Math.max(1, Math.floor(Number(targetEntry.width || target.width || canvas.width) || 1));
+          const height = Math.max(1, Math.floor(Number(targetEntry.height || target.height || canvas.height) || 1));
+          let readback = null;
+          try {
+            readback = await renderer.readRenderTargetPixelsAsync(target, 0, 0, width, height);
+          } catch (error) {
+            targetEntry.lastCanvasSyncError = String(error?.message || error || "readback failed");
+            continue;
+          }
+          const bytes = layerGpuReadbackBytes(readback);
+          const copied = copyLayerGpuBytesToCanvas(bytes, canvas, width, height, {
+            premultiplied: targetEntry.premultipliedAlpha !== false
+          });
+          if (!copied) {
+            targetEntry.lastCanvasSyncError = "copy failed";
+            continue;
+          }
+          targetEntry.lastCanvasSyncError = "";
+          targetEntry.canvasSyncedRevision = paintRevision;
+          targetEntry.canvasSyncedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+          layer.isEmpty = copied.hasAlpha !== true;
+          layer.texturePaintHasPaint = copied.hasAlpha === true;
+          layer.texturePaintGpuPainted = copied.hasAlpha === true;
+          targetEntry.texturePaintLayerHasPaint = copied.hasAlpha === true;
+          targetEntry.emptyTransparent = copied.hasAlpha !== true;
+          if (layer.texture) {
+            layer.texture.needsUpdate = true;
+          }
+          flushed += 1;
+          materialFlushed += 1;
+        }
+        if (materialFlushed > 0 && options.composite !== false && !compositedMaterials.has(material)) {
+          compositedMaterials.add(material);
+          this.texturePaintCompositeMaterialLayers?.(material, {
+            skipGpuFlush: true,
+            preserveWebGpuDisplay: options.preserveWebGpuDisplay === true,
+            preferCpuDisplay: options.preferCpuDisplay === true
+          });
+        }
+      }
+      if (flushed > 0 && options.renderPanel !== false) {
+        this.scheduleTexturePaintLayerPanelRender?.();
+      }
+      return flushed;
+    },
+
     texturePaintBaseOnlyMaterialLayerDisplay(material = null, stack = material?.userData?.texturePaintLayerStack || null) {
       if (!material?.userData || !stack?.baseCanvas) {
         return false;
@@ -1217,9 +1547,13 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       if ((stack.layers || []).some((layer) => layerContributesVisiblePaint(layer))) {
         return false;
       }
-      const sourceTexture = material.userData.clonePaintTexture
-        || material.userData.clonePaintOriginalMap
-        || material.map
+      const sourceTexture = [
+        material.userData.clonePaintTexture,
+        material.userData.textureAirbrushWebGpuCanvasMap,
+        material.userData.clonePaintOriginalMap,
+        material.map
+      ].map((texture) => texturePaintLayerStableReferenceTexture(material, texture))
+        .find(Boolean)
         || null;
       const baseTexture = this.textureAirbrushCanvasTextureForLayerCanvas?.(
         stack,
@@ -1582,6 +1916,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       if (!layer) {
         return false;
       }
+      this.invalidateTexturePaintLayerGpuCaches?.(layer);
       this.disposeTexturePaintGpuPrewarmSnapshot?.(layer.gpuTarget);
       layer.gpuTarget?.target?.dispose?.();
       layer.gpuLayerTexture?.dispose?.();
@@ -1636,6 +1971,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       if (!material?.userData || !stack?.layers?.length) {
         return false;
       }
+      this.invalidateTexturePaintMaterialGpuCaches?.(material, {
+        resetSurfaceStroke: true
+      });
       this.texturePaintDisableLiveLayerShaderComposite?.(material);
       this.discardTexturePaintMaterialGpuComposite?.(material);
       for (const layer of stack.layers) {
@@ -1713,12 +2051,16 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         this.prepareTexturePaintLayerTargetChange?.();
         reusableLayer.autoCreated = false;
         if (reusableLayer.gpuTarget) {
+          this.invalidateTexturePaintLayerGpuCaches?.(reusableLayer);
           resetLayerGpuDisplayCache(reusableLayer.gpuTarget);
           reusableLayer.gpuTarget.forceDisplayCompositeOnce = true;
         }
         this.texturePaintSetSingleLayerSelection(stack, reusableLayer.id);
         this.rememberTexturePaintLayerSelection?.(stack, reusableLayer);
         this.texturePaintActiveMaterial = material;
+        this.invalidateTexturePaintMaterialGpuCaches?.(material, {
+          resetSurfaceStroke: true
+        });
         this.redoStack = [];
         this.updateUndoButton?.();
         this.prewarmTexturePaintActiveLayerForAction?.(material, layerAirbrushPrewarmOptions({
@@ -1745,6 +2087,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       this.texturePaintSetSingleLayerSelection(stack, layer.id);
       this.rememberTexturePaintLayerSelection?.(stack, layer);
       this.texturePaintActiveMaterial = material;
+      this.invalidateTexturePaintMaterialGpuCaches?.(material, {
+        resetSurfaceStroke: true
+      });
       const firstLayerIsTransparent = previousLayerCount === 0 && layerEffectivelyEmpty(layer);
       if (previousLayerCount === 0 && !firstLayerIsTransparent) {
         this.texturePaintFastMaterialLayerDisplay?.(material, {
@@ -1780,6 +2125,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       const deleteIds = selectedIds.length > 1 ? new Set(selectedIds) : new Set([stack.activeLayerId]);
       const deleteIndex = stack.layers.findIndex((layer) => deleteIds.has(layer.id));
       const removedLayers = stack.layers.filter((layer) => deleteIds.has(layer.id));
+      this.invalidateTexturePaintMaterialGpuCaches?.(material, {
+        resetSurfaceStroke: true
+      });
       for (const layer of removedLayers) {
         this.disposeTexturePaintLayerGpuState?.(layer);
       }
@@ -2042,6 +2390,11 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       const nextVisible = activeEntry.layer.visible === false;
       for (const { material, layer } of entries) {
         layer.visible = nextVisible;
+        if (layerGpuTargetHasTslSurfaceDisplayCache(layer)) {
+          resetLayerGpuDisplayCache(layer.gpuTarget);
+          this.texturePaintDisableLiveLayerShaderComposite?.(material);
+          this.cancelTexturePaintLayerDisplayComposite?.(material);
+        }
         this.texturePaintApplyLayerDisplayChange(material, {
           changedLayer: layer
         });

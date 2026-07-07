@@ -25,16 +25,35 @@ const UV_OVERLAP_DISTANCE_THRESHOLD = 0.25;
 const PROJECTED_GUTTER_GEOMETRY_MIN_TRIANGLES = 256;
 const SOURCE_RASTER_GEOMETRY_MIN_TRIANGLES = 4096;
 const TSL_SURFACE_DILATION_PASSES = 1;
-const TSL_SURFACE_DILATION_SAMPLE_RADII = [1, 2, 4, 8, 16];
+const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1;
+const TSL_SURFACE_DILATION_SAMPLE_RADII = [1, 2, 4, 8, 12];
+const TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS = 8;
+const TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD = 0.08;
 const SURFACE_AIRBRUSH_RETIRED_RESOURCE_LIMIT = 48;
 const SURFACE_AIRBRUSH_RETIRE_FALLBACK_MS = 3000;
 const SURFACE_AIRBRUSH_RETIRE_MIN_AGE_MS = 5000;
-const SOFT_FACING_NORMAL_BACK_FEATHER = 0.45;
-const SOFT_FACING_NORMAL_FRONT_FEATHER = 0.12;
+const SOFT_FACING_NORMAL_BACK_FEATHER = 0.28;
+const SOFT_FACING_NORMAL_FRONT_FEATHER = 0.16;
+const VISIBLE_SURFACE_NORMAL_RESCUE_MIN_LOCAL_Z = -0.02;
+const SURFACE_AIRBRUSH_OPPOSED_NORMAL_REJECT_DOT = -0.28;
+const SURFACE_AIRBRUSH_OPPOSED_NORMAL_FULL_DOT = 0.18;
+const SURFACE_AIRBRUSH_SEGMENT_DISTANCE_RADIUS_SCALE = 0.9;
+const SURFACE_AIRBRUSH_SEGMENT_DISTANCE_FEATHER_SCALE = 0.35;
+const SURFACE_AIRBRUSH_SEGMENT_DEPTH_RADIUS_SCALE = 2.25;
+const SURFACE_AIRBRUSH_SEGMENT_DEPTH_FEATHER_SCALE = 0.75;
+const SURFACE_AIRBRUSH_SEGMENT_DEPTH_MIN_LIMIT = 1.0;
 const VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS = 0.18;
-const VISIBLE_SURFACE_DEPTH_GATE_MIN_RADIUS = 0.45;
-const VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE = 0.38;
-const VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE = 0.55;
+const VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE = 2.0;
+const VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER = 3.0;
+const VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE = 8.0;
+const VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER = 8.0;
+const VISIBLE_SURFACE_SOFT_EDGE_SAMPLE_PIXELS = 4.0;
+const VISIBLE_SURFACE_SOFT_EDGE_COVERAGE = 0.65;
+const VISIBLE_SURFACE_SOFT_EDGE_FAR_SAMPLE_PIXELS = 12.0;
+const VISIBLE_SURFACE_SOFT_EDGE_FAR_COVERAGE = 0.35;
+const SOURCE_RASTER_CLIP_MIN_PADDING_PIXELS = 18;
+const SOURCE_RASTER_CLIP_MAX_PADDING_PIXELS = 64;
+const SOURCE_RASTER_CLIP_RADIUS_PADDING_SCALE = 0.5;
 
 const _scratchUv = new THREE.Vector2();
 const _scratchWorld = new THREE.Vector3();
@@ -329,6 +348,16 @@ function surfaceAirbrushDilationPasses() {
   return TSL_SURFACE_DILATION_PASSES;
 }
 
+function surfaceAirbrushStrokeMaskDilationPasses() {
+  if (
+    typeof window !== "undefined"
+    && new URLSearchParams(window.location?.search || "").has("debugAirbrushStrokeMaskDilation")
+  ) {
+    return Math.max(0, surfaceAirbrushDilationPasses());
+  }
+  return TSL_SURFACE_STROKE_MASK_DILATION_PASSES;
+}
+
 function surfaceAirbrushSourceRasterGutterPixels() {
   if (
     typeof window !== "undefined"
@@ -364,10 +393,36 @@ function surfaceAirbrushSourceRasterClipEnabled() {
   );
 }
 
-function copyTextureSettings(targetTexture = null, referenceTexture = null) {
+function textureWantsMipmaps(referenceTexture = null, options = {}) {
+  if (options.generateMipmaps === false) {
+    return false;
+  }
+  if (options.generateMipmaps === true) {
+    return true;
+  }
+  return Boolean(
+    referenceTexture?.generateMipmaps === true
+    || MIPMAP_MIN_FILTERS.has(referenceTexture?.minFilter)
+  );
+}
+
+function renderTargetMinFilter(referenceTexture = null, wantsMipmaps = false, fallback = THREE.LinearFilter) {
+  const referenceMinFilter = referenceTexture?.minFilter;
+  if (wantsMipmaps) {
+    return MIPMAP_MIN_FILTERS.has(referenceMinFilter)
+      ? referenceMinFilter
+      : THREE.LinearMipmapLinearFilter || fallback;
+  }
+  return MIPMAP_MIN_FILTERS.has(referenceMinFilter)
+    ? THREE.LinearFilter || fallback
+    : referenceMinFilter ?? fallback;
+}
+
+function copyTextureSettings(targetTexture = null, referenceTexture = null, options = {}) {
   if (!targetTexture || !referenceTexture) {
     return;
   }
+  const wantsMipmaps = textureWantsMipmaps(referenceTexture, options);
   targetTexture.name = "texture-paint-tsl-surface-airbrush";
   targetTexture.colorSpace = referenceTexture.colorSpace ?? targetTexture.colorSpace;
   targetTexture.flipY = false;
@@ -379,10 +434,11 @@ function copyTextureSettings(targetTexture = null, referenceTexture = null) {
   targetTexture.wrapS = referenceTexture.wrapS ?? targetTexture.wrapS;
   targetTexture.wrapT = referenceTexture.wrapT ?? targetTexture.wrapT;
   targetTexture.magFilter = referenceTexture.magFilter ?? targetTexture.magFilter;
-  targetTexture.minFilter = MIPMAP_MIN_FILTERS.has(referenceTexture.minFilter)
-    ? (THREE.LinearFilter || targetTexture.minFilter)
-    : referenceTexture.minFilter ?? targetTexture.minFilter;
-  targetTexture.generateMipmaps = false;
+  targetTexture.minFilter = renderTargetMinFilter(referenceTexture, wantsMipmaps, targetTexture.minFilter);
+  targetTexture.generateMipmaps = wantsMipmaps;
+  if (Number.isFinite(Number(referenceTexture.anisotropy))) {
+    targetTexture.anisotropy = referenceTexture.anisotropy;
+  }
   targetTexture.matrixAutoUpdate = referenceTexture.matrixAutoUpdate ?? targetTexture.matrixAutoUpdate;
   if (referenceTexture.matrix && targetTexture.matrix?.copy) {
     targetTexture.matrix.copy(referenceTexture.matrix);
@@ -467,6 +523,38 @@ function centroidDistance(left = null, right = null) {
   );
 }
 
+function overlapMaskPositionKey(point = null, scale = 10000) {
+  return [
+    roundedSurfaceKeyNumber(point?.x, scale),
+    roundedSurfaceKeyNumber(point?.y, scale),
+    roundedSurfaceKeyNumber(point?.z, scale)
+  ].join(",");
+}
+
+function triangleSharesSurfaceEdge(left = null, right = null) {
+  if (!left || !right) {
+    return false;
+  }
+  const leftIndices = new Set(left.vertexIndices || []);
+  const sharedIndices = (right.vertexIndices || []).filter((index) => leftIndices.has(index)).length;
+  if (sharedIndices >= 2) {
+    return true;
+  }
+  const leftPositions = new Set(left.positionKeys || []);
+  const sharedPositions = (right.positionKeys || []).filter((key) => leftPositions.has(key)).length;
+  return sharedPositions >= 2;
+}
+
+function trianglesHaveAmbiguousUvOverlap(left = null, right = null) {
+  if (!left || !right || left === right) {
+    return false;
+  }
+  if (triangleSharesSurfaceEdge(left, right)) {
+    return false;
+  }
+  return true;
+}
+
 function sourceObjectUvOverlapMaskTexture(sourceObject = null) {
   if (!surfaceAirbrushUvOverlapMaskEnabled()) {
     return surfaceAirbrushWhiteMaskTexture();
@@ -501,6 +589,8 @@ function sourceObjectUvOverlapMaskTexture(sourceObject = null) {
       z: finiteNumber(position.getZ(index), 0)
     }));
     triangles.push({
+      vertexIndices: [ia, ib, ic],
+      positionKeys: points.map((point) => overlapMaskPositionKey(point)),
       uvs,
       centroid: {
         x: (points[0].x + points[1].x + points[2].x) / 3,
@@ -538,10 +628,7 @@ function sourceObjectUvOverlapMaskTexture(sourceObject = null) {
           owner[offset] = triangleIndex;
           continue;
         }
-        if (
-          previous !== triangleIndex
-          && centroidDistance(triangles[previous]?.centroid, triangle.centroid) > UV_OVERLAP_DISTANCE_THRESHOLD
-        ) {
+        if (previous !== triangleIndex && trianglesHaveAmbiguousUvOverlap(triangles[previous], triangle)) {
           ambiguous[offset] = 1;
         }
       }
@@ -721,6 +808,15 @@ function markSurfaceAirbrushResourceRetired(resource = null) {
 }
 
 function surfaceAirbrushStableTextureFromLiveTarget(texture = null) {
+  if (!texture) {
+    return null;
+  }
+  if (texture.userData?.textureAirbrushExternalWebGpuDisplay === true) {
+    return texture.userData.textureAirbrushWebGpuCanvasMap
+      || texture.userData.texturePaintTslSurfaceDisplayOriginalMap
+      || texture.userData.clonePaintOriginalMap
+      || null;
+  }
   if (!surfaceAirbrushTextureIsLiveTarget(texture)) {
     return texture || null;
   }
@@ -736,6 +832,50 @@ function surfaceAirbrushStableTextureFromLiveTarget(texture = null) {
     }
   }
   return null;
+}
+
+function surfaceLayerRawTargetTexture(material = null, editable = null, texture = null) {
+  if (!texture) {
+    return false;
+  }
+  const stack = editable?.layerStack || material?.userData?.texturePaintLayerStack || null;
+  for (const layer of stack?.layers || []) {
+    if (layer?.gpuTarget?.target?.texture === texture) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function surfaceLayerStableBaseCandidate(material = null, editable = null, texture = null) {
+  const stableTexture = surfaceAirbrushStableTextureFromLiveTarget(texture);
+  if (
+    !stableTexture
+    || surfaceAirbrushTextureIsLiveTarget(stableTexture)
+    || stableTexture.userData?.textureAirbrushExternalWebGpuDisplay === true
+    || surfaceLayerRawTargetTexture(material, editable, stableTexture)
+  ) {
+    return null;
+  }
+  return stableTexture;
+}
+
+function surfaceLayerSafeUnderlayCandidate(material = null, editable = null, texture = null) {
+  if (!texture) {
+    return null;
+  }
+  const isTslDisplay = texture.userData?.texturePaintTslSurfaceAirbrushDisplayTexture === true;
+  const candidate = isTslDisplay
+    ? texture
+    : surfaceLayerStableBaseCandidate(material, editable, texture);
+  if (
+    !candidate
+    || candidate.userData?.texturePaintTslSurfaceAirbrushTargetTexture === true
+    || surfaceLayerRawTargetTexture(material, editable, candidate)
+  ) {
+    return null;
+  }
+  return candidate;
 }
 
 function surfaceAirbrushDisplayedPaintSourceTexture(material = null, editable = null, cache = null) {
@@ -1241,8 +1381,16 @@ function sourceRasterClipSegments(options = {}) {
   return Array.isArray(options.sourceRasterClipSegments)
     ? options.sourceRasterClipSegments
       .map((segment) => {
-        const start = finitePoint(segment?.start);
-        const end = finitePoint(segment?.end);
+        const start = finitePoint(segment?.start) || finitePoint(segment?.screenStart);
+        const end = finitePoint(segment?.end) || finitePoint(segment?.screenEnd);
+        const viewStart = finiteView(segment?.viewStart);
+        const viewEnd = finiteView(segment?.viewEnd);
+        const viewRadius = finiteNumber(
+          segment?.viewRadius,
+          finiteNumber(segment?.worldRadius, finiteNumber(segment?.viewRadiusPixels, 0))
+        );
+        const componentStart = finiteComponentId(segment?.componentStart);
+        const componentEnd = finiteComponentId(segment?.componentEnd);
         if (!start || !end) {
           return null;
         }
@@ -1253,7 +1401,10 @@ function sourceRasterClipSegments(options = {}) {
             1,
             finiteNumber(segment.radius, finiteNumber(segment.radiusPixels, 1)),
             finiteNumber(segment.screenRadiusPixels, 0)
-          )
+          ),
+          ...(viewStart && viewEnd && viewRadius > 0 ? { viewStart, viewEnd, viewRadius } : {}),
+          ...(componentStart >= 0 ? { componentStart } : {}),
+          ...(componentEnd >= 0 ? { componentEnd } : {})
         };
       })
       .filter(Boolean)
@@ -1268,29 +1419,59 @@ function simplifiedSourceRasterClipSegments(segments = [], maxSegments = 16) {
   const maxPoints = Math.max(2, Math.floor(maxSegments) + 1);
   const stride = Math.max(1, Math.ceil(normalized.length / Math.max(1, maxPoints - 1)));
   const points = [];
-  const appendPoint = (point = null, radius = 1) => {
+  const appendPoint = (point = null, radius = 1, component = -1, view = null, viewRadius = 0) => {
     const screenPoint = finitePoint(point);
     if (!screenPoint) {
       return;
     }
     const resolvedRadius = Math.max(1, finiteNumber(radius, 1));
+    const resolvedComponent = finiteComponentId(component);
+    const resolvedView = finiteView(view);
+    const resolvedViewRadius = Math.max(0, finiteNumber(viewRadius, 0));
     const previous = points[points.length - 1] || null;
     if (previous && pointDistance(previous, screenPoint) <= 0.001) {
       previous.radius = Math.max(previous.radius, resolvedRadius);
+      if (resolvedComponent >= 0) {
+        previous.component = resolvedComponent;
+      }
+      if (resolvedView && resolvedViewRadius > 0) {
+        previous.view = resolvedView;
+        previous.viewRadius = Math.max(finiteNumber(previous.viewRadius, 0), resolvedViewRadius);
+      }
       return;
     }
     points.push({
       x: screenPoint.x,
       y: screenPoint.y,
-      radius: resolvedRadius
+      radius: resolvedRadius,
+      ...(resolvedView && resolvedViewRadius > 0 ? { view: resolvedView, viewRadius: resolvedViewRadius } : {}),
+      ...(resolvedComponent >= 0 ? { component: resolvedComponent } : {})
     });
   };
-  appendPoint(normalized[0]?.start, normalized[0]?.radius);
+  appendPoint(
+    normalized[0]?.start,
+    normalized[0]?.radius,
+    normalized[0]?.componentStart ?? normalized[0]?.componentEnd,
+    normalized[0]?.viewStart,
+    normalized[0]?.viewRadius
+  );
   for (let index = 0; index < normalized.length; index += stride) {
     const segment = normalized[index];
-    appendPoint(segment?.end, segment?.radius);
+    appendPoint(
+      segment?.end,
+      segment?.radius,
+      segment?.componentEnd ?? segment?.componentStart,
+      segment?.viewEnd,
+      segment?.viewRadius
+    );
   }
-  appendPoint(normalized[normalized.length - 1]?.end, normalized[normalized.length - 1]?.radius);
+  appendPoint(
+    normalized[normalized.length - 1]?.end,
+    normalized[normalized.length - 1]?.radius,
+    normalized[normalized.length - 1]?.componentEnd ?? normalized[normalized.length - 1]?.componentStart,
+    normalized[normalized.length - 1]?.viewEnd,
+    normalized[normalized.length - 1]?.viewRadius
+  );
   const output = [];
   for (let index = 1; index < points.length && output.length < maxSegments; index += 1) {
     const start = points[index - 1];
@@ -1298,7 +1479,16 @@ function simplifiedSourceRasterClipSegments(segments = [], maxSegments = 16) {
     output.push({
       start: { x: start.x, y: start.y },
       end: { x: end.x, y: end.y },
-      radius: Math.max(start.radius, end.radius)
+      radius: Math.max(start.radius, end.radius),
+      ...(start.view && end.view && Math.max(finiteNumber(start.viewRadius, 0), finiteNumber(end.viewRadius, 0)) > 0
+        ? {
+            viewStart: start.view,
+            viewEnd: end.view,
+            viewRadius: Math.max(finiteNumber(start.viewRadius, 0), finiteNumber(end.viewRadius, 0))
+          }
+        : {}),
+      ...(finiteComponentId(start.component) >= 0 ? { componentStart: finiteComponentId(start.component) } : {}),
+      ...(finiteComponentId(end.component) >= 0 ? { componentEnd: finiteComponentId(end.component) } : {})
     });
   }
   return output;
@@ -1325,6 +1515,59 @@ function sourceRasterClipPaddingPixels(options = {}) {
   );
 }
 
+function sourceRasterClipComponentGateEnabled(options = {}) {
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location?.search || "");
+    if (params.has("debugAirbrushNoComponentGate")) {
+      return false;
+    }
+  }
+  return options.hardTextureAirbrushComponentGate === true;
+}
+
+function sourceRasterAllowedComponentIds(options = {}) {
+  const values = Array.isArray(options.sourceRasterAllowedComponentIds)
+    ? options.sourceRasterAllowedComponentIds
+    : Number.isFinite(Number(options.sourceRasterAllowedComponentId))
+      ? [options.sourceRasterAllowedComponentId]
+      : [];
+  const ids = values
+    .map((value) => finiteComponentId(value))
+    .filter((value, index, array) => value >= 0 && array.indexOf(value) === index)
+    .sort((left, right) => left - right);
+  return ids.length ? ids : null;
+}
+
+function sourceRasterAllowedComponentKey(options = {}) {
+  const ids = sourceRasterAllowedComponentIds(options);
+  return ids ? ids.join(",") : "all";
+}
+
+function sourceRasterTriangleAllowsComponent(componentId = -1, options = {}) {
+  const ids = sourceRasterAllowedComponentIds(options);
+  if (!ids) {
+    return true;
+  }
+  const component = finiteComponentId(componentId);
+  return component >= 0 && ids.includes(component);
+}
+
+function sourceRasterClipSegmentAllowsComponent(segment = null, componentId = -1, options = {}) {
+  if (!sourceRasterClipComponentGateEnabled(options)) {
+    return true;
+  }
+  const component = finiteComponentId(componentId);
+  if (component < 0) {
+    return true;
+  }
+  const componentStart = finiteComponentId(segment?.componentStart);
+  const componentEnd = finiteComponentId(segment?.componentEnd);
+  if (componentStart < 0 && componentEnd < 0) {
+    return true;
+  }
+  return component === componentStart || component === componentEnd;
+}
+
 function sourceRasterClipDomainRadius(segment = null, options = {}) {
   const radius = Math.max(1, finiteNumber(segment?.radius, finiteNumber(segment?.radiusPixels, 1)));
   const scatter = sourceRasterClipScatter(options);
@@ -1332,19 +1575,25 @@ function sourceRasterClipDomainRadius(segment = null, options = {}) {
   const softness = 1 - hardness;
   return radius * (
     1
-    + scatter * (TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE + 0.35)
+    + scatter * TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE
     + softness * TEXTURE_AIRBRUSH_SOFT_HALO_SCALE
   )
     + sourceRasterClipPaddingPixels(options);
 }
 
-function screenTriangleNearSourceRasterClip(screenPoints = [], options = {}) {
+function screenTriangleNearSourceRasterClip(screenPoints = [], options = {}, componentId = -1) {
   const segments = sourceRasterClipSegments(options);
   const triangleBounds = screenBoundsForPoints(screenPoints);
-  if (!triangleBounds || !segments.length) {
-    return true;
+  if (!triangleBounds) {
+    return false;
+  }
+  if (!segments.length) {
+    return options.sourceRasterClipRequired === true ? false : true;
   }
   for (const segment of segments) {
+    if (!sourceRasterClipSegmentAllowsComponent(segment, componentId, options)) {
+      continue;
+    }
     const segmentBounds = screenBoundsForPoints([segment.start, segment.end]);
     const domainRadius = sourceRasterClipDomainRadius(segment, options);
     if (
@@ -1359,19 +1608,31 @@ function screenTriangleNearSourceRasterClip(screenPoints = [], options = {}) {
 
 function sourceRasterClipKey(options = {}) {
   const segments = sourceRasterClipSegments(options);
+  const allowedComponentKey = sourceRasterAllowedComponentKey(options);
   if (!segments.length) {
-    return "";
+    return allowedComponentKey === "all" ? "" : `allowed:${allowedComponentKey}`;
   }
   return [
     sourceRasterClipScatter(options),
     sourceRasterClipHardness(options),
     sourceRasterClipPaddingPixels(options),
+    sourceRasterClipComponentGateEnabled(options) ? "component" : "all-components",
+    `allowed:${allowedComponentKey}`,
     segments.map((segment) => [
       roundedSurfaceKeyNumber(segment.start.x, 10),
       roundedSurfaceKeyNumber(segment.start.y, 10),
       roundedSurfaceKeyNumber(segment.end.x, 10),
       roundedSurfaceKeyNumber(segment.end.y, 10),
-      roundedSurfaceKeyNumber(segment.radius, 10)
+      roundedSurfaceKeyNumber(segment.radius, 10),
+      roundedSurfaceKeyNumber(segment.viewStart?.x, 1000),
+      roundedSurfaceKeyNumber(segment.viewStart?.y, 1000),
+      roundedSurfaceKeyNumber(segment.viewStart?.z, 1000),
+      roundedSurfaceKeyNumber(segment.viewEnd?.x, 1000),
+      roundedSurfaceKeyNumber(segment.viewEnd?.y, 1000),
+      roundedSurfaceKeyNumber(segment.viewEnd?.z, 1000),
+      roundedSurfaceKeyNumber(segment.viewRadius, 1000),
+      finiteComponentId(segment.componentStart),
+      finiteComponentId(segment.componentEnd)
     ].join(",")).join(";")
   ].join("|");
 }
@@ -1827,7 +2088,7 @@ function materialUsesEditableTexture(material = null, editable = null, textures 
   if (!material) {
     return false;
   }
-  const allowImageMatch = options.allowImageMatch !== false;
+  const allowImageMatch = options.allowImageMatch === true;
   const userData = material.userData || {};
   const materialMap = material.map || null;
   const materialImage = materialMap?.image || materialMap?.source?.data || null;
@@ -1966,23 +2227,23 @@ function surfaceEditableOriginalMap(material = null, editable = null, references
   const explicitOriginalMap = Object.prototype.hasOwnProperty.call(userData, "clonePaintOriginalMap")
     ? userData.clonePaintOriginalMap || null
     : null;
-  if (explicitOriginalMap && !surfaceAirbrushTextureIsLiveTarget(explicitOriginalMap)) {
-    return explicitOriginalMap;
+  const explicitStableOriginalMap = surfaceLayerStableBaseCandidate(material, editable, explicitOriginalMap);
+  if (explicitStableOriginalMap) {
+    return explicitStableOriginalMap;
   }
   const displayReference = userData.textureAirbrushWebGpuCanvasMap
     || material?.map?.userData?.textureAirbrushWebGpuCanvasMap
     || material?.map?.userData?.clonePaintOriginalMap
     || null;
-  if (displayReference && !surfaceAirbrushTextureIsLiveTarget(displayReference)) {
-    return displayReference;
+  const stableDisplayReference = surfaceLayerStableBaseCandidate(material, editable, displayReference);
+  if (stableDisplayReference) {
+    return stableDisplayReference;
   }
   for (const texture of references) {
-    const stableTexture = surfaceAirbrushStableTextureFromLiveTarget(texture) || texture;
+    const stableTexture = surfaceLayerStableBaseCandidate(material, editable, texture);
     if (
       stableTexture
       && stableTexture !== editable?.texture
-      && !surfaceAirbrushTextureIsLiveTarget(stableTexture)
-      && stableTexture?.userData?.textureAirbrushExternalWebGpuDisplay !== true
     ) {
       return stableTexture;
     }
@@ -2094,10 +2355,12 @@ function surfaceLayerBaseCanvasTexture(editor = null, editable = null, reference
   texture.wrapS = referenceTexture?.wrapS || THREE.ClampToEdgeWrapping;
   texture.wrapT = referenceTexture?.wrapT || THREE.ClampToEdgeWrapping;
   texture.magFilter = referenceTexture?.magFilter || THREE.LinearFilter;
-  texture.minFilter = MIPMAP_MIN_FILTERS.has(referenceTexture?.minFilter)
-    ? (THREE.LinearFilter || texture.minFilter)
-    : referenceTexture?.minFilter || THREE.LinearFilter;
-  texture.generateMipmaps = false;
+  const wantsMipmaps = textureWantsMipmaps(referenceTexture, { generateMipmaps: referenceTexture?.generateMipmaps ?? true });
+  texture.minFilter = renderTargetMinFilter(referenceTexture, wantsMipmaps, THREE.LinearFilter);
+  texture.generateMipmaps = wantsMipmaps;
+  if (Number.isFinite(Number(referenceTexture?.anisotropy))) {
+    texture.anisotropy = referenceTexture.anisotropy;
+  }
   if (entry.serial !== serial || entry.width !== width || entry.height !== height) {
     texture.needsUpdate = true;
     entry.serial = serial;
@@ -2110,25 +2373,32 @@ function surfaceLayerBaseCanvasTexture(editor = null, editable = null, reference
 function surfaceLayerBaseTexture(editor = null, material = null, editable = null, originalMap = null) {
   const userData = material?.userData || {};
   if (editable?.layerMode === true) {
-    const stableReferenceBase = userData.textureAirbrushWebGpuCanvasMap
-      || userData.clonePaintOriginalMap
-      || originalMap
-      || (surfaceAirbrushTextureIsLiveTarget(material?.map) ? null : material?.map)
+    const stableReferenceBase = [
+      userData.textureAirbrushWebGpuCanvasMap,
+      userData.clonePaintOriginalMap,
+      originalMap,
+      material?.map
+    ].map((texture) => surfaceLayerStableBaseCandidate(material, editable, texture))
+      .find(Boolean)
       || null;
     const canvasBase = surfaceLayerBaseCanvasTexture(
       editor,
       editable,
       stableReferenceBase || userData.clonePaintTexture || null
     );
+    const clonePaintBase = surfaceLayerStableBaseCandidate(material, editable, userData.clonePaintTexture);
     const layerBase = stableReferenceBase
-      || (surfaceAirbrushTextureIsLiveTarget(userData.clonePaintTexture) ? null : userData.clonePaintTexture)
+      || clonePaintBase
       || canvasBase
       || null;
     return layerBase || null;
   }
-  const stableBase = userData.clonePaintTexture
-    || userData.textureAirbrushWebGpuCanvasMap
-    || originalMap
+  const stableBase = [
+    userData.clonePaintTexture,
+    userData.textureAirbrushWebGpuCanvasMap,
+    originalMap
+  ].map((texture) => surfaceLayerStableBaseCandidate(material, editable, texture))
+    .find(Boolean)
     || null;
   return stableBase
     || editable?.texture
@@ -2167,13 +2437,16 @@ function surfaceLayerDisplayCompositeEntry(material = null) {
 }
 
 function surfaceLayerCompositeTexture(entry = null, preferredTexture = null) {
-  if (preferredTexture && (
-    preferredTexture === entry?.target?.texture
-    || preferredTexture === entry?.displayTarget?.texture
-  )) {
+  if (
+    preferredTexture
+    && (
+      preferredTexture === entry?.displayTarget?.texture
+      || preferredTexture === entry?.liveCompositeTarget?.texture
+    )
+  ) {
     return preferredTexture;
   }
-  return entry?.target?.texture || entry?.displayTarget?.texture || null;
+  return entry?.displayTarget?.texture || entry?.liveCompositeTarget?.texture || null;
 }
 
 function surfaceLayerCompositeIsBelowActive(entry = null, editable = null) {
@@ -2201,7 +2474,11 @@ function surfaceLayerStoredUnderlayTexture(editor = null, editable = null) {
   ) {
     return null;
   }
-  return targetEntry.liveCompositeBaseTexture;
+  return surfaceLayerSafeUnderlayCandidate(
+    targetEntry.material || null,
+    editable,
+    targetEntry.liveCompositeBaseTexture
+  );
 }
 
 function surfaceLayerDisplayUnderlayTexture(editor = null, material = null, editable = null, originalMap = null, fallbackTexture = null) {
@@ -2216,8 +2493,9 @@ function surfaceLayerDisplayUnderlayTexture(editor = null, material = null, edit
   const compositeEntry = surfaceLayerDisplayCompositeEntry(material);
   if (surfaceLayerCompositeIsBelowActive(compositeEntry, editable)) {
     const underlayTexture = surfaceLayerCompositeTexture(compositeEntry, currentDisplayTexture);
-    if (underlayTexture) {
-      return underlayTexture;
+    const safeUnderlayTexture = surfaceLayerSafeUnderlayCandidate(material, editable, underlayTexture);
+    if (safeUnderlayTexture) {
+      return safeUnderlayTexture;
     }
   }
   return surfaceLayerBaseTexture(editor, material, editable, originalMap)
@@ -2285,6 +2563,15 @@ function surfaceLayerGpuTargetHasPaint(layer = null) {
     return false;
   }
   if (
+    layer.isEmpty === true
+    && layer.texturePaintGpuPainted !== true
+    && layer.texturePaintHasPaint !== true
+  ) {
+    targetEntry.emptyTransparent = true;
+    targetEntry.texturePaintLayerHasPaint = false;
+    return false;
+  }
+  if (
     layer.texturePaintGpuPainted === true
     || targetEntry.texturePaintLayerHasPaint === true
   ) {
@@ -2311,6 +2598,17 @@ function surfaceLayerSourceIsEmpty(editable = null) {
   const layer = editable?.layer || null;
   if (editable?.layerMode !== true || !layer?.canvas) {
     return false;
+  }
+  if (
+    layer.isEmpty === true
+    && layer.texturePaintGpuPainted !== true
+    && layer.texturePaintHasPaint !== true
+  ) {
+    if (layer.gpuTarget) {
+      layer.gpuTarget.emptyTransparent = true;
+      layer.gpuTarget.texturePaintLayerHasPaint = false;
+    }
+    return true;
   }
   const gpuHasPaint = surfaceLayerGpuTargetHasPaint(layer);
   if (gpuHasPaint) {
@@ -2749,6 +3047,119 @@ function bindSurfaceLayerTarget(editor = null, material = null, editable = null,
   return targetEntry;
 }
 
+function withSurfaceStrokeUndoContext(editor = null, strokeUndo = null, callback = null) {
+  if (typeof callback !== "function") {
+    return undefined;
+  }
+  if (!editor || !strokeUndo) {
+    return callback();
+  }
+  const previousStrokeUndoContext = editor.texturePaintStrokeUndoContext;
+  editor.texturePaintStrokeUndoContext = strokeUndo;
+  try {
+    return callback();
+  } finally {
+    if (previousStrokeUndoContext === undefined) {
+      delete editor.texturePaintStrokeUndoContext;
+    } else {
+      editor.texturePaintStrokeUndoContext = previousStrokeUndoContext;
+    }
+  }
+}
+
+function captureSurfaceLayerGpuUndoTarget(
+  editor = null,
+  renderer = null,
+  cache = null,
+  material = null,
+  editable = null,
+  target = null,
+  baseTexture = null,
+  options = {}
+) {
+  const layer = editable?.layer || null;
+  if (
+    editable?.layerMode !== true
+    || !layer
+    || !target?.texture
+    || typeof editor?.captureTexturePaintGpuUndoTarget !== "function"
+  ) {
+    return false;
+  }
+  const targetEntry = layer.gpuTarget || {};
+  const existingTarget = targetEntry.target?.texture ? targetEntry.target : null;
+  const layerSourceEmpty = options.layerSourceEmpty === true;
+  const needsSourceCopy = !existingTarget && !layerSourceEmpty;
+  targetEntry.target = existingTarget || target;
+  targetEntry.width = options.width || targetEntry.target?.width || target.width || layer.canvas?.width || 0;
+  targetEntry.height = options.height || targetEntry.target?.height || target.height || layer.canvas?.height || 0;
+  targetEntry.material = material || null;
+  targetEntry.layer = layer;
+  targetEntry.layerStack = editable.layerStack || targetEntry.layerStack || null;
+  targetEntry.layerMode = true;
+  targetEntry.editable = editable;
+  if (!existingTarget && layerSourceEmpty) {
+    targetEntry.emptyTransparent = true;
+    targetEntry.texturePaintLayerHasPaint = false;
+  }
+  layer.gpuTarget = targetEntry;
+  let copiedSourceForUndo = false;
+  if (needsSourceCopy) {
+    if (!renderer || !cache || !baseTexture) {
+      return false;
+    }
+    copiedSourceForUndo = copySurfaceBaseTexture(renderer, baseTexture, target, cache) === true;
+    if (!copiedSourceForUndo) {
+      const previousTarget = typeof renderer.getRenderTarget === "function"
+        ? renderer.getRenderTarget()
+        : null;
+      const previousAutoClear = renderer.autoClear;
+      try {
+        updateTextureCopyMaterial(cache.copyMaterial, baseTexture);
+        renderer.setRenderTarget(target);
+        renderer.autoClear = true;
+        renderer.clear?.();
+        renderer.render(cache.copyScene, cache.camera);
+        renderer.autoClear = false;
+        copiedSourceForUndo = true;
+      } finally {
+        renderer.setRenderTarget(previousTarget);
+        renderer.autoClear = previousAutoClear;
+      }
+    }
+    if (!copiedSourceForUndo) {
+      return false;
+    }
+    targetEntry.target = target;
+    targetEntry.emptyTransparent = false;
+    targetEntry.texturePaintLayerHasPaint = true;
+  }
+  const strokeUndo = options.strokeUndo || null;
+  const materialIndex = Math.max(0, Math.floor(Number(options.materialIndex) || 0));
+  const captured = withSurfaceStrokeUndoContext(editor, strokeUndo, () => (
+    editor.captureTexturePaintGpuUndoTarget(
+      options.record || null,
+      material,
+      targetEntry,
+      materialIndex
+    ) === true
+  ));
+  if (typeof document !== "undefined") {
+    const root = document.documentElement || null;
+    if (root?.dataset && new URLSearchParams(window.location?.search || "").has("debugAirbrush")) {
+      root.dataset.textureAirbrushDebugTslSurfaceGpuUndo = JSON.stringify({
+        captured,
+        existingTarget: Boolean(existingTarget),
+        layerSourceEmpty,
+        copiedSourceForUndo,
+        hasStrokeUndo: Boolean(strokeUndo),
+        targetTextureName: String(targetEntry.target?.texture?.name || "")
+      });
+    }
+  }
+  return captured;
+}
+
 function bindSurfaceTextureToMatchingMaterials(editor = null, editable = null, finalTexture = null, textures = [], options = {}) {
   if (!editor?.model || !editable || !finalTexture) {
     return 0;
@@ -2761,7 +3172,9 @@ function bindSurfaceTextureToMatchingMaterials(editor = null, editable = null, f
       return;
     }
     for (const candidateMaterial of materialArray(node.material)) {
-      if (!materialUsesEditableTexture(candidateMaterial, editable, textureSet, { allowImageMatch: true })) {
+      if (!materialUsesEditableTexture(candidateMaterial, editable, textureSet, {
+        allowImageMatch: options.allowImageMatch === true
+      })) {
         continue;
       }
       bindSurfaceEditableMetadata(candidateMaterial, editable, finalTexture, {
@@ -2791,10 +3204,36 @@ function addUniqueSourceObject(output = [], seen = new Set(), object = null) {
   return true;
 }
 
-function sourceObjectsForEditable(editor = null, candidate = null, editable = null, sourceTexture = null, referenceTexture = null) {
+function objectVisibleInScene(object = null) {
+  for (let current = object; current; current = current.parent || null) {
+    if (current.visible === false) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function addUniqueVisibleOcclusionObject(output = [], seen = new Set(), object = null) {
+  if (!object || seen.has(object) || !objectVisibleInScene(object)) {
+    return false;
+  }
+  const geometry = object.geometry || null;
+  if (!geometry?.attributes?.position) {
+    return false;
+  }
+  seen.add(object);
+  output.push(object);
+  return true;
+}
+
+function sourceObjectsForEditable(editor = null, candidate = null, editable = null, sourceTexture = null, referenceTexture = null, options = {}) {
   const output = [];
   const seen = new Set();
   const fallbackObject = sourceObjectForCandidate(candidate);
+  if (options.restrictSourceRasterToCandidateObject === true) {
+    addUniqueSourceObject(output, seen, fallbackObject);
+    return output;
+  }
   const textures = surfaceEditableTextureSet(candidate, editable, sourceTexture, referenceTexture);
   const records = (
     typeof editor?.textureAirbrushRecords === "function"
@@ -2813,6 +3252,27 @@ function sourceObjectsForEditable(editor = null, candidate = null, editable = nu
     }
   }
   addUniqueSourceObject(output, seen, fallbackObject);
+  return output;
+}
+
+function sourceObjectsForVisibleOcclusion(editor = null, candidate = null) {
+  const output = [];
+  const seen = new Set();
+  const records = (
+    typeof editor?.textureAirbrushRecords === "function"
+      ? editor.textureAirbrushRecords()
+      : editor?.paintRecords
+  ) || [];
+  for (const record of Array.isArray(records) ? records : []) {
+    const object = record?.object || null;
+    addUniqueVisibleOcclusionObject(output, seen, object);
+  }
+  editor?.model?.traverse?.((node) => {
+    if (node?.isMesh || node?.isSkinnedMesh || node?.geometry) {
+      addUniqueVisibleOcclusionObject(output, seen, node);
+    }
+  });
+  addUniqueVisibleOcclusionObject(output, seen, sourceObjectForCandidate(candidate));
   return output;
 }
 
@@ -3652,10 +4112,13 @@ function sourceUvRasterTriangles(
     const normalB = viewNormalForVertex(sourceObject, geometry, ib, editor) || normalA;
     const normalC = viewNormalForVertex(sourceObject, geometry, ic, editor) || normalB;
     const componentId = componentIdForTriangleVertices(componentState, ia, ib, ic);
+    if (!sourceRasterTriangleAllowsComponent(componentId, options)) {
+      continue;
+    }
     if (!screenA || !screenB || !screenC) {
       continue;
     }
-    if (!screenTriangleNearSourceRasterClip([screenA, screenB, screenC], options)) {
+    if (!screenTriangleNearSourceRasterClip([screenA, screenB, screenC], options, componentId)) {
       continue;
     }
     triangles.push({
@@ -3728,14 +4191,15 @@ function normalizeSurfaceSegments(editor = null, segments = [], fallbackRadius =
   return output;
 }
 
-function createRenderTarget(width, height, referenceTexture) {
+function createRenderTarget(width, height, referenceTexture, options = {}) {
+  const generateMipmaps = textureWantsMipmaps(referenceTexture, options);
   const target = new THREE.RenderTarget(width, height, {
     depthBuffer: false,
     stencilBuffer: false,
     format: THREE.RGBAFormat,
-    generateMipmaps: false
+    generateMipmaps
   });
-  copyTextureSettings(target.texture, referenceTexture);
+  copyTextureSettings(target.texture, referenceTexture, { generateMipmaps });
   target.texture.format = THREE.RGBAFormat;
   return target;
 }
@@ -3764,7 +4228,7 @@ function createUvOccupancyMaterial() {
   }
   const { Fn, positionLocal, vec4 } = tsl;
   const material = new THREE.MeshBasicNodeMaterial({
-    transparent: true,
+    transparent: false,
     blending: THREE.NoBlending,
     depthTest: false,
     depthWrite: false,
@@ -3875,8 +4339,8 @@ function createStrokeMaskTarget(width = 1, height = 1) {
   target.texture.flipY = false;
   target.texture.wrapS = THREE.ClampToEdgeWrapping;
   target.texture.wrapT = THREE.ClampToEdgeWrapping;
-  target.texture.minFilter = THREE.LinearFilter;
-  target.texture.magFilter = THREE.LinearFilter;
+  target.texture.minFilter = THREE.NearestFilter;
+  target.texture.magFilter = THREE.NearestFilter;
   target.texture.generateMipmaps = false;
   target.texture.userData ||= {};
   target.texture.userData.texturePaintTslSurfaceAirbrushStrokeMask = true;
@@ -4098,6 +4562,8 @@ function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, o
     material.blendDst = THREE.ZeroFactor;
     material.blendSrcAlpha = THREE.OneFactor;
     material.blendDstAlpha = THREE.ZeroFactor;
+  } else {
+    material.alphaTest = TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD;
   }
   material.vertexNode = vertexNode;
   material.fragmentNode = fragmentNode;
@@ -4469,9 +4935,13 @@ function ensureSurfaceStrokeBaseTexture(
     || cache.strokeBaseTarget.height !== height
   ) {
     retireSurfaceAirbrushResource(cache, cache.strokeBaseTarget);
-    cache.strokeBaseTarget = createRenderTarget(width, height, referenceTexture || sourceTexture);
+    cache.strokeBaseTarget = createRenderTarget(width, height, referenceTexture || sourceTexture, {
+      generateMipmaps: false
+    });
   } else {
-    copyTextureSettings(cache.strokeBaseTarget.texture, referenceTexture || sourceTexture);
+    copyTextureSettings(cache.strokeBaseTarget.texture, referenceTexture || sourceTexture, {
+      generateMipmaps: false
+    });
   }
   const copiedBaseTexture = copySurfaceBaseTexture(renderer, sourceTexture, cache.strokeBaseTarget, cache);
   cache.texturePaintTslSurfaceLastStrokeBaseCopy = copiedBaseTexture ? "gpu-copy" : "shader-copy";
@@ -4520,8 +4990,8 @@ function createVisibleSurfaceTarget(width = 1, height = 1) {
   target.texture.flipY = false;
   target.texture.wrapS = THREE.ClampToEdgeWrapping;
   target.texture.wrapT = THREE.ClampToEdgeWrapping;
-  target.texture.minFilter = THREE.LinearFilter;
-  target.texture.magFilter = THREE.LinearFilter;
+  target.texture.minFilter = THREE.NearestFilter;
+  target.texture.magFilter = THREE.NearestFilter;
   target.texture.generateMipmaps = false;
   return target;
 }
@@ -4531,7 +5001,7 @@ function createVisibleSurfaceMaterial() {
   if (!tsl || typeof THREE.MeshBasicNodeMaterial !== "function") {
     return null;
   }
-  const { Fn, clamp, normalView, positionView, vec4 } = tsl;
+  const { Fn, clamp, floor, normalView, positionView, vec4 } = tsl;
   const material = new THREE.MeshBasicNodeMaterial({
     side: THREE.DoubleSide,
     transparent: false,
@@ -4540,8 +5010,11 @@ function createVisibleSurfaceMaterial() {
     toneMapped: false
   });
   material.fragmentNode = Fn(() => {
+    const visibleDepth = positionView.z.mul(-1).toVar();
+    const visibleDepthBase = floor(visibleDepth).toVar();
+    const visibleDepthRemainder = visibleDepth.sub(visibleDepthBase).toVar();
     const encodedNormalZ = clamp(normalView.z.mul(0.5).add(0.5), 0.0, 1.0).toVar();
-    return vec4(positionView.z.mul(-1), encodedNormalZ, 0, 1);
+    return vec4(visibleDepthBase, encodedNormalZ, visibleDepthRemainder, 1);
   })();
   material.name = "texture-paint-tsl-visible-surface-material";
   return material;
@@ -4615,25 +5088,52 @@ function createDilationMaterial(sourceTexture = null, texelSize = new THREE.Vect
   if (!tsl || typeof THREE.MeshBasicNodeMaterial !== "function") {
     return null;
   }
-  const { Fn, If, texture, uniform, uv, vec2, vec4 } = tsl;
+  const { Fn, If, float, max, min, texture, uniform, uv, vec2, vec4 } = tsl;
   const sourceTextureNode = texture(sourceTexture, uv());
   const texelSizeNode = uniform(texelSize, "vec2");
   const alphaThreshold = uniform(0.5, "float");
+  const sampleAlphaThreshold = uniform(0, "float");
+  const interiorOnly = uniform(0, "float");
   const offsets = TSL_SURFACE_DILATION_SAMPLE_RADII.flatMap((radius) => [
     [-radius, -radius], [0, -radius], [radius, -radius],
     [-radius, 0], [radius, 0],
     [-radius, radius], [0, radius], [radius, radius]
   ]);
+  const bridgePairs = TSL_SURFACE_DILATION_SAMPLE_RADII
+    .filter((radius) => radius <= TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS)
+    .flatMap((radius) => [
+      [[-radius, 0], [radius, 0]],
+      [[0, -radius], [0, radius]],
+      [[-radius, -radius], [radius, radius]],
+      [[radius, -radius], [-radius, radius]]
+    ]);
   const fragmentNode = Fn(() => {
     const currentUv = uv().toVar();
     const result = sourceTextureNode.toVar();
     If(result.a.lessThan(alphaThreshold), () => {
-      for (const offset of offsets) {
-        const sample = sourceTextureNode.sample(currentUv.add(vec2(offset[0], offset[1]).mul(texelSizeNode))).toVar();
-        If(sample.a.greaterThan(result.a), () => {
-          result.assign(vec4(sample.rgb, sample.a));
-        });
-      }
+      const candidate = result.toVar();
+      If(interiorOnly.lessThan(0.5), () => {
+        for (const offset of offsets) {
+          const sample = sourceTextureNode.sample(currentUv.add(vec2(offset[0], offset[1]).mul(texelSizeNode))).toVar();
+          If(sample.a.greaterThan(max(candidate.a, sampleAlphaThreshold)), () => {
+            candidate.assign(vec4(sample.rgb, sample.a));
+          });
+        }
+      });
+      If(interiorOnly.greaterThan(0.5), () => {
+        for (const [firstOffset, secondOffset] of bridgePairs) {
+          const firstSample = sourceTextureNode.sample(currentUv.add(vec2(firstOffset[0], firstOffset[1]).mul(texelSizeNode))).toVar();
+          const secondSample = sourceTextureNode.sample(currentUv.add(vec2(secondOffset[0], secondOffset[1]).mul(texelSizeNode))).toVar();
+          const bridgeAlpha = min(firstSample.a, secondSample.a).toVar();
+          const bridgeThreshold = max(sampleAlphaThreshold, float(TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD)).toVar();
+          If(bridgeAlpha.greaterThan(max(candidate.a, bridgeThreshold)), () => {
+            candidate.assign(vec4(bridgeAlpha, bridgeAlpha, bridgeAlpha, bridgeAlpha));
+          });
+        }
+      });
+      If(candidate.a.greaterThan(result.a), () => {
+        result.assign(candidate);
+      });
     });
     return result;
   })();
@@ -4649,7 +5149,9 @@ function createDilationMaterial(sourceTexture = null, texelSize = new THREE.Vect
   material.userData.texturePaintTslSurfaceDilation = {
     sourceTextureNode,
     texelSizeNode,
-    alphaThreshold
+    alphaThreshold,
+    sampleAlphaThreshold,
+    interiorOnly
   };
   return material;
 }
@@ -4663,6 +5165,12 @@ function updateDilationMaterial(material = null, sourceTexture = null, width = 1
   state.texelSizeNode.value.set(1 / Math.max(1, width), 1 / Math.max(1, height));
   if (state.alphaThreshold) {
     state.alphaThreshold.value = Math.max(0, Math.min(1, finiteNumber(options.alphaThreshold, 0.5)));
+  }
+  if (state.sampleAlphaThreshold) {
+    state.sampleAlphaThreshold.value = Math.max(0, Math.min(1, finiteNumber(options.sampleAlphaThreshold, 0)));
+  }
+  if (state.interiorOnly) {
+    state.interiorOnly.value = options.interiorOnly === true ? 1 : 0;
   }
   return true;
 }
@@ -4681,15 +5189,21 @@ function ensureDilationResources(cache = null, referenceTexture = null, width = 
   ) {
     retireSurfaceAirbrushResource(cache, cache.maskTarget);
     retireSurfaceAirbrushResources(cache, cache.dilationTargets);
-    cache.maskTarget = createRenderTarget(width, height, referenceTexture);
+    cache.maskTarget = createRenderTarget(width, height, referenceTexture, {
+      generateMipmaps: false
+    });
     cache.dilationTargets = [
-      createRenderTarget(width, height, referenceTexture),
-      createRenderTarget(width, height, referenceTexture)
+      createRenderTarget(width, height, referenceTexture, { generateMipmaps: false }),
+      createRenderTarget(width, height, referenceTexture, { generateMipmaps: false })
     ];
   } else {
-    copyTextureSettings(cache.maskTarget.texture, referenceTexture);
+    copyTextureSettings(cache.maskTarget.texture, referenceTexture, {
+      generateMipmaps: false
+    });
     for (const target of cache.dilationTargets) {
-      copyTextureSettings(target.texture, referenceTexture);
+      copyTextureSettings(target.texture, referenceTexture, {
+        generateMipmaps: false
+      });
     }
   }
   cache.maskMaterial ||= createUvMaskMaterial();
@@ -5467,6 +5981,7 @@ function renderVisibleSurfaceTarget(
   options = {}
 ) {
   const frameKey = surfaceProjectionFrameKey(editor, sourceObjects);
+  const includeAllMaterialIndices = options.includeAllMaterialIndices === true;
   if (
     frameKey
     && cache?.visibleTarget
@@ -5474,6 +5989,7 @@ function renderVisibleSurfaceTarget(
     && cache.visibleSurfaceEditable === editable
     && cache.visibleSurfaceFallbackObject === fallbackSourceObject
     && cache.visibleSurfaceFallbackMaterialIndex === fallbackMaterialIndex
+    && cache.visibleSurfaceIncludeAllMaterialIndices === includeAllMaterialIndices
   ) {
     return cache.visibleTarget;
   }
@@ -5518,6 +6034,7 @@ function renderVisibleSurfaceTarget(
     cache.visibleSurfaceEditable = editable || null;
     cache.visibleSurfaceFallbackObject = fallbackSourceObject || null;
     cache.visibleSurfaceFallbackMaterialIndex = fallbackMaterialIndex ?? null;
+    cache.visibleSurfaceIncludeAllMaterialIndices = includeAllMaterialIndices;
   }
   return target;
 }
@@ -5780,6 +6297,8 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
   const blendOnly = uniform(0, "float");
   const emptyLayerSource = uniform(0, "float");
   const visibleSurfaceEnabled = uniform(0, "float");
+  const componentGateEnabled = uniform(0, "float");
+  const componentGateFrontmostRelax = uniform(0, "float");
   const sourceSampleFlipY = uniform(0, "float");
   const projectedPaintGutterOnly = uniform(0, "float");
   const segmentCount = uniform(0, "int");
@@ -5823,24 +6342,40 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
   const fragmentNode = Fn(() => {
     const coverage = float(0).toVar();
     const editorView = paintView.toVar();
-    const surfaceScreen = paintScreen.toVar();
+    const projectedClip = editorProjectionMatrix.mul(vec4(editorView, 1)).toVar();
+    const projectedW = max(abs(projectedClip.w), 0.0001).toVar();
+    const projectedNdc = projectedClip.xyz.div(projectedW).toVar();
+    const surfaceScreen = vec3(
+      projectedNdc.x.mul(0.5).add(0.5).mul(editorViewportSize.x),
+      float(1).sub(projectedNdc.y.mul(0.5).add(0.5)).mul(editorViewportSize.y),
+      paintScreen.z
+    ).toVar();
+    const visibleInViewport = surfaceScreen.x.greaterThanEqual(0)
+      .and(surfaceScreen.x.lessThanEqual(editorViewportSize.x))
+      .and(surfaceScreen.y.greaterThanEqual(0))
+      .and(surfaceScreen.y.lessThanEqual(editorViewportSize.y))
+      .toVar();
     const visibleUvRaw = clamp(surfaceScreen.xy.div(editorViewportSize), vec2(0), vec2(1)).toVar();
     const visibleUv = vec2(visibleUvRaw.x, float(1).sub(visibleUvRaw.y)).toVar();
     const visibleSample = visibleTextureNode.sample(visibleUv).toVar();
     const visibleActive = clamp(visibleSurfaceEnabled, 0.0, 1.0).toVar();
-    const visibleSampleValid = clamp(visibleSample.a.mul(32.0), 0.0, 1.0).toVar();
+    const visibleSampleValid = clamp(visibleSample.a.mul(32.0), 0.0, 1.0)
+      .mul(visibleInViewport.select(float(1), float(0)))
+      .toVar();
     const editorNormalVector = paintNormal.toVar();
     const editorNormalLength = max(length(editorNormalVector), 0.0001).toVar();
     const editorNormal = editorNormalVector.div(editorNormalLength).toVar();
     const currentFacingNormalZ = editorNormalLength.greaterThan(0.0002)
       .select(editorNormal.z, float(1))
       .toVar();
-    const visibleDepth = visibleSample.r.toVar();
+    const visibleDepth = visibleSample.r.add(visibleSample.b).toVar();
     const fragmentDepth = editorView.z.mul(-1).toVar();
     const visibleDelta = abs(fragmentDepth.sub(visibleDepth)).toVar();
+    const visibleDepthDelta = fragmentDepth.sub(visibleDepth).toVar();
     const visibleFacingSampleZ = visibleSample.g.mul(2.0).sub(1.0).toVar();
     const visibleNormalRescue = visibleActive
       .mul(visibleSampleValid)
+      .mul(currentFacingNormalZ.greaterThanEqual(VISIBLE_SURFACE_NORMAL_RESCUE_MIN_LOCAL_Z).select(float(1), float(0)))
       .mul(visibleDelta.lessThanEqual(VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS).select(float(1), float(0)))
       .toVar();
     const facingNormalZ = mix(
@@ -5861,40 +6396,135 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
     const hardFacingCoverage = facingNormalZ.greaterThanEqual(0.0).select(float(1), float(0)).toVar();
     const facingCoverage = mix(softFacingCoverage, hardFacingCoverage, hardVisibleEdge).toVar();
     const normalGate = mix(float(1), facingCoverage, visibleNormalEdge).toVar();
+    const frontmostSurfaceHardCoverage = visibleDepthDelta
+      .lessThanEqual(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE)
+      .select(float(1), float(0))
+      .toVar();
+    const frontmostSurfaceSoftRamp = clamp(
+      visibleDepthDelta
+        .sub(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE)
+        .div(VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER),
+      0.0,
+      1.0
+    ).toVar();
+    const frontmostSurfaceSoftCoverage = float(1).sub(
+      frontmostSurfaceSoftRamp
+        .mul(frontmostSurfaceSoftRamp)
+        .mul(float(3).sub(frontmostSurfaceSoftRamp.mul(2)))
+    ).toVar();
+    const frontmostSurfaceCoverage = mix(
+      frontmostSurfaceSoftCoverage,
+      frontmostSurfaceHardCoverage,
+      hardVisibleEdge
+    ).toVar();
+    const closerDepthRamp = clamp(
+      visibleDepthDelta.mul(-1)
+        .sub(VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE)
+        .div(VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER),
+      0.0,
+      1.0
+    ).toVar();
+    const closerDepthCoverage = float(1).sub(
+      closerDepthRamp
+        .mul(closerDepthRamp)
+        .mul(float(3).sub(closerDepthRamp.mul(2)))
+    ).toVar();
+    const visibleDepthCoverageBase = frontmostSurfaceCoverage.mul(closerDepthCoverage).toVar();
+    const visibleSoftEdgeTexel = vec2(1).div(editorViewportSize).toVar();
+    const visibleSoftEdgeNearTexel = visibleSoftEdgeTexel
+      .mul(VISIBLE_SURFACE_SOFT_EDGE_SAMPLE_PIXELS)
+      .toVar();
+    const visibleSoftEdgeFarTexel = visibleSoftEdgeTexel
+      .mul(VISIBLE_SURFACE_SOFT_EDGE_FAR_SAMPLE_PIXELS)
+      .toVar();
+    const visibleSoftEdgeCoverageForSample = (sample) => {
+      const sampleValid = clamp(sample.a.mul(32.0), 0.0, 1.0).toVar();
+      const sampleDepth = sample.r.add(sample.b).toVar();
+      const sampleDepthDelta = fragmentDepth.sub(sampleDepth).toVar();
+      const sampleFrontHardCoverage = sampleDepthDelta
+        .lessThanEqual(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE)
+        .select(float(1), float(0))
+        .toVar();
+      const sampleFrontSoftRamp = clamp(
+        sampleDepthDelta
+          .sub(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE)
+          .div(VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER),
+        0.0,
+        1.0
+      ).toVar();
+      const sampleFrontSoftCoverage = float(1).sub(
+        sampleFrontSoftRamp
+          .mul(sampleFrontSoftRamp)
+          .mul(float(3).sub(sampleFrontSoftRamp.mul(2)))
+      ).toVar();
+      const sampleFrontCoverage = mix(
+        sampleFrontSoftCoverage,
+        sampleFrontHardCoverage,
+        hardVisibleEdge
+      ).toVar();
+      const sampleCloserRamp = clamp(
+        sampleDepthDelta.mul(-1)
+          .sub(VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE)
+          .div(VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER),
+        0.0,
+        1.0
+      ).toVar();
+      const sampleCloserCoverage = float(1).sub(
+        sampleCloserRamp
+          .mul(sampleCloserRamp)
+          .mul(float(3).sub(sampleCloserRamp.mul(2)))
+      ).toVar();
+      return sampleFrontCoverage.mul(sampleCloserCoverage).mul(sampleValid);
+    };
+    const visibleSoftEdgeCoverageForOffset = (offset) => max(
+      max(
+        visibleSoftEdgeCoverageForSample(visibleTextureNode.sample(clamp(
+          visibleUv.add(vec2(offset.x, 0)),
+          vec2(0),
+          vec2(1)
+        ))),
+        visibleSoftEdgeCoverageForSample(visibleTextureNode.sample(clamp(
+          visibleUv.sub(vec2(offset.x, 0)),
+          vec2(0),
+          vec2(1)
+        )))
+      ),
+      max(
+        visibleSoftEdgeCoverageForSample(visibleTextureNode.sample(clamp(
+          visibleUv.add(vec2(0, offset.y)),
+          vec2(0),
+          vec2(1)
+        ))),
+        visibleSoftEdgeCoverageForSample(visibleTextureNode.sample(clamp(
+          visibleUv.sub(vec2(0, offset.y)),
+          vec2(0),
+          vec2(1)
+        )))
+      )
+    );
+    const visibleSoftEdgeCoverage = max(
+      visibleSoftEdgeCoverageForOffset(visibleSoftEdgeNearTexel)
+        .mul(VISIBLE_SURFACE_SOFT_EDGE_COVERAGE),
+      visibleSoftEdgeCoverageForOffset(visibleSoftEdgeFarTexel)
+        .mul(VISIBLE_SURFACE_SOFT_EDGE_FAR_COVERAGE)
+    )
+      .mul(float(1).sub(hardVisibleEdge))
+      .toVar();
+    const visibleDepthCoverage = max(
+      visibleDepthCoverageBase,
+      visibleSoftEdgeCoverage.mul(visibleSampleValid)
+    ).toVar();
+    const depthGate = mix(float(1), visibleDepthCoverage, visibleActive).toVar();
+    const frontmostSurfaceLocalityAuthority = visibleActive
+      .mul(visibleSampleValid)
+      .mul(visibleDepthCoverageBase)
+      .toVar();
     Loop(MAX_TSL_SURFACE_SEGMENTS, ({ i }) => {
       If(i.lessThan(segmentCount), () => {
         const start = segmentStarts.element(i);
         const end = segmentEnds.element(i);
-        const viewStart = segmentViewStarts.element(i);
-        const viewEnd = segmentViewEnds.element(i);
-        const segmentComponent = segmentComponents.element(i);
         const radius = max(start.w, 0.0001);
-        const viewRadius = max(max(viewStart.w, viewEnd.w), 0.0001).toVar();
-        const visibleDepthRadius = max(
-          VISIBLE_SURFACE_DEPTH_GATE_MIN_RADIUS,
-          viewRadius.mul(VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE)
-        ).toVar();
-        const visibleDepthFeather = max(
-          0.0001,
-          visibleDepthRadius.mul(VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE)
-        ).toVar();
-        const visibleDepthFade = clamp(
-          max(visibleDelta.sub(visibleDepthRadius), 0.0).div(visibleDepthFeather),
-          0.0,
-          1.0
-        ).toVar();
-        const visibleDepthSmoothFade = visibleDepthFade
-          .mul(visibleDepthFade)
-          .mul(float(3).sub(visibleDepthFade.mul(2)))
-          .toVar();
-        const visibleDepthCoverage = float(1).sub(visibleDepthSmoothFade).toVar();
-        const visibleGateCoverage = float(1).toVar();
-        const softness = float(1).sub(hardness).toVar();
-        const haloRadius = radius.mul(
-          float(1)
-            .add(scatter.mul(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE))
-            .add(softness.mul(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE))
-        ).toVar();
+        const haloRadius = radius.toVar();
         const segmentVector = end.xy.sub(start.xy).toVar();
         const lengthSq = max(dot(segmentVector, segmentVector), 0.000001);
         const segmentT = clamp(dot(surfaceScreen.xy.sub(start.xy), segmentVector).div(lengthSq), 0.0, 1.0).toVar();
@@ -5915,9 +6545,134 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const smoothEdge = shapedEdge.mul(shapedEdge).mul(float(3).sub(shapedEdge.mul(2))).toVar();
         const edgeCoverage = max(0.0, float(1).sub(smoothEdge)).toVar();
         const screenCoverage = edgeCoverage.toVar();
-        const brushFieldCoverage = screenCoverage.toVar();
-        const surfaceFieldCoverage = brushFieldCoverage.toVar();
-        const gatedCoverage = surfaceFieldCoverage.toVar();
+        const opposedNormalStart = segmentNormalStarts.element(i);
+        const opposedNormalEnd = segmentNormalEnds.element(i);
+        const opposedNormalAvailable = opposedNormalStart.w.greaterThan(0.5)
+          .or(opposedNormalEnd.w.greaterThan(0.5))
+          .toVar();
+        const opposedNormalVector = opposedNormalStart.xyz.mul(float(1).sub(segmentT))
+          .add(opposedNormalEnd.xyz.mul(segmentT))
+          .toVar();
+        const opposedNormalLength = max(length(opposedNormalVector), 0.0001).toVar();
+        const opposedNormal = opposedNormalVector.div(opposedNormalLength).toVar();
+        const opposedNormalDot = dot(editorNormal, opposedNormal).toVar();
+        const opposedNormalRamp = clamp(
+          opposedNormalDot.sub(SURFACE_AIRBRUSH_OPPOSED_NORMAL_REJECT_DOT)
+            .div(SURFACE_AIRBRUSH_OPPOSED_NORMAL_FULL_DOT - SURFACE_AIRBRUSH_OPPOSED_NORMAL_REJECT_DOT),
+          0.0,
+          1.0
+        ).toVar();
+        const opposedNormalFeathered = opposedNormalRamp
+          .mul(opposedNormalRamp)
+          .mul(float(3).sub(opposedNormalRamp.mul(2)))
+          .toVar();
+        const opposedNormalGate = opposedNormalAvailable
+          .select(opposedNormalFeathered, float(1))
+          .toVar();
+        const segmentViewStart = segmentViewStarts.element(i);
+        const segmentViewEnd = segmentViewEnds.element(i);
+        const segmentHasView = segmentViewStart.w.greaterThan(0.0001)
+          .and(segmentViewEnd.w.greaterThan(0.0001))
+          .toVar();
+        const segmentViewVector = segmentViewEnd.xyz.sub(segmentViewStart.xyz).toVar();
+        const segmentViewLengthRaw = dot(segmentViewVector, segmentViewVector).toVar();
+        const segmentHasDirectionalView = segmentHasView
+          .and(segmentViewLengthRaw.greaterThan(0.000001))
+          .toVar();
+        const segmentHasPointView = segmentHasView
+          .and(segmentViewLengthRaw.lessThanEqual(0.000001))
+          .toVar();
+        const segmentViewLengthSq = max(segmentViewLengthRaw, 0.000001).toVar();
+        const segmentViewT = clamp(
+          dot(editorView.sub(segmentViewStart.xyz), segmentViewVector).div(segmentViewLengthSq),
+          0.0,
+          1.0
+        ).toVar();
+        const segmentClosestView = segmentViewStart.xyz.add(segmentViewVector.mul(segmentViewT)).toVar();
+        const segmentDistance = length(editorView.sub(segmentClosestView)).toVar();
+        const segmentViewRadius = max(mix(segmentViewStart.w, segmentViewEnd.w, segmentViewT), 0.0001).toVar();
+        const segmentDistanceLimit = segmentViewRadius.mul(SURFACE_AIRBRUSH_SEGMENT_DISTANCE_RADIUS_SCALE).toVar();
+        const segmentDistanceFeather = max(
+          segmentViewRadius.mul(SURFACE_AIRBRUSH_SEGMENT_DISTANCE_FEATHER_SCALE),
+          0.0001
+        ).toVar();
+        const segmentDistanceRamp = clamp(
+          segmentDistance.sub(segmentDistanceLimit).div(segmentDistanceFeather),
+          0.0,
+          1.0
+        ).toVar();
+        const segmentDistanceFeathered = float(1).sub(
+          segmentDistanceRamp
+            .mul(segmentDistanceRamp)
+            .mul(float(3).sub(segmentDistanceRamp.mul(2)))
+        ).toVar();
+        const segmentDistanceGate = segmentHasDirectionalView
+          .select(segmentDistanceFeathered, float(1))
+          .toVar();
+        const segmentDepth = mix(segmentViewStart.z, segmentViewEnd.z, segmentViewT).toVar();
+        const segmentDepthDelta = abs(editorView.z.sub(segmentDepth)).toVar();
+        const segmentDepthLimit = max(
+          segmentViewRadius.mul(SURFACE_AIRBRUSH_SEGMENT_DEPTH_RADIUS_SCALE),
+          SURFACE_AIRBRUSH_SEGMENT_DEPTH_MIN_LIMIT
+        ).toVar();
+        const segmentDepthFeather = max(
+          segmentViewRadius.mul(SURFACE_AIRBRUSH_SEGMENT_DEPTH_FEATHER_SCALE),
+          0.0001
+        ).toVar();
+        const segmentDepthRamp = clamp(
+          segmentDepthDelta.sub(segmentDepthLimit).div(segmentDepthFeather),
+          0.0,
+          1.0
+        ).toVar();
+        const segmentDepthFeathered = float(1).sub(
+          segmentDepthRamp
+            .mul(segmentDepthRamp)
+            .mul(float(3).sub(segmentDepthRamp.mul(2)))
+        ).toVar();
+        const segmentDepthGate = segmentHasDirectionalView
+          .select(
+            segmentDepthFeathered,
+            segmentHasPointView.select(segmentDepthFeathered, float(1))
+          )
+          .toVar();
+        const viewCoreRadius = segmentViewRadius.mul(float(TEXTURE_AIRBRUSH_CORE_MIN_SCALE).add(
+          pow(hardness, TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER).mul(TEXTURE_AIRBRUSH_CORE_HARDNESS_SCALE)
+        )).toVar();
+        const viewFadeRadius = max(segmentViewRadius.sub(viewCoreRadius), 0.0001).toVar();
+        const viewNormalized = clamp(segmentDistance.sub(viewCoreRadius).div(viewFadeRadius), 0.0, 1.0).toVar();
+        const viewShapedEdge = clamp(pow(viewNormalized, exponent), 0.0, 1.0).toVar();
+        const viewSmoothEdge = viewShapedEdge.mul(viewShapedEdge).mul(float(3).sub(viewShapedEdge.mul(2))).toVar();
+        const viewCoverage = max(0.0, float(1).sub(viewSmoothEdge)).toVar();
+        const surfaceBrushCoverage = min(viewCoverage, screenCoverage).toVar();
+        const surfaceFieldCoverage = segmentHasView
+          .select(surfaceBrushCoverage, screenCoverage)
+          .toVar();
+        const segmentLocalityGate = float(1).toVar();
+        const segmentComponent = segmentComponents.element(i);
+        const hasSegmentComponent = segmentComponent.x.greaterThan(0.5).or(segmentComponent.y.greaterThan(0.5)).toVar();
+        const componentGateActive = componentGateEnabled
+          .greaterThan(0.5)
+          .and(paintComponent.greaterThan(0.5))
+          .and(hasSegmentComponent)
+          .toVar();
+        const connectedComponentGate = abs(paintComponent.sub(segmentComponent.x))
+          .lessThan(0.5)
+          .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
+          .toVar();
+        const strictComponentGate = componentGateActive
+          .select(connectedComponentGate.select(float(1), float(0)), float(1))
+          .toVar();
+        const componentGateRelaxAuthority = frontmostSurfaceLocalityAuthority
+          .mul(componentGateFrontmostRelax)
+          .toVar();
+        const componentGate = mix(
+          strictComponentGate,
+          float(1),
+          componentGateRelaxAuthority
+        ).toVar();
+        const gatedCoverage = surfaceFieldCoverage
+          .mul(componentGate)
+          .toVar();
         const insideOriginalTriangle = min(
           min(paintBarycentric.x, paintBarycentric.y),
           paintBarycentric.z
@@ -5926,17 +6681,10 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const baseSampleCoverage = projectedPaintGutterOnly.greaterThan(0.5)
           .select(gutterCoverage, gatedCoverage)
           .toVar();
-        const connectedComponentGate = paintComponent.lessThan(0.5)
-          .or(segmentComponent.x.lessThan(0.5).and(segmentComponent.y.lessThan(0.5)))
-          .or(abs(paintComponent.sub(segmentComponent.x)).lessThan(0.5))
-          .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
-          .select(float(1), float(0))
-          .toVar();
-        const componentGate = connectedComponentGate.toVar();
         const sampleCoverage = baseSampleCoverage
-          .mul(componentGate)
+          .mul(depthGate)
           .mul(normalGate)
-          .mul(visibleGateCoverage)
+          .mul(segmentLocalityGate)
           .toVar();
         coverage.assign(max(coverage, sampleCoverage));
       });
@@ -5990,6 +6738,8 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
     sourceTextureNode,
     visibleTextureNode,
     visibleSurfaceEnabled,
+    componentGateEnabled,
+    componentGateFrontmostRelax,
     originalMeshUvRaster,
     editorViewMatrix: null,
     editorProjectionMatrix,
@@ -6086,6 +6836,8 @@ function createSurfaceMaterial(
   const blendOnly = uniform(0, "float");
   const emptyLayerSource = uniform(0, "float");
   const visibleSurfaceEnabled = uniform(0, "float");
+  const componentGateEnabled = uniform(0, "float");
+  const componentGateFrontmostRelax = uniform(0, "float");
   const sourceSampleFlipY = uniform(0, "float");
   const segmentCount = uniform(0, "int");
   const segmentStarts = uniformArray(
@@ -6147,39 +6899,54 @@ function createSurfaceMaterial(
   const fragmentNode = Fn(() => {
     const coverage = float(0).toVar();
     const editorView = paintView.toVar();
-    const surfaceScreen = paintScreen.toVar();
+    const projectedClip = editorProjectionMatrix.mul(vec4(editorView, 1)).toVar();
+    const projectedW = max(abs(projectedClip.w), 0.0001).toVar();
+    const projectedNdc = projectedClip.xyz.div(projectedW).toVar();
+    const surfaceScreen = vec3(
+      projectedNdc.x.mul(0.5).add(0.5).mul(editorViewportSize.x),
+      float(1).sub(projectedNdc.y.mul(0.5).add(0.5)).mul(editorViewportSize.y),
+      paintScreen.z
+    ).toVar();
+    const visibleInViewport = surfaceScreen.x.greaterThanEqual(0)
+      .and(surfaceScreen.x.lessThanEqual(editorViewportSize.x))
+      .and(surfaceScreen.y.greaterThanEqual(0))
+      .and(surfaceScreen.y.lessThanEqual(editorViewportSize.y))
+      .toVar();
     const visibleUvRaw = clamp(surfaceScreen.xy.div(editorViewportSize), vec2(0), vec2(1)).toVar();
     const visibleUv = vec2(visibleUvRaw.x, float(1).sub(visibleUvRaw.y)).toVar();
     const visibleSample = visibleTextureNode.sample(visibleUv).toVar();
-    void overlapMaskTextureNode;
+    const overlapSample = overlapMaskTextureNode.toVar();
+    const overlapCanWrite = overlapSample.r.greaterThan(0.5).toVar();
     let gutterCanWrite = null;
     if (!originalMeshUvRaster) {
       const occupancySample = uvOccupancyTextureNode.toVar();
-      const overlapSample = overlapMaskTextureNode.toVar();
       const insideOriginalTriangle = min(
         min(paintBarycentric.x, paintBarycentric.y),
         paintBarycentric.z
       ).greaterThanEqual(0.0);
-      const overlapCanWrite = overlapSample.r.greaterThan(0.5).toVar();
       gutterCanWrite = insideOriginalTriangle
         .or(occupancySample.r.lessThan(0.5))
         .and(overlapCanWrite)
         .toVar();
     }
     const visibleActive = clamp(visibleSurfaceEnabled, 0.0, 1.0).toVar();
-    const visibleSampleValid = clamp(visibleSample.a.mul(32.0), 0.0, 1.0).toVar();
+    const visibleSampleValid = clamp(visibleSample.a.mul(32.0), 0.0, 1.0)
+      .mul(visibleInViewport.select(float(1), float(0)))
+      .toVar();
     const editorNormalVector = paintNormal.toVar();
     const editorNormalLength = max(length(editorNormalVector), 0.0001).toVar();
     const editorNormal = editorNormalVector.div(editorNormalLength).toVar();
     const currentFacingNormalZ = editorNormalLength.greaterThan(0.0002)
       .select(editorNormal.z, float(1))
       .toVar();
-    const visibleDepth = visibleSample.r.toVar();
+    const visibleDepth = visibleSample.r.add(visibleSample.b).toVar();
     const fragmentDepth = editorView.z.mul(-1).toVar();
     const visibleDelta = abs(fragmentDepth.sub(visibleDepth)).toVar();
+    const visibleDepthDelta = fragmentDepth.sub(visibleDepth).toVar();
     const visibleFacingSampleZ = visibleSample.g.mul(2.0).sub(1.0).toVar();
     const visibleNormalRescue = visibleActive
       .mul(visibleSampleValid)
+      .mul(currentFacingNormalZ.greaterThanEqual(VISIBLE_SURFACE_NORMAL_RESCUE_MIN_LOCAL_Z).select(float(1), float(0)))
       .mul(visibleDelta.lessThanEqual(VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS).select(float(1), float(0)))
       .toVar();
     const facingNormalZ = mix(
@@ -6200,40 +6967,135 @@ function createSurfaceMaterial(
     const hardFacingCoverage = facingNormalZ.greaterThanEqual(0.0).select(float(1), float(0)).toVar();
     const facingCoverage = mix(softFacingCoverage, hardFacingCoverage, hardVisibleEdge).toVar();
     const normalGate = mix(float(1), facingCoverage, visibleNormalEdge).toVar();
+    const frontmostSurfaceHardCoverage = visibleDepthDelta
+      .lessThanEqual(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE)
+      .select(float(1), float(0))
+      .toVar();
+    const frontmostSurfaceSoftRamp = clamp(
+      visibleDepthDelta
+        .sub(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE)
+        .div(VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER),
+      0.0,
+      1.0
+    ).toVar();
+    const frontmostSurfaceSoftCoverage = float(1).sub(
+      frontmostSurfaceSoftRamp
+        .mul(frontmostSurfaceSoftRamp)
+        .mul(float(3).sub(frontmostSurfaceSoftRamp.mul(2)))
+    ).toVar();
+    const frontmostSurfaceCoverage = mix(
+      frontmostSurfaceSoftCoverage,
+      frontmostSurfaceHardCoverage,
+      hardVisibleEdge
+    ).toVar();
+    const closerDepthRamp = clamp(
+      visibleDepthDelta.mul(-1)
+        .sub(VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE)
+        .div(VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER),
+      0.0,
+      1.0
+    ).toVar();
+    const closerDepthCoverage = float(1).sub(
+      closerDepthRamp
+        .mul(closerDepthRamp)
+        .mul(float(3).sub(closerDepthRamp.mul(2)))
+    ).toVar();
+    const visibleDepthCoverageBase = frontmostSurfaceCoverage.mul(closerDepthCoverage).toVar();
+    const visibleSoftEdgeTexel = vec2(1).div(editorViewportSize).toVar();
+    const visibleSoftEdgeNearTexel = visibleSoftEdgeTexel
+      .mul(VISIBLE_SURFACE_SOFT_EDGE_SAMPLE_PIXELS)
+      .toVar();
+    const visibleSoftEdgeFarTexel = visibleSoftEdgeTexel
+      .mul(VISIBLE_SURFACE_SOFT_EDGE_FAR_SAMPLE_PIXELS)
+      .toVar();
+    const visibleSoftEdgeCoverageForSample = (sample) => {
+      const sampleValid = clamp(sample.a.mul(32.0), 0.0, 1.0).toVar();
+      const sampleDepth = sample.r.add(sample.b).toVar();
+      const sampleDepthDelta = fragmentDepth.sub(sampleDepth).toVar();
+      const sampleFrontHardCoverage = sampleDepthDelta
+        .lessThanEqual(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE)
+        .select(float(1), float(0))
+        .toVar();
+      const sampleFrontSoftRamp = clamp(
+        sampleDepthDelta
+          .sub(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE)
+          .div(VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER),
+        0.0,
+        1.0
+      ).toVar();
+      const sampleFrontSoftCoverage = float(1).sub(
+        sampleFrontSoftRamp
+          .mul(sampleFrontSoftRamp)
+          .mul(float(3).sub(sampleFrontSoftRamp.mul(2)))
+      ).toVar();
+      const sampleFrontCoverage = mix(
+        sampleFrontSoftCoverage,
+        sampleFrontHardCoverage,
+        hardVisibleEdge
+      ).toVar();
+      const sampleCloserRamp = clamp(
+        sampleDepthDelta.mul(-1)
+          .sub(VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE)
+          .div(VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER),
+        0.0,
+        1.0
+      ).toVar();
+      const sampleCloserCoverage = float(1).sub(
+        sampleCloserRamp
+          .mul(sampleCloserRamp)
+          .mul(float(3).sub(sampleCloserRamp.mul(2)))
+      ).toVar();
+      return sampleFrontCoverage.mul(sampleCloserCoverage).mul(sampleValid);
+    };
+    const visibleSoftEdgeCoverageForOffset = (offset) => max(
+      max(
+        visibleSoftEdgeCoverageForSample(visibleTextureNode.sample(clamp(
+          visibleUv.add(vec2(offset.x, 0)),
+          vec2(0),
+          vec2(1)
+        ))),
+        visibleSoftEdgeCoverageForSample(visibleTextureNode.sample(clamp(
+          visibleUv.sub(vec2(offset.x, 0)),
+          vec2(0),
+          vec2(1)
+        )))
+      ),
+      max(
+        visibleSoftEdgeCoverageForSample(visibleTextureNode.sample(clamp(
+          visibleUv.add(vec2(0, offset.y)),
+          vec2(0),
+          vec2(1)
+        ))),
+        visibleSoftEdgeCoverageForSample(visibleTextureNode.sample(clamp(
+          visibleUv.sub(vec2(0, offset.y)),
+          vec2(0),
+          vec2(1)
+        )))
+      )
+    );
+    const visibleSoftEdgeCoverage = max(
+      visibleSoftEdgeCoverageForOffset(visibleSoftEdgeNearTexel)
+        .mul(VISIBLE_SURFACE_SOFT_EDGE_COVERAGE),
+      visibleSoftEdgeCoverageForOffset(visibleSoftEdgeFarTexel)
+        .mul(VISIBLE_SURFACE_SOFT_EDGE_FAR_COVERAGE)
+    )
+      .mul(float(1).sub(hardVisibleEdge))
+      .toVar();
+    const visibleDepthCoverage = max(
+      visibleDepthCoverageBase,
+      visibleSoftEdgeCoverage.mul(visibleSampleValid)
+    ).toVar();
+    const depthGate = mix(float(1), visibleDepthCoverage, visibleActive).toVar();
+    const frontmostSurfaceLocalityAuthority = visibleActive
+      .mul(visibleSampleValid)
+      .mul(visibleDepthCoverageBase)
+      .toVar();
     Loop(MAX_TSL_SURFACE_SEGMENTS, ({ i }) => {
       If(i.lessThan(segmentCount), () => {
         const start = segmentStarts.element(i);
         const end = segmentEnds.element(i);
-        const viewStart = segmentViewStarts.element(i);
-        const viewEnd = segmentViewEnds.element(i);
-        const segmentComponent = segmentComponents.element(i);
         const radius = max(start.w, 0.0001);
-        const viewRadius = max(max(viewStart.w, viewEnd.w), 0.0001).toVar();
-        const visibleDepthRadius = max(
-          VISIBLE_SURFACE_DEPTH_GATE_MIN_RADIUS,
-          viewRadius.mul(VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE)
-        ).toVar();
-        const visibleDepthFeather = max(
-          0.0001,
-          visibleDepthRadius.mul(VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE)
-        ).toVar();
-        const visibleDepthFade = clamp(
-          max(visibleDelta.sub(visibleDepthRadius), 0.0).div(visibleDepthFeather),
-          0.0,
-          1.0
-        ).toVar();
-        const visibleDepthSmoothFade = visibleDepthFade
-          .mul(visibleDepthFade)
-          .mul(float(3).sub(visibleDepthFade.mul(2)))
-          .toVar();
-        const visibleDepthCoverage = float(1).sub(visibleDepthSmoothFade).toVar();
-        const visibleGateCoverage = float(1).toVar();
-        const softness = float(1).sub(hardness).toVar();
-        const haloRadius = radius.mul(
-          float(1)
-            .add(scatter.mul(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE))
-            .add(softness.mul(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE))
-        ).toVar();
+        const haloRadius = radius.toVar();
         const segmentVector = end.xy.sub(start.xy).toVar();
         const lengthSq = max(dot(segmentVector, segmentVector), 0.000001);
         const segmentT = clamp(dot(surfaceScreen.xy.sub(start.xy), segmentVector).div(lengthSq), 0.0, 1.0).toVar();
@@ -6254,19 +7116,136 @@ function createSurfaceMaterial(
         const smoothEdge = shapedEdge.mul(shapedEdge).mul(float(3).sub(shapedEdge.mul(2))).toVar();
         const edgeCoverage = max(0.0, float(1).sub(smoothEdge)).toVar();
         const screenCoverage = edgeCoverage.toVar();
-        const brushFieldCoverage = screenCoverage.toVar();
-        const surfaceFieldCoverage = brushFieldCoverage.toVar();
-        const connectedComponentGate = paintComponent.lessThan(0.5)
-          .or(segmentComponent.x.lessThan(0.5).and(segmentComponent.y.lessThan(0.5)))
-          .or(abs(paintComponent.sub(segmentComponent.x)).lessThan(0.5))
-          .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
-          .select(float(1), float(0))
+        const opposedNormalStart = segmentNormalStarts.element(i);
+        const opposedNormalEnd = segmentNormalEnds.element(i);
+        const opposedNormalAvailable = opposedNormalStart.w.greaterThan(0.5)
+          .or(opposedNormalEnd.w.greaterThan(0.5))
           .toVar();
-        const componentGate = connectedComponentGate.toVar();
+        const opposedNormalVector = opposedNormalStart.xyz.mul(float(1).sub(segmentT))
+          .add(opposedNormalEnd.xyz.mul(segmentT))
+          .toVar();
+        const opposedNormalLength = max(length(opposedNormalVector), 0.0001).toVar();
+        const opposedNormal = opposedNormalVector.div(opposedNormalLength).toVar();
+        const opposedNormalDot = dot(editorNormal, opposedNormal).toVar();
+        const opposedNormalRamp = clamp(
+          opposedNormalDot.sub(SURFACE_AIRBRUSH_OPPOSED_NORMAL_REJECT_DOT)
+            .div(SURFACE_AIRBRUSH_OPPOSED_NORMAL_FULL_DOT - SURFACE_AIRBRUSH_OPPOSED_NORMAL_REJECT_DOT),
+          0.0,
+          1.0
+        ).toVar();
+        const opposedNormalFeathered = opposedNormalRamp
+          .mul(opposedNormalRamp)
+          .mul(float(3).sub(opposedNormalRamp.mul(2)))
+          .toVar();
+        const opposedNormalGate = opposedNormalAvailable
+          .select(opposedNormalFeathered, float(1))
+          .toVar();
+        const segmentViewStart = segmentViewStarts.element(i);
+        const segmentViewEnd = segmentViewEnds.element(i);
+        const segmentHasView = segmentViewStart.w.greaterThan(0.0001)
+          .and(segmentViewEnd.w.greaterThan(0.0001))
+          .toVar();
+        const segmentViewVector = segmentViewEnd.xyz.sub(segmentViewStart.xyz).toVar();
+        const segmentViewLengthRaw = dot(segmentViewVector, segmentViewVector).toVar();
+        const segmentHasDirectionalView = segmentHasView
+          .and(segmentViewLengthRaw.greaterThan(0.000001))
+          .toVar();
+        const segmentHasPointView = segmentHasView
+          .and(segmentViewLengthRaw.lessThanEqual(0.000001))
+          .toVar();
+        const segmentViewLengthSq = max(segmentViewLengthRaw, 0.000001).toVar();
+        const segmentViewT = clamp(
+          dot(editorView.sub(segmentViewStart.xyz), segmentViewVector).div(segmentViewLengthSq),
+          0.0,
+          1.0
+        ).toVar();
+        const segmentClosestView = segmentViewStart.xyz.add(segmentViewVector.mul(segmentViewT)).toVar();
+        const segmentDistance = length(editorView.sub(segmentClosestView)).toVar();
+        const segmentViewRadius = max(mix(segmentViewStart.w, segmentViewEnd.w, segmentViewT), 0.0001).toVar();
+        const segmentDistanceLimit = segmentViewRadius.mul(SURFACE_AIRBRUSH_SEGMENT_DISTANCE_RADIUS_SCALE).toVar();
+        const segmentDistanceFeather = max(
+          segmentViewRadius.mul(SURFACE_AIRBRUSH_SEGMENT_DISTANCE_FEATHER_SCALE),
+          0.0001
+        ).toVar();
+        const segmentDistanceRamp = clamp(
+          segmentDistance.sub(segmentDistanceLimit).div(segmentDistanceFeather),
+          0.0,
+          1.0
+        ).toVar();
+        const segmentDistanceFeathered = float(1).sub(
+          segmentDistanceRamp
+            .mul(segmentDistanceRamp)
+            .mul(float(3).sub(segmentDistanceRamp.mul(2)))
+        ).toVar();
+        const segmentDistanceGate = segmentHasDirectionalView
+          .select(segmentDistanceFeathered, float(1))
+          .toVar();
+        const segmentDepth = mix(segmentViewStart.z, segmentViewEnd.z, segmentViewT).toVar();
+        const segmentDepthDelta = abs(editorView.z.sub(segmentDepth)).toVar();
+        const segmentDepthLimit = max(
+          segmentViewRadius.mul(SURFACE_AIRBRUSH_SEGMENT_DEPTH_RADIUS_SCALE),
+          SURFACE_AIRBRUSH_SEGMENT_DEPTH_MIN_LIMIT
+        ).toVar();
+        const segmentDepthFeather = max(
+          segmentViewRadius.mul(SURFACE_AIRBRUSH_SEGMENT_DEPTH_FEATHER_SCALE),
+          0.0001
+        ).toVar();
+        const segmentDepthRamp = clamp(
+          segmentDepthDelta.sub(segmentDepthLimit).div(segmentDepthFeather),
+          0.0,
+          1.0
+        ).toVar();
+        const segmentDepthFeathered = float(1).sub(
+          segmentDepthRamp
+            .mul(segmentDepthRamp)
+            .mul(float(3).sub(segmentDepthRamp.mul(2)))
+        ).toVar();
+        const segmentDepthGate = segmentHasDirectionalView
+          .select(
+            segmentDepthFeathered,
+            segmentHasPointView.select(segmentDepthFeathered, float(1))
+          )
+          .toVar();
+        const viewCoreRadius = segmentViewRadius.mul(float(TEXTURE_AIRBRUSH_CORE_MIN_SCALE).add(
+          pow(hardness, TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER).mul(TEXTURE_AIRBRUSH_CORE_HARDNESS_SCALE)
+        )).toVar();
+        const viewFadeRadius = max(segmentViewRadius.sub(viewCoreRadius), 0.0001).toVar();
+        const viewNormalized = clamp(segmentDistance.sub(viewCoreRadius).div(viewFadeRadius), 0.0, 1.0).toVar();
+        const viewShapedEdge = clamp(pow(viewNormalized, exponent), 0.0, 1.0).toVar();
+        const viewSmoothEdge = viewShapedEdge.mul(viewShapedEdge).mul(float(3).sub(viewShapedEdge.mul(2))).toVar();
+        const viewCoverage = max(0.0, float(1).sub(viewSmoothEdge)).toVar();
+        const surfaceBrushCoverage = min(viewCoverage, screenCoverage).toVar();
+        const surfaceFieldCoverage = segmentHasView
+          .select(surfaceBrushCoverage, screenCoverage)
+          .toVar();
+        const segmentLocalityGate = float(1).toVar();
+        const segmentComponent = segmentComponents.element(i);
+        const hasSegmentComponent = segmentComponent.x.greaterThan(0.5).or(segmentComponent.y.greaterThan(0.5)).toVar();
+        const componentGateActive = componentGateEnabled
+          .greaterThan(0.5)
+          .and(paintComponent.greaterThan(0.5))
+          .and(hasSegmentComponent)
+          .toVar();
+        const connectedComponentGate = abs(paintComponent.sub(segmentComponent.x))
+          .lessThan(0.5)
+          .or(abs(paintComponent.sub(segmentComponent.y)).lessThan(0.5))
+          .toVar();
+        const strictComponentGate = componentGateActive
+          .select(connectedComponentGate.select(float(1), float(0)), float(1))
+          .toVar();
+        const componentGateRelaxAuthority = frontmostSurfaceLocalityAuthority
+          .mul(componentGateFrontmostRelax)
+          .toVar();
+        const componentGate = mix(
+          strictComponentGate,
+          float(1),
+          componentGateRelaxAuthority
+        ).toVar();
         const gatedCoverage = surfaceFieldCoverage
           .mul(componentGate)
+          .mul(depthGate)
           .mul(normalGate)
-          .mul(visibleGateCoverage)
+          .mul(segmentLocalityGate)
           .toVar();
         const sourceCoverage = originalMeshUvRaster
           ? gatedCoverage
@@ -6325,6 +7304,8 @@ function createSurfaceMaterial(
     uvOccupancyTextureNode,
     uvOccupancyTexture: uvOccupancyTexture || null,
     visibleSurfaceEnabled,
+    componentGateEnabled,
+    componentGateFrontmostRelax,
     originalMeshUvRaster,
     editorViewMatrix,
     editorProjectionMatrix,
@@ -6554,11 +7535,13 @@ function updateSurfaceMaterial(
   if (state.projectedPaintGutterOnly) {
     state.projectedPaintGutterOnly.value = options.projectedPaintGutterOnly === false ? 0 : 1;
   }
-  const componentGateEnabled = Boolean(
-    options.neighborPaintSeed?.enabled === true
-    || options.neighborPaintKey
-    || options.largeLiveNeighborPaint === true
-  );
+  const componentGateEnabled = sourceRasterClipComponentGateEnabled(options);
+  if (state.componentGateEnabled) {
+    state.componentGateEnabled.value = componentGateEnabled ? 1 : 0;
+  }
+  if (state.componentGateFrontmostRelax) {
+    state.componentGateFrontmostRelax.value = options.relaxComponentGateOnFrontmost === true ? 1 : 0;
+  }
   state.segmentCount.value = Math.max(0, Math.min(MAX_TSL_SURFACE_SEGMENTS, segments.length));
   for (let index = 0; index < MAX_TSL_SURFACE_SEGMENTS; index += 1) {
     const segment = segments[index] || null;
@@ -6738,6 +7721,7 @@ function chunkSurfaceSegmentsForShader(segments = [], maxSegments = MAX_TSL_SURF
 
 function candidateSurfaceSegments(editor = null, candidate = null, options = {}) {
   let best = [];
+  let bestHasViewData = false;
   for (const { segments, allowStartEnd, requireViewData } of [
     { segments: surfaceSegmentArray(options.screenProjectedStrokeSegments), allowStartEnd: true, requireViewData: false },
     { segments: surfaceSegmentArray(candidate?.options?.screenProjectedStrokeSegments), allowStartEnd: true, requireViewData: false },
@@ -6756,8 +7740,17 @@ function candidateSurfaceSegments(editor = null, candidate = null, options = {})
       segments,
       finiteNumber(options.radiusPixels, candidate?.radiusPixels || 1)
     );
-    if (normalized.length > best.length) {
+    const normalizedHasViewData = surfaceSegmentsIncludeViewData(normalized);
+    if (
+      normalized.length > best.length
+      || (
+        normalized.length === best.length
+        && normalizedHasViewData
+        && !bestHasViewData
+      )
+    ) {
       best = normalized;
+      bestHasViewData = normalizedHasViewData;
     }
   }
   return resampleSurfaceSegments(best);
@@ -6820,16 +7813,47 @@ function surfaceStrokeStyleKey(candidate = null, options = {}) {
         clampByte(color.b)
       ].join(",")
     : "";
+  const neighborSeed = options.neighborPaintSeed || candidate?.options?.neighborPaintSeed || null;
+  const neighborKey = String(
+    options.neighborPaintKey
+    || candidate?.options?.neighborPaintKey
+    || neighborSeed?.key
+    || ""
+  );
+  const neighborEnabled = Boolean(
+    neighborSeed?.enabled === true
+    || neighborKey
+    || options.largeLiveNeighborPaint === true
+    || candidate?.options?.largeLiveNeighborPaint === true
+  );
+  const styleRadiusPixels = finiteNumber(
+    options.screenRadiusPixels,
+    finiteNumber(
+      candidate?.screenRadiusPixels,
+      finiteNumber(
+        candidate?.options?.screenRadiusPixels,
+        finiteNumber(options.radiusPixels, candidate?.radiusPixels ?? 0)
+      )
+    )
+  );
   return [
     colorKey,
-    Math.round(finiteNumber(options.radiusPixels, candidate?.radiusPixels ?? 0) * 100),
+    Math.round(styleRadiusPixels * 100),
     Math.round(finiteNumber(options.opacity, candidate?.opacity ?? 1) * 10000),
     Math.round(finiteNumber(options.hardness, candidate?.hardness ?? 0) * 10000),
     Math.round(finiteNumber(options.scatter, candidate?.scatter ?? 0) * 10000),
     Math.round(finiteNumber(options.spacing, candidate?.spacing ?? 1) * 100),
     String(options.visibleEdgeMode || candidate?.options?.visibleEdgeMode || candidate?.visibleEdgeMode || "soft"),
     options.erase === true || candidate?.erase === true ? "erase" : "paint",
-    options.layerMode === true || candidate?.layerMode === true ? "layer" : "texture"
+    options.layerMode === true || candidate?.layerMode === true ? "layer" : "texture",
+    neighborEnabled ? "neighbor" : "no-neighbor",
+    neighborKey,
+    options.largeLiveNeighborPaint === true || candidate?.options?.largeLiveNeighborPaint === true
+      ? "large-neighbor"
+      : "ordinary-neighbor",
+    options.hardTextureAirbrushComponentGate === true || candidate?.options?.hardTextureAirbrushComponentGate === true
+      ? "component-gate"
+      : "no-component-gate"
   ].join("|");
 }
 
@@ -6841,11 +7865,6 @@ function surfaceStrokeSegmentsAreContinuous(previousSegment = null, firstSegment
   const previousEnd = finitePoint(previousSegment?.end);
   const firstStart = finitePoint(firstSegment?.start);
   if (!previousSegment || !firstSegment || !previousEnd || !firstStart) {
-    return false;
-  }
-  const previousComponent = finiteComponentId(previousSegment?.componentEnd ?? previousSegment?.componentStart);
-  const firstComponent = finiteComponentId(firstSegment?.componentStart ?? firstSegment?.componentEnd);
-  if (previousComponent >= 0 && firstComponent >= 0 && previousComponent !== firstComponent) {
     return false;
   }
   const radius = Math.max(
@@ -7157,7 +8176,12 @@ function exposeSurfaceRunDebug(stats = null) {
     sourceRasterKeyHashes: stats.tslSurfaceSourceRasterKeyHashes || null,
     originalMeshUvRaster: stats.tslSurfaceOriginalMeshUvRaster === true,
     sourceRasterGutterPixels: stats.tslSurfaceSourceRasterGutterPixels ?? null,
+    sourceRasterAllowedComponentIds: stats.tslSurfaceSourceRasterAllowedComponentIds || null,
+    componentGate: stats.tslSurfaceComponentGate === true,
+    requestedComponentGate: stats.tslSurfaceRequestedComponentGate === true,
+    componentGateFrontmostRelax: stats.tslSurfaceComponentGateFrontmostRelax === true,
     sourceRasterClipActive: stats.tslSurfaceSourceRasterClipActive === true,
+    sourceRasterClipSegmentCount: stats.tslSurfaceSourceRasterClipSegmentCount ?? null,
     sourceRasterClipPaddingPixels: stats.tslSurfaceSourceRasterClipPaddingPixels ?? null,
     sourceMeshOriginalTriangleCount: stats.tslSurfaceSourceMeshOriginalTriangleCount ?? null,
     reboundMaterials: stats.tslSurfaceReboundMaterials,
@@ -7356,10 +8380,15 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
   if (!sourceTexture) {
     return finish(false, { reason: "missing-source-texture", width, height });
   }
-  const sourceObjects = sourceObjectsForEditable(editor, candidate, editable, sourceTexture, referenceTexture);
+  const sourceObjects = sourceObjectsForEditable(editor, candidate, editable, sourceTexture, referenceTexture, {
+    restrictSourceRasterToCandidateObject: options.neighborPaintSeed?.enabled === true
+      || options.largeLiveNeighborPaint === true
+  });
   if (!sourceObjects.length) {
     return finish(false, { reason: "missing-source-objects", width, height });
   }
+  const visibleOcclusionSourceObjects = sourceObjectsForVisibleOcclusion(editor, candidate);
+  const visibleOcclusionScopeOptions = { includeAllMaterialIndices: true };
   const editableTextures = surfaceEditableTextureSet(candidate, editable, sourceTexture, referenceTexture);
   const materialScopeOptions = {};
   const visibleEdgeMode = String(
@@ -7380,9 +8409,9 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
     color: options.color || editor?.textureAirbrushColor?.() || { r: 0, g: 255, b: 102 }
   });
   const prewarmRadiusPixels = Math.max(1, finiteNumber(options.radiusPixels, editor?.textureBrushRadiusScreenPixels?.() || 40));
-  const usePrewarmSourceRasterClip = !layerMode && surfaceAirbrushSourceRasterClipEnabled();
+  const usePrewarmSourceRasterClip = surfaceAirbrushSourceRasterClipEnabled();
   const prewarmRasterClipPath = usePrewarmSourceRasterClip
-    ? simplifiedSourceRasterClipSegments(prewarmSegments, 18)
+    ? simplifiedSourceRasterClipSegments(prewarmSegments, MAX_TSL_SURFACE_SEGMENTS)
     : [];
   const prewarmBaseTexture = layerSourceEmpty
     ? surfaceAirbrushTransparentTexture()
@@ -7411,7 +8440,18 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
     materialIndex,
     materialScopeOptions
   );
-  const visibleTexture = null;
+  const visibleTarget = renderVisibleSurfaceTarget(
+    renderer,
+    cache,
+    visibleOcclusionSourceObjects.length ? visibleOcclusionSourceObjects : sourceObjects,
+    editor,
+    null,
+    new Set(),
+    sourceObject,
+    materialIndex,
+    visibleOcclusionScopeOptions
+  );
+  const visibleTexture = visibleTarget?.texture || null;
   const prewarmOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled();
   const surfaceMeshEntries = ensureUvRasterMeshes(
     cache,
@@ -7428,14 +8468,19 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
       originalMeshUvRaster: prewarmOriginalMeshUvRaster,
       sourceRasterGutterPixels: surfaceAirbrushSourceRasterGutterPixels(),
       sourceRasterClipSegments: prewarmRasterClipPath,
+      sourceRasterClipRequired: usePrewarmSourceRasterClip,
+      sourceRasterAllowedComponentIds: options.sourceRasterAllowedComponentIds,
       sourceRasterClipScatter: finiteNumber(options.scatter, editor?.textureAirbrushScatter?.() ?? 0.35),
       sourceRasterClipHardness: finiteNumber(options.hardness, editor?.textureAirbrushHardness?.() ?? 0.35),
       hardness: finiteNumber(options.hardness, editor?.textureAirbrushHardness?.() ?? 0.35),
-        maskOnly: true,
-        sourceRasterClipPaddingPixels: Math.max(
-          18,
-          Math.min(48, prewarmRadiusPixels * 0.35)
-        ),
+      maskOnly: true,
+      sourceRasterClipPaddingPixels: Math.max(
+        SOURCE_RASTER_CLIP_MIN_PADDING_PIXELS,
+        Math.min(
+          SOURCE_RASTER_CLIP_MAX_PADDING_PIXELS,
+          prewarmRadiusPixels * SOURCE_RASTER_CLIP_RADIUS_PADDING_SCALE
+        )
+      ),
         writeTexture: prewarmRasterWriteTexture,
         rasterWidth: prewarmRasterWriteSize.width,
         rasterHeight: prewarmRasterWriteSize.height,
@@ -7471,7 +8516,7 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
         blendOnly: Boolean(layerMode),
         emptyLayerSource: layerSourceEmpty,
         visibleEdgeMode,
-        debugVisibleSurfaceDepth: false,
+        debugVisibleSurfaceDepth: Boolean(visibleTexture),
         projectedPaintGutterOnly: false,
         radiusPixels: Math.max(1, finiteNumber(options.radiusPixels, editor?.textureBrushRadiusScreenPixels?.() || 40)),
         opacity: finiteNumber(options.opacity, editor?.textureAirbrushOpacity?.() ?? 0.42),
@@ -7511,6 +8556,14 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
         clearSurfacePrewarmStrokeMaskTarget(renderer, cache);
         renderer.setRenderTarget(strokeMaskTarget);
         renderer.autoClear = false;
+        if (visibleTarget?.texture) {
+          schedulePrewarmCompilePass(
+            cache.visibleScene,
+            editor.camera,
+            visibleTarget,
+            "prewarm-visible-surface"
+          );
+        }
         schedulePrewarmCompilePass(cache.scene, cache.camera, strokeMaskTarget, "prewarm-surface-mask");
       } else {
         updateTextureCopyMaterial(cache.copyMaterial, prewarmBaseTexture);
@@ -8110,24 +9163,32 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     cache.copyMaterial.blending = THREE.NoBlending;
     cache.copyMaterial.needsUpdate = true;
   }
-  const sourceObjects = sourceObjectsForEditable(editor, candidate, editable, sourceTexture, referenceTexture);
+  const sourceObjects = sourceObjectsForEditable(editor, candidate, editable, sourceTexture, referenceTexture, {
+    restrictSourceRasterToCandidateObject: options.neighborPaintSeed?.enabled === true
+      || options.largeLiveNeighborPaint === true
+  });
+  const visibleOcclusionSourceObjects = sourceObjectsForVisibleOcclusion(editor, candidate);
   const editableTextures = surfaceEditableTextureSet(candidate, editable, sourceTexture, referenceTexture);
   const materialScopeOptions = {};
+  const visibleOcclusionScopeOptions = { includeAllMaterialIndices: true };
   const liveProjectedPaint = options.liveProjectedPaint === true;
   const screenStrokePaint = options.screenStrokePaint === true;
   const liveStrokeMaskComposite = useStrokeMaskComposite
     && (liveProjectedPaint || screenStrokePaint);
-  const useSourceRasterClip = !layerMode
-    && useStrokeMaskComposite
+  const useSourceRasterClip = useStrokeMaskComposite
     && surfaceAirbrushSourceRasterClipEnabled();
   const sourceRasterClipPath = useSourceRasterClip
-    ? simplifiedSourceRasterClipSegments(renderPaintSegments, 18)
+    ? simplifiedSourceRasterClipSegments(renderPaintSegments, MAX_TSL_SURFACE_SEGMENTS)
     : [];
   const useOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled();
   const sourceRasterOptions = {
     ...materialScopeOptions,
     originalMeshUvRaster: useOriginalMeshUvRaster,
     sourceRasterClipSegments: sourceRasterClipPath,
+    sourceRasterClipRequired: useSourceRasterClip,
+    sourceRasterAllowedComponentIds: options.sourceRasterAllowedComponentIds,
+    hardTextureAirbrushComponentGate: options.hardTextureAirbrushComponentGate === true,
+    relaxComponentGateOnFrontmost: options.relaxComponentGateOnFrontmost === true,
     sourceRasterClipScatter: options.scatter,
     sourceRasterClipHardness: options.hardness,
     writeTexture: rasterWriteTexture,
@@ -8139,30 +9200,31 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     hardness: options.hardness,
     sourceRasterGutterPixels,
     sourceRasterClipPaddingPixels: Math.max(
-      18,
+      SOURCE_RASTER_CLIP_MIN_PADDING_PIXELS,
       Math.min(
-        48,
-        Math.max(1, finiteNumber(options.screenRadiusPixels, finiteNumber(options.radiusPixels, 1))) * 0.35
+        SOURCE_RASTER_CLIP_MAX_PADDING_PIXELS,
+        Math.max(1, finiteNumber(options.screenRadiusPixels, finiteNumber(options.radiusPixels, 1)))
+          * SOURCE_RASTER_CLIP_RADIUS_PADDING_SCALE
       )
     )
   };
   const visibleEdgeMode = String(options.visibleEdgeMode || "soft").toLowerCase() === "hard"
     ? "hard"
     : "soft";
-  const needsVisibleSurfaceTexture = !useProjectedPrimary
+  const needsVisibleSurfaceTexture = debugParams?.has("debugAirbrushVisibleSurface") === true
     && debugParams?.has("debugAirbrushNoVisibleSurface") !== true
     && sourceObjects.length > 0;
   const visibleTarget = needsVisibleSurfaceTexture
     ? renderVisibleSurfaceTarget(
         renderer,
         cache,
-        sourceObjects,
+        visibleOcclusionSourceObjects.length ? visibleOcclusionSourceObjects : sourceObjects,
         editor,
-        editable,
-        editableTextures,
+        null,
+        new Set(),
         sourceObject,
         materialIndex,
-        materialScopeOptions
+        visibleOcclusionScopeOptions
       )
     : null;
   markPrepTiming("visibleSurface");
@@ -8302,6 +9364,25 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
   let strokeMaskCleared = false;
   let strokeMaskDilationPasses = 0;
   let strokeMaskDilated = false;
+  const layerGpuUndoCaptured = layerMode
+    ? captureSurfaceLayerGpuUndoTarget(
+        editor,
+        renderer,
+        cache,
+        material,
+        editable,
+        target,
+        baseTexture,
+        {
+          width,
+          height,
+          layerSourceEmpty: emptyLayerSourceTexture,
+          strokeUndo: options.strokeUndo || candidate?.strokeUndo || null,
+          record: candidate?.record || null,
+          materialIndex
+        }
+      )
+    : false;
   const previousTarget = typeof renderer.getRenderTarget === "function"
     ? renderer.getRenderTarget()
     : null;
@@ -8350,11 +9431,13 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
         }
         renderer.render(cache.scene, cache.camera);
       }
-      strokeMaskDilationPasses = surfaceAirbrushDilationPasses();
+      strokeMaskDilationPasses = surfaceAirbrushStrokeMaskDilationPasses();
       const compositeMaskTarget = strokeMaskDilationPasses > 0
         ? runSurfaceDilation(renderer, cache, strokeMaskTarget, referenceTexture, width, height, strokeMaskDilationPasses, {
             preserveSourceAlpha: true,
-            alphaThreshold: 0.000001
+            alphaThreshold: 0.000001,
+            sampleAlphaThreshold: TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,
+            interiorOnly: true
           })
         : strokeMaskTarget;
       strokeMaskDilated = Boolean(compositeMaskTarget?.texture && compositeMaskTarget !== strokeMaskTarget);
@@ -8472,7 +9555,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       width,
       height,
       editable.layer?.opacity ?? 1,
-      { alphaFallback: true }
+      { alphaFallback: false }
     );
     if (layerDisplayTarget?.texture) {
       layerDisplayMode = "texture-composite";
@@ -8574,6 +9657,8 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
   surfaceTargetEntry.updatedAt = endMs;
   material.userData.texturePaintTslSurfaceAirbrushTarget = surfaceTargetEntry;
   const completeMs = typeof performance !== "undefined" ? performance.now() : Date.now();
+  const sourceRasterClipSegmentCount = sourceRasterClipSegments(sourceRasterOptions).length;
+  const sourceRasterAllowedComponents = sourceRasterAllowedComponentIds(sourceRasterOptions) || [];
   const stats = {
     width,
     height,
@@ -8661,6 +9746,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     tslSurfaceLayerDisplayUsedLiveUnderlay: layerDisplayUsedLiveUnderlay,
     tslSurfaceLayerTarget: Boolean(layerTargetEntry?.target?.texture),
     tslSurfaceLayerPaintRevision: Math.max(0, Math.floor(Number(layerTargetEntry?.paintRevision) || 0)),
+    tslSurfaceLayerGpuUndoCaptured: layerGpuUndoCaptured === true,
     tslSurfaceLayerDisplayComposite: Boolean(layerDisplayTarget?.texture),
     tslSurfaceLayerDisplayMode: layerDisplayMode,
     tslSurfaceDisplayTarget: Boolean((displayTarget || layerDisplayTarget)?.texture),
@@ -8731,19 +9817,32 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
           componentEnd: renderPaintSegments[0].componentEnd ?? null
         }
       : null,
-    tslSurfaceSegmentSamples: renderPaintSegments.slice(0, 8).map((segment) => ({
-      start: segment.start || null,
-      end: segment.end || null,
-      radius: segment.radius ?? null,
-      viewStart: segment.viewStart || null,
-      viewEnd: segment.viewEnd || null,
-      viewNormalStart: segment.viewNormalStart || null,
-      viewNormalEnd: segment.viewNormalEnd || null,
-      viewRadius: segment.viewRadius ?? null,
-      componentStart: segment.componentStart ?? null,
-      componentEnd: segment.componentEnd ?? null
-    })),
-    meshUvTriangleCount: sourceMeshTriangleCount,
+	    tslSurfaceSegmentSamples: renderPaintSegments.slice(0, 8).map((segment) => ({
+	      start: segment.start || null,
+	      end: segment.end || null,
+	      radius: segment.radius ?? null,
+	      viewStart: segment.viewStart || null,
+	      viewEnd: segment.viewEnd || null,
+	      viewNormalStart: segment.viewNormalStart || null,
+	      viewNormalEnd: segment.viewNormalEnd || null,
+	      viewRadius: segment.viewRadius ?? null,
+	      componentStart: segment.componentStart ?? null,
+	      componentEnd: segment.componentEnd ?? null
+	    })),
+	    tslSurfaceAccumulatedSegmentSamples: paintSegments.slice(0, 12).map((segment) => ({
+	      start: segment.start || null,
+	      end: segment.end || null,
+	      radius: segment.radius ?? null,
+	      viewStart: segment.viewStart || null,
+	      viewEnd: segment.viewEnd || null,
+	      viewNormalStart: segment.viewNormalStart || null,
+	      viewNormalEnd: segment.viewNormalEnd || null,
+	      viewRadius: segment.viewRadius ?? null,
+	      componentStart: segment.componentStart ?? null,
+	      componentEnd: segment.componentEnd ?? null
+	    })),
+	    tslSurfaceAccumulatedSegmentsMissingView: paintSegments.filter((segment) => !segment?.viewStart || !segment?.viewEnd).length,
+	    meshUvTriangleCount: sourceMeshTriangleCount,
     sourceTriangleCount: rawProjectedTriangles.length,
     rawProjectedTriangleCount: rawProjectedTriangles.length,
     filteredProjectedTriangleCount: filteredProjectedTriangles.length,
@@ -8757,8 +9856,13 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     tslSurfaceSourceRasterKeyHashes: sourceRasterKeyHashes,
     tslSurfaceOriginalMeshUvRaster: sourceRasterOptions.originalMeshUvRaster === true,
     tslSurfaceSourceRasterGutterPixels: sourceRasterOptions.sourceRasterGutterPixels,
-    tslSurfaceSourceRasterClipActive: sourceRasterOptions.originalMeshUvRaster !== true
-      && sourceRasterClipSegments(sourceRasterOptions).length > 0,
+    tslSurfaceSourceRasterAllowedComponentIds: sourceRasterAllowedComponents,
+    tslSurfaceComponentGate: sourceRasterClipComponentGateEnabled(sourceRasterOptions),
+    tslSurfaceRequestedComponentGate: options.hardTextureAirbrushComponentGate === true,
+    tslSurfaceComponentGateFrontmostRelax: sourceRasterOptions.relaxComponentGateOnFrontmost === true,
+    tslSurfaceSourceRasterClipSegmentCount: sourceRasterClipSegmentCount,
+    tslSurfaceSourceRasterClipActive: sourceRasterOptions.sourceRasterClipRequired === true
+      && sourceRasterClipSegmentCount > 0,
     tslSurfaceSourceRasterClipPaddingPixels: sourceRasterClipPaddingPixels(sourceRasterOptions),
     tslSurfaceSourceMeshOriginalTriangleCount: sourceMeshOriginalTriangleCount,
     timings: {

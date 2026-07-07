@@ -987,6 +987,51 @@ test("wide-spacing airbrush stamps survive as point segments", () => {
   }]);
 });
 
+test("wide-spacing queued stamps preserve sparse spacing metadata without recursive expansion", () => {
+  class ScreenEditor {}
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  installEditorDefaults(editor);
+  const queuedPayloads = [];
+  editor.activeTool = "airbrush";
+  editor.painting = false;
+  editor.texturePaintStrokePoint = { clientX: 100, clientY: 100 };
+  editor.textureAirbrushCanUseScreenStroke = () => true;
+  editor.textureAirbrushCachedStrokeRadiusPixels = () => 35;
+  editor.textureBrushRadiusScreenPixels = () => 35;
+  editor.textureAirbrushScreenStrokeBaseOptions = () => ({ radiusPixels: 35, spacing: 160 });
+  editor.textureAirbrushScreenStrokePayload = (event, strokeStart) => strokePayload({
+    clientX: event.clientX,
+    clientY: event.clientY,
+    strokeStart,
+    radiusPixels: 35,
+    styleRadiusPixels: 35,
+    spacing: 160
+  });
+  editor.textureAirbrushQueueScreenStroke = () => {
+    throw new Error("wide spacing stamps should queue a payload directly");
+  };
+  editor.textureAirbrushQueueScreenStrokePayload = (payload) => {
+    queuedPayloads.push(payload);
+    return true;
+  };
+
+  assert.equal(editor.textureAirbrushQueueSpacedScreenStroke({
+    clientX: 100,
+    clientY: 100,
+    button: 0,
+    buttons: 1
+  }, {
+    reset: true,
+    strokeStart: editor.texturePaintStrokePoint
+  }), true);
+
+  assert.equal(queuedPayloads.length, 1);
+  assert.equal(queuedPayloads[0].spacing, 160);
+  assert.equal(queuedPayloads[0].spacedStamp, true);
+  assert.equal(queuedPayloads[0].spacingPixels, 112);
+});
+
 test("zero-distance reset samples do not create startup point stamps", () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
@@ -1025,7 +1070,7 @@ test("zero-distance reset samples do not create startup point stamps", () => {
   }]);
 });
 
-test("ordinary live WebGPU continuation strokes keep immediate rendering even after a recent flush", () => {
+test("ordinary live WebGPU continuation strokes defer after a recent immediate flush", () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
   const editor = new ScreenEditor();
@@ -1053,11 +1098,11 @@ test("ordinary live WebGPU continuation strokes keep immediate rendering even af
     styleRadiusPixels: 8
   })), true);
 
-  assert.equal(immediateFlushes, 1);
-  assert.equal(scheduledFrameFlushes, 0);
+  assert.equal(immediateFlushes, 0);
+  assert.equal(scheduledFrameFlushes, 1);
 });
 
-test("large direct WebGPU screen strokes drain the first live paint queue during drag", async () => {
+test("large direct WebGPU continuation strokes coalesce briefly during drag", async () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
   const editor = new ScreenEditor();
@@ -1089,23 +1134,27 @@ test("large direct WebGPU screen strokes drain the first live paint queue during
 
     assert.equal(scheduledFrameFlushes, 0);
     assert.equal(flushOptions.length, 0);
-    assert.equal(timers.length, 0);
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].delayMs, 40);
 
     await Promise.resolve();
+
+    assert.equal(flushOptions.length, 0);
+    timers[0].callback();
 
     assert.equal(flushOptions.length, 1);
     assert.equal(flushOptions[0].immediateWebGpuFlush, true);
     assert.equal(flushOptions[0].maxBatches, 4);
-    assert.equal(flushOptions[0].maxBatchSegments, 48);
-    assert.equal(flushOptions[0].maxSegments, 128);
-    assert.equal(flushOptions[0].maxBatchMs, 8);
+    assert.equal(flushOptions[0].maxBatchSegments, 192);
+    assert.equal(flushOptions[0].maxSegments, 192);
+    assert.equal(flushOptions[0].maxBatchMs, 12);
     assert.equal(flushOptions[0].maxImmediateWebGpuFlushBatches, 32);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
   }
 });
 
-test("layer live WebGPU continuation strokes keep immediate rendering during drag", async () => {
+test("layer live WebGPU continuation strokes coalesce briefly during drag", async () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
   const editor = new ScreenEditor();
@@ -1141,13 +1190,17 @@ test("layer live WebGPU continuation strokes keep immediate rendering during dra
 
     assert.equal(scheduledFrameFlushes, 0);
     assert.equal(flushOptions.length, 0);
-    assert.equal(timers.length, 0);
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].delayMs, 40);
 
     await Promise.resolve();
 
+    assert.equal(flushOptions.length, 0);
+    timers[0].callback();
+
     assert.equal(flushOptions.length, 1);
     assert.equal(flushOptions[0].immediateWebGpuFlush, true);
-    assert.equal(flushOptions[0].continuationCoalesceMs, 0);
+    assert.equal(flushOptions[0].continuationCoalesceMs, 40);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
   }
@@ -1229,7 +1282,7 @@ test("first layer live WebGPU reset stroke is eligible for immediate painting", 
   assert.equal(editor.textureAirbrushImmediateWebGpuScreenFlushUsed, true);
 });
 
-test("ordinary live WebGPU continuation strokes flush on a microtask", async () => {
+test("ordinary live WebGPU continuation strokes coalesce briefly after first paint", async () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
   const editor = new ScreenEditor();
@@ -1262,13 +1315,17 @@ test("ordinary live WebGPU continuation strokes flush on a microtask", async () 
 
     assert.equal(scheduledFrameFlushes, 0);
     assert.equal(flushOptions.length, 0);
-    assert.equal(timers.length, 0);
+    assert.equal(timers.length, 1);
+    assert.equal(timers[0].delayMs, 40);
 
     await Promise.resolve();
 
+    assert.equal(flushOptions.length, 0);
+    timers[0].callback();
+
     assert.equal(flushOptions.length, 1);
     assert.equal(flushOptions[0].immediateWebGpuFlush, true);
-    assert.equal(flushOptions[0].continuationCoalesceMs, 0);
+    assert.equal(flushOptions[0].continuationCoalesceMs, 40);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
   }
@@ -1584,9 +1641,9 @@ test("scheduled large WebGPU brush flush does not add a first-frame throttle", a
   await Promise.resolve();
   assert.deepEqual(timeoutDelays, []);
   assert.equal(flushOptions.length, 1);
-  assert.equal(flushOptions[0].maxBatchMs, 8);
-  assert.equal(flushOptions[0].maxBatchSegments, 48);
-  assert.equal(flushOptions[0].maxSegments, 128);
+  assert.equal(flushOptions[0].maxBatchMs, 12);
+  assert.equal(flushOptions[0].maxBatchSegments, 192);
+  assert.equal(flushOptions[0].maxSegments, 192);
 });
 
 test("large WebGPU Neighbor live flush drains a full stroke within the WebGPU frame budget", () => {
@@ -1952,12 +2009,14 @@ test("large WebGPU Neighbor live flush paints seedless large batches", () => {
   const editor = new ScreenEditor();
   installEditorDefaults(editor);
   let paintCalls = 0;
+  let paintOptions = null;
 
   editor.texturePaintNeighborModeEnabled = () => true;
   editor.textureAirbrushBeginNeighborPaintStroke = () => null;
   editor.textureAirbrushWebGpuDevice = () => ({ label: "native-webgpu-device" });
   editor.textureAirbrushResolveBackend = () => ({ backend: "webgpu", webGpuStatus: "ready" });
-  editor.textureAirbrushWebGpuPaintFromEvent = () => {
+  editor.textureAirbrushWebGpuPaintFromEvent = (event, options = {}) => {
+    paintOptions = options;
     paintCalls += 1;
     return 1;
   };
@@ -1976,6 +2035,8 @@ test("large WebGPU Neighbor live flush paints seedless large batches", () => {
 
   assert.equal(changed, 1);
   assert.equal(paintCalls, 1);
+  assert.equal(paintOptions?.screenStrokePaint, true);
+  assert.equal(paintOptions?.immediateWebGpuFlush, true);
 });
 
 test("large WebGPU Neighbor reset defers seed without legacy projection rewarm", () => {

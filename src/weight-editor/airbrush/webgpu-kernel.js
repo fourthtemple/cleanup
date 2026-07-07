@@ -190,8 +190,7 @@ fn airbrushCoverage(distancePixels: f32, radiusPixels: f32) -> f32 {
   let scatter = clamp(brush.scatter, 0.0, 1.0);
   let radius = max(0.75, radiusPixels);
   let hardness = clamp(brush.hardness, 0.0, 1.0);
-  let softness = 1.0 - hardness;
-  let haloRadius = radius * (1.0 + scatter * ${TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE} + softness * ${TEXTURE_AIRBRUSH_SOFT_HALO_SCALE});
+  let haloRadius = radius;
   if (distancePixels > haloRadius) {
     return 0.0;
   }
@@ -690,14 +689,13 @@ fn airbrushCoverage(distancePixels: f32, radiusPixels: f32) -> f32 {
   let scatter = clamp(brush.scatter, 0.0, 1.0);
   let radius = max(0.75, radiusPixels);
   let hardness = clamp(brush.hardness, 0.0, 1.0);
-  let softness = 1.0 - hardness;
-  let haloRadius = radius * (1.0 + scatter * ${TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE} + softness * ${TEXTURE_AIRBRUSH_SOFT_HALO_SCALE});
+  let haloRadius = radius;
   if (distancePixels > haloRadius) {
     return 0.0;
   }
   // Airbrush hardness should firm up the spray center without turning the
-  // whole nominal radius into a stamped opaque disk. Scatter extends the halo
-  // and keeps the outer spray soft.
+  // whole nominal radius into a stamped opaque disk. Scatter keeps the outer
+  // spray softer inside the brush footprint instead of expanding the footprint.
   let coreRadius = radius * (${TEXTURE_AIRBRUSH_CORE_MIN_SCALE} + pow(hardness, ${TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER}) * ${TEXTURE_AIRBRUSH_CORE_HARDNESS_SCALE});
   if (distancePixels <= coreRadius) {
     return 1.0;

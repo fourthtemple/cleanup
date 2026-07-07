@@ -1111,7 +1111,7 @@ test("installed airbrush WebGPU live path rejects disjoint UV island batch merge
   assert.ok(queued.every((queuedCandidate) => queuedCandidate.paintBounds.height < 240));
   assert.deepEqual(
     queued.map((queuedCandidate) => queuedCandidate.paintRegions[0].x),
-    [797, 2447]
+    [842, 2492]
   );
 });
 

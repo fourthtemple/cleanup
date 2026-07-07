@@ -17,6 +17,7 @@ const source = readFileSync(new URL("../../src/texture-paint/surface-airbrush-ts
 const strokeSource = readFileSync(new URL("../../src/weight-editor/airbrush/webgpu-stroke.js", import.meta.url), "utf8");
 const liveSource = readFileSync(new URL("../../src/weight-editor/airbrush/webgpu-live.js", import.meta.url), "utf8");
 const projectionSource = readFileSync(new URL("../../src/weight-editor/airbrush/webgpu-projection.js", import.meta.url), "utf8");
+const neighborSource = readFileSync(new URL("../../src/weight-editor/airbrush/neighbor.js", import.meta.url), "utf8");
 const clonePaintSource = readFileSync(new URL("../../src/weight-editor/clone-paint.js", import.meta.url), "utf8");
 const paintToolsSource = readFileSync(new URL("../../src/weight-editor/paint-tools.js", import.meta.url), "utf8");
 
@@ -56,24 +57,27 @@ test("TSL surface airbrush keeps the final brush field surface-continuous", () =
   assert.doesNotMatch(body, /const depthPermission/);
   assert.doesNotMatch(body, /const depthSoftPermission/);
   assert.doesNotMatch(body, /const visibleHardPermission/);
-  assert.match(source, /const VISIBLE_SURFACE_DEPTH_GATE_MIN_RADIUS = 0\.45/);
-  assert.match(source, /const VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE = 0\.38/);
-  assert.match(source, /const VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE = 0\.55/);
-  assert.match(body, /const visibleDepthCoverage = float\(1\)\.sub\(visibleDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(body, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /visibilityCoverage|visibleDepthFade|visibleDepthSmoothFade/);
+  assert.doesNotMatch(body, /visibleGateCoverage/);
   assert.doesNotMatch(body, /visiblePermission|visibleSoftPermission/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(0\.85\)/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(0\.9\)/);
   assert.doesNotMatch(body, /mix\(visibleSoftPermission, visibleHardPermission, hardVisibleEdge\)/);
   assert.doesNotMatch(body, /visibleOccluded/);
   assert.doesNotMatch(body, /strokeNormalGate|strokeNormalRamp|strokeNormalCoverage|strokeNormalPresence/);
-  assert.match(body, /const viewStart = segmentViewStarts\.element\(i\)/);
-  assert.match(body, /const viewEnd = segmentViewEnds\.element\(i\)/);
-  assert.doesNotMatch(body, /const hasViewField =/);
-  assert.doesNotMatch(body, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
+  assert.match(body, /const segmentViewStarts = uniformArray/);
+  assert.match(body, /const segmentViewEnds = uniformArray/);
+  assert.doesNotMatch(source, /VISIBLE_SURFACE_DEPTH_GATE_/);
+  assert.doesNotMatch(body, /const visibleSurfaceWeight = visibleActive\.mul\(visibleSampleValid\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /const viewStart = segmentViewStarts\.element\(i\)/);
+  assert.doesNotMatch(body, /const viewEnd = segmentViewEnds\.element\(i\)/);
+  assert.doesNotMatch(body, /const visibleDepthGate =/);
+  assert.doesNotMatch(body, /const hasViewSegment = viewStart\.w\.greaterThan\(0\.0001\)/);
+  assert.doesNotMatch(body, /const viewRadius = max\(mix\(viewStart\.w, viewEnd\.w, viewT\), 0\.0001\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /const viewDistancePixels/);
   assert.doesNotMatch(body, /const viewDistanceCoverage = viewEdgeCoverage\.toVar\(\)/);
   assert.doesNotMatch(body, /const viewDepthDelta = abs\(editorView\.z\.sub\(viewClosest\.z\)\)\.toVar\(\)/);
-  assert.match(body, /const visibleDepthFade = clamp\(/);
+  assert.match(body, /const visibleDelta = abs\(fragmentDepth\.sub\(visibleDepth\)\)\.toVar\(\)/);
   assert.doesNotMatch(body, /normalCompatibility/);
   assert.doesNotMatch(body, /surfacePlanePermission/);
   assert.doesNotMatch(body, /normalPlane/);
@@ -84,9 +88,51 @@ test("TSL surface airbrush keeps the final brush field surface-continuous", () =
   assert.doesNotMatch(body, /const screenOnlyCoverage = visibleActive\.greaterThan\(0\.5\)/);
   assert.doesNotMatch(body, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(body, /min\(screenCoverage, viewCoverage\)/);
+  assert.match(body, /const screenCoverage = edgeCoverage\.toVar\(\)/);
   assert.match(body, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
+  assert.doesNotMatch(body, /const surfaceCoverage =/);
+  assert.doesNotMatch(body, /screenGate/);
+  assert.doesNotMatch(body, /surfaceCoverage\.mul\(screenGate\)/);
+  assert.doesNotMatch(body, /const viewCoverage = max\(0\.0, float\(1\)\.sub\(viewSmoothEdge\)\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /const hasViewGate =/);
+  assert.doesNotMatch(source, /SURFACE_VIEW_CONTINUITY_CORE_SCALE/);
+  assert.doesNotMatch(source, /SURFACE_VIEW_CONTINUITY_FEATHER_SCALE/);
+  assert.doesNotMatch(body, /viewContinuityCoverage|viewContinuityFade|viewContinuitySmoothFade/);
   assert.match(body, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
-  assert.match(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(body, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(visibilityCoverage\)/);
+  assert.doesNotMatch(body, /const surfaceFieldCoverage = brushFieldCoverage\.mul\(depthGate\)/);
+  assert.match(source, /const VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER = /);
+  assert.match(source, /const VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE = /);
+  assert.match(source, /const VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER = /);
+  assert.match(source, /const VISIBLE_SURFACE_SOFT_EDGE_SAMPLE_PIXELS = /);
+  assert.match(source, /const VISIBLE_SURFACE_SOFT_EDGE_COVERAGE = /);
+  assert.match(body, /const frontmostSurfaceHardCoverage = visibleDepthDelta[\s\S]*?lessThanEqual\(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE\)[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const frontmostSurfaceSoftRamp = clamp\([\s\S]*?VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const frontmostSurfaceCoverage = mix\([\s\S]*?frontmostSurfaceSoftCoverage,[\s\S]*?frontmostSurfaceHardCoverage,[\s\S]*?hardVisibleEdge[\s\S]*?\)\.toVar\(\)/);
+  assert.match(body, /const closerDepthRamp = clamp\([\s\S]*?visibleDepthDelta\.mul\(-1\)[\s\S]*?VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE[\s\S]*?VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const visibleDepthCoverageBase = frontmostSurfaceCoverage\.mul\(closerDepthCoverage\)\.toVar\(\)/);
+  assert.match(body, /const visibleSoftEdgeCoverageForOffset = \(offset\) => max\([\s\S]*?visibleTextureNode\.sample[\s\S]*?vec2\(offset\.x, 0\)[\s\S]*?vec2\(0, offset\.y\)[\s\S]*?\);/);
+  assert.match(body, /const visibleSoftEdgeCoverage = max\([\s\S]*?VISIBLE_SURFACE_SOFT_EDGE_COVERAGE[\s\S]*?VISIBLE_SURFACE_SOFT_EDGE_FAR_COVERAGE[\s\S]*?float\(1\)\.sub\(hardVisibleEdge\)[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const visibleDepthCoverage = max\([\s\S]*?visibleDepthCoverageBase,[\s\S]*?visibleSoftEdgeCoverage\.mul\(visibleSampleValid\)[\s\S]*?\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /const visibleDepthCoverage = max\(visibleDepthCoverageBase, visibleSoftEdgeCoverage\)\.toVar\(\)/);
+  assert.match(body, /const depthGate = mix\(float\(1\), visibleDepthCoverage, visibleActive\)\.toVar\(\)/);
+  assert.match(body, /const frontmostSurfaceLocalityAuthority = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?\.mul\(visibleDepthCoverageBase\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(body, /depthGate = mix\(float\(1\), visibleDepthCoverage, visibleActive\.mul\(visibleSampleValid\)\)/);
+  assert.doesNotMatch(body, /frontmostSurfaceLocalityAuthority = visibleActive[\s\S]*?\.mul\(visibleDepthCoverage\)[\s\S]*?\.toVar\(\)/);
+  assert.match(source, /const SURFACE_AIRBRUSH_SEGMENT_DISTANCE_RADIUS_SCALE = 0\.9/);
+  assert.match(source, /const SURFACE_AIRBRUSH_SEGMENT_DISTANCE_FEATHER_SCALE = 0\.35/);
+  assert.doesNotMatch(source, /SURFACE_AIRBRUSH_FRONTMOST_DISTANCE_/);
+  assert.match(body, /const segmentHasDirectionalView = segmentHasView[\s\S]*?segmentViewLengthRaw\.greaterThan\(0\.000001\)[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const segmentHasPointView = segmentHasView[\s\S]*?segmentViewLengthRaw\.lessThanEqual\(0\.000001\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(body, /frontmostDistanceGate|frontmostDistanceRamp|frontmostDistanceLimit|frontmostDistanceFeather/);
+  assert.match(body, /const segmentDepthGate = segmentHasDirectionalView[\s\S]*?\.select\([\s\S]*?segmentDepthFeathered,[\s\S]*?segmentHasPointView\.select\(segmentDepthFeathered, float\(1\)\)[\s\S]*?\)[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const strictSegmentLocalityGate = opposedNormalGate[\s\S]*?\.mul\(segmentDistanceGate\)[\s\S]*?\.mul\(segmentDepthGate\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(body, /frontmostSegmentLocalityGate/);
+  assert.match(body, /const segmentLocalityGate = mix\([\s\S]*?strictSegmentLocalityGate,[\s\S]*?float\(1\),[\s\S]*?frontmostSurfaceLocalityAuthority[\s\S]*?\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /segmentNormalGate|segmentViewGate|segmentViewDepthGate/);
+  assert.doesNotMatch(body, /SURFACE_AIRBRUSH_SEGMENT_NORMAL_|SURFACE_AIRBRUSH_VIEW_DISTANCE_|SURFACE_AIRBRUSH_VIEW_DEPTH_/);
+  assert.doesNotMatch(body, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(hasViewGate\.select\(viewCoverage, float\(1\)\)\)/);
+  assert.match(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthGate\)[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
   assert.doesNotMatch(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthPermission\)/);
   assert.doesNotMatch(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(bridgePermission\)/);
   assert.doesNotMatch(body, /const surfaceCoverage = surfaceFieldCoverage[\s\S]*?viewDistancePermission/);
@@ -148,29 +194,69 @@ test("TSL live projected field preserves hit normals for same-side surface gatin
   assert.match(strokeSource, /rememberAnchor\([\s\S]*?segment\?\.end[\s\S]*?segment\?\.viewEnd[\s\S]*?segment\?\.viewNormalEnd[\s\S]*?segment\?\.componentEnd[\s\S]*?\)/);
   assert.match(strokeSource, /viewNormalStart: startAnchor\.normal/);
   assert.match(strokeSource, /function[\s\S]*sameSurfaceEndpoint/);
+  assert.match(strokeSource, /const neighborSurfacePaintActive = options\.neighborPaintSeed\?\.enabled === true[\s\S]*?\|\| options\.largeLiveNeighborPaint === true/);
+  assert.match(neighborSource, /const componentState = this\.textureAirbrushNeighborComponentState\?\.\(record\) \|\| null/);
+  assert.match(neighborSource, /componentId: Number\.isFinite\(componentId\) && componentId >= 0 \? componentId : -1/);
+  assert.match(strokeSource, /const neighborComponentCanConstrainSurfaceField = Boolean\(/);
+  assert.match(strokeSource, /options\.neighborPaintSeed\?\.component\?\.size/);
+  assert.match(strokeSource, /const neighborSeedComponentId = \(\(\) => \{/);
+  assert.match(strokeSource, /const componentId = Math\.floor\(Number\(options\.neighborPaintSeed\?\.componentId\)\)/);
+  assert.match(strokeSource, /const neighborSourceRasterComponentIds = neighborSeedComponentId >= 0[\s\S]*?\? \[neighborSeedComponentId\][\s\S]*?: null/);
+  assert.match(strokeSource, /const neighborComponentGateRelaxed = relaxNeighborComponentGate\(options\)/);
+  assert.match(strokeSource, /Neighbor expands the set of sampled surface hits/);
+  assert.match(strokeSource, /const neighborComponentCanGateSurfacePermission = false/);
+  assert.doesNotMatch(strokeSource, /const neighborComponentCanGateSurfacePermission = neighborComponentCanConstrainSurfaceField[\s\S]*?&& neighborSeedComponentId >= 0/);
+  assert.match(strokeSource, /const componentIdsCanConstrainSurfaceField = neighborComponentCanConstrainSurfaceField[\s\S]*?!neighborSurfacePaintActive/);
+  assert.match(strokeSource, /options\.hardTextureAirbrushComponentGate === true[\s\S]*?preferTslFullSurfaceUvRaster/);
+  assert.match(strokeSource, /const localComponentCanGateSurfacePermission = componentIdsCanConstrainSurfaceField[\s\S]*?!neighborSurfacePaintActive[\s\S]*?options\.liveProjectedPaint === true[\s\S]*?preferTslFullSurfaceUvRaster/);
+  assert.match(strokeSource, /const hardTextureComponentCanGateSurfacePermission = componentIdsCanConstrainSurfaceField[\s\S]*?options\.hardTextureAirbrushComponentGate === true[\s\S]*?!preferTslFullSurfaceUvRaster[\s\S]*?!neighborComponentGateRelaxed/);
+  assert.match(strokeSource, /const componentIdsCanGateSurfaceField = localComponentCanGateSurfacePermission[\s\S]*?\|\| hardTextureComponentCanGateSurfacePermission/);
+  assert.match(strokeSource, /const componentGateCanRelaxOnFrontmost = false/);
+  assert.match(strokeSource, /const componentIdsSplitSurfaceSegments = componentIdsCanGateSurfaceField/);
   assert.match(strokeSource, /const sameSurfaceComponent = \(leftComponent = -1, rightComponent = -1\) =>/);
+  assert.match(strokeSource, /if \(!componentIdsSplitSurfaceSegments\) \{[\s\S]*?return true/);
   assert.match(strokeSource, /const bridgeOnSameSurface = \(previous = null, segment = null\) =>/);
   assert.match(strokeSource, /!sameSurfaceComponent\([\s\S]*?previous\.componentEnd \?\? previous\.componentStart[\s\S]*?segment\.componentStart \?\? segment\.componentEnd[\s\S]*?\)/);
-  assert.match(strokeSource, /const segmentCrossesComponents = Number\.isFinite\(segmentComponentStart\)[\s\S]*?segmentComponentStart !== segmentComponentEnd/);
+  assert.match(strokeSource, /const segmentCrossesComponents = componentIdsSplitSurfaceSegments[\s\S]*?segmentComponentStart !== segmentComponentEnd/);
   assert.match(strokeSource, /const surfaceSegment = segmentCrossesComponents[\s\S]*?componentEnd: segmentComponentStart/);
   assert.match(strokeSource, /&& bridgeOnSameSurface\(previous, surfaceSegment\)/);
-  assert.match(strokeSource, /const crossesComponents = !sameSurfaceComponent\(startAnchor\.component, endAnchor\.component\)/);
+  assert.match(strokeSource, /const crossesComponents = componentIdsSplitSurfaceSegments[\s\S]*?!sameSurfaceComponent\(startAnchor\.component, endAnchor\.component\)/);
   assert.match(strokeSource, /const remoteViewEnd = crossesComponents \|\| !sameSurfaceEndpoint/);
-  assert.match(strokeSource, /const safeEndNormal = remoteViewEnd[\s\S]*?\? startAnchor\.normal[\s\S]*?: endAnchor\.normal/);
+  assert.match(strokeSource, /const degenerateViewSegment = screenGap > Math\.max\(2, radius \* 0\.08\)[\s\S]*?viewGap <= Math\.max\(0\.0001, radiusWorld \* 0\.015\)/);
+  assert.match(strokeSource, /const anchoredSegments = \[\]/);
+  assert.match(strokeSource, /const pushAnchoredPointSegment = \(segment = null, point = null, anchor = null/);
+  assert.match(strokeSource, /viewStart: anchor\.view,[\s\S]*?viewEnd: anchor\.view,[\s\S]*?viewRadiusPixels: resolvedRadiusWorld/);
+  assert.match(strokeSource, /if \(remoteViewEnd\) \{[\s\S]*?pushAnchoredPointSegment\(segment, startPoint, startAnchor, radius, radiusWorld\);[\s\S]*?pushAnchoredPointSegment\(segment, endPoint, endAnchor, radius, radiusWorld\);[\s\S]*?continue;/);
+  assert.match(strokeSource, /const useDirectionalViewSegment = !degenerateViewSegment/);
+  assert.match(strokeSource, /const safeEndNormal = useDirectionalViewSegment[\s\S]*?\? endAnchor\.normal[\s\S]*?: null/);
+  assert.match(strokeSource, /viewStart,[\s\S]*?viewEnd,[\s\S]*?viewRadiusPixels: radiusWorld/);
+  assert.match(strokeSource, /useDirectionalViewSegment && startAnchor\.normal \? \{ viewNormalStart: startAnchor\.normal \} : \{\}/);
   assert.match(strokeSource, /viewNormalEnd: safeEndNormal/);
   assert.match(strokeSource, /const maxScreenDistance = Math\.max\(10, \(Number\(radiusPixelsForSegment\) \|\| screenRadiusPixels\) \* 1\.6\)/);
   assert.match(strokeSource, /return bestDistance <= maxScreenDistance \? best : null/);
   assert.doesNotMatch(strokeSource, /reusedAnchor[\s\S]*?return null/);
-  assert.match(source, /const previousComponent = finiteComponentId\(previousSegment\?\.componentEnd \?\? previousSegment\?\.componentStart\)/);
-  assert.match(source, /const firstComponent = finiteComponentId\(firstSegment\?\.componentStart \?\? firstSegment\?\.componentEnd\)/);
-  assert.match(source, /previousComponent >= 0 && firstComponent >= 0 && previousComponent !== firstComponent[\s\S]*?return false/);
-  assert.match(strokeSource, /\}\)\.filter\(Boolean\);[\s\S]*?const projectedFieldStrokeSegments = surfaceEnrichedScreenPaintStrokeSegments\.length[\s\S]*?: projectedSurfaceBrushSegments\.length[\s\S]*?: screenPaintStrokeSegments/);
+  assert.doesNotMatch(source, /previousComponent >= 0 && firstComponent >= 0 && previousComponent !== firstComponent[\s\S]*?return false/);
+  assert.match(strokeSource, /const annotateSurfaceFieldComponents = \(segments = \[\]\) => \{[\s\S]*?componentIdsCanGateSurfaceField[\s\S]*?const fallbackComponent = Math\.floor\(Number\(currentComponent\)\)[\s\S]*?const resolvedFallbackComponent = neighborSeedComponentId >= 0[\s\S]*?const gatedComponentStart = hasStart[\s\S]*?const gatedComponentEnd = hasEnd[\s\S]*?componentStart: gatedComponentStart[\s\S]*?componentEnd: gatedComponentEnd/);
+  assert.doesNotMatch(strokeSource, /const gatedComponentStart = neighborComponentCanGateSurfacePermission[\s\S]*?\? resolvedFallbackComponent/);
+  assert.doesNotMatch(strokeSource, /componentStart: neighborSeedComponentId,[\s\S]*?componentEnd: neighborSeedComponentId/);
+  assert.match(strokeSource, /return anchoredSegments;[\s\S]*?const annotateSurfaceFieldComponents/);
+  assert.match(strokeSource, /const continuousNeighborScreenFieldSegments = preferTslFullSurfaceUvRaster[\s\S]*?&& neighborSurfacePaintActive[\s\S]*?screenPaintStrokeSegments\.slice\(0, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS\)/);
+  assert.match(strokeSource, /const projectedFieldStrokeSegments = annotateSurfaceFieldComponents\(continuousNeighborScreenFieldSegments\.length[\s\S]*?\? continuousNeighborScreenFieldSegments[\s\S]*?: surfaceEnrichedScreenPaintStrokeSegments\.length[\s\S]*?: projectedSurfaceBrushSegments\.length[\s\S]*?: screenPaintStrokeSegments\)/);
+  assert.match(strokeSource, /const cameraFacingSurfaceFieldStrokeSegments = \(\(\) => \{/);
+  assert.match(strokeSource, /const rejectZ = visibleEdgeMode === "hard" \? 0 : -0\.28/);
+  assert.match(strokeSource, /return Math\.max\(startZ \?\? endZ, endZ \?\? startZ\) >= rejectZ/);
+  assert.match(strokeSource, /screenProjectedStrokeSegments: outputProjectedFieldStrokeSegments/);
   assert.match(strokeSource, /viewNormalStart: previous\.viewNormalEnd \|\| previous\.viewNormalStart/);
   assert.match(strokeSource, /viewNormalEnd: surfaceSegment\.viewNormalStart \|\| surfaceSegment\.viewNormalEnd/);
-  assert.match(strokeSource, /const needsIndexedNormalAnchors = !anchors\.length \|\| !anchors\.some\(\(anchor\) => anchor\?\.normal\)/);
+  assert.match(strokeSource, /const shouldAddIndexedStrokeAnchors = options\.liveProjectedPaint === true[\s\S]*?&& preferTslFullSurfaceUvRaster[\s\S]*?&& screenPaintStrokeSegments\.length > 0/);
+  assert.match(strokeSource, /const needsIndexedNormalAnchors = !anchors\.length[\s\S]*?\|\| !anchors\.some\(\(anchor\) => anchor\?\.normal\)[\s\S]*?\|\| shouldAddIndexedStrokeAnchors/);
   assert.match(strokeSource, /const canBuildIndexedNormalAnchors = Boolean\(editor\?\.camera\?\.matrixWorldInverse\)/);
+  assert.match(strokeSource, /for \(const sample of \[strokeStartSample, currentSample\]\) \{/);
+  assert.match(strokeSource, /screenPointFromClientPoint\(editor, sample\.client\)/);
   assert.match(strokeSource, /const indexedAnchorSegments = screenPaintStrokeSegments\.slice\(0, Math\.min\(screenPaintStrokeSegments\.length, 24\)\)/);
   assert.match(strokeSource, /needsIndexedNormalAnchors[\s\S]*?&& canBuildIndexedNormalAnchors[\s\S]*?&& typeof editor\?\.textureAirbrushScreenHitsForEvent === "function"/);
+  assert.match(strokeSource, /raycastFallbackOnScreenMiss: true/);
+  assert.match(strokeSource, /if \(indexed === undefined && typeof editor\.texturePaintHitForEvent === "function"\) \{[\s\S]*?indexed = editor\.texturePaintHitForEvent\(pointEvent, "airbrush"\)/);
   assert.match(strokeSource, /const sameDistance = Math\.abs\(distance - bestDistance\) <= 0\.001/);
   assert.match(strokeSource, /distance < bestDistance \|\| \(sameDistance && !best\?\.normal && anchor\?\.normal\)/);
   assert.match(strokeSource, /const useTslSourceMeshVisibilitySeed = skipProjectedSeamStrokeSegmentsForTslSurface/);
@@ -178,6 +264,9 @@ test("TSL live projected field preserves hit normals for same-side surface gatin
   assert.match(strokeSource, /const screenBrushVisibilityTrianglesForSurfaceSeed = options\.screenBrushVisibilityTriangles/);
   assert.match(strokeSource, /screenBrushVisibilityTriangles: screenBrushVisibilityTrianglesForSurfaceSeed/);
   assert.match(strokeSource, /fullBrushVisibilityProbes: useTslSourceMeshVisibilitySeed \? false : options\.fullBrushVisibilityProbes/);
+  assert.match(strokeSource, /\.\.\.\(componentIdsCanGateSurfaceField \? \{ hardTextureAirbrushComponentGate: true \} : \{\}\)/);
+  assert.match(strokeSource, /\.\.\.\(componentGateCanRelaxOnFrontmost \? \{ relaxComponentGateOnFrontmost: true \} : \{\}\)/);
+  assert.match(strokeSource, /\.\.\.\(neighborSourceRasterComponentIds \? \{ sourceRasterAllowedComponentIds: neighborSourceRasterComponentIds \} : \{\}\)/);
   for (const candidateSource of [strokeSource, liveSource, projectionSource]) {
     assert.match(candidateSource, /function compactVisibilityTriangle/);
     assert.match(candidateSource, /const componentId = Math\.floor\(Number\(triangle\?\.componentId\)\)/);
@@ -196,7 +285,7 @@ test("TSL projected gutter interpolation uses standard area barycentrics", () =>
   assert.doesNotMatch(body, /1 - u - v/);
 });
 
-test("TSL surface airbrush keeps brush falloff independent from visible-depth occlusion", () => {
+test("TSL surface airbrush keeps brush falloff independent from hard visible-depth permissions", () => {
   const surfaceBody = functionSource("createSurfaceMaterial");
   const projectedBody = functionSource("createProjectedSurfaceMaterial");
   assert.doesNotMatch(surfaceBody, /viewDistancePermission/);
@@ -204,17 +293,49 @@ test("TSL surface airbrush keeps brush falloff independent from visible-depth oc
   assert.doesNotMatch(surfaceBody, /depthPermission/);
   assert.doesNotMatch(surfaceBody, /depthHardPermission/);
   assert.doesNotMatch(surfaceBody, /const screenOnlyCoverage = visibleActive\.greaterThan\(0\.5\)/);
-  assert.match(surfaceBody, /const viewEnd = segmentViewEnds\.element\(i\)/);
-  assert.doesNotMatch(surfaceBody, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
-  assert.match(surfaceBody, /const visibleDepthCoverage = float\(1\)\.sub\(visibleDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(surfaceBody, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
+  assert.match(surfaceBody, /const segmentViewEnds = uniformArray/);
+  assert.doesNotMatch(surfaceBody, /const viewEnd = segmentViewEnds\.element\(i\)/);
+  assert.doesNotMatch(surfaceBody, /const visibleDepthGate =/);
+  assert.doesNotMatch(surfaceBody, /const viewRadius = max\(mix\(viewStart\.w, viewEnd\.w, viewT\), 0\.0001\)\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /const viewDistancePixels/);
+  assert.doesNotMatch(surfaceBody, /visibilityCoverage|visibleDepthFade|visibleDepthSmoothFade/);
+  assert.doesNotMatch(surfaceBody, /visibleGateCoverage/);
   assert.doesNotMatch(surfaceBody, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(surfaceBody, /const componentPermission = hasComponentGate/);
   assert.doesNotMatch(surfaceBody, /normalCompatibility|surfacePlanePermission/);
+  assert.match(surfaceBody, /const screenCoverage = edgeCoverage\.toVar\(\)/);
   assert.match(surfaceBody, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /const surfaceCoverage =/);
+  assert.doesNotMatch(surfaceBody, /screenGate/);
+  assert.doesNotMatch(surfaceBody, /surfaceCoverage\.mul\(screenGate\)/);
+  assert.doesNotMatch(surfaceBody, /const viewCoverage = max\(0\.0, float\(1\)\.sub\(viewSmoothEdge\)\)\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /viewContinuityCoverage|viewContinuityFade|viewContinuitySmoothFade/);
   assert.match(surfaceBody, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
-  assert.match(surfaceBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.mul\(visibleGateCoverage\)[\s\S]*?\.toVar\(\)/);
-  assert.doesNotMatch(surfaceBody, /visibleCoverage|visiblePermission|visibleSoftPermission/);
+  assert.doesNotMatch(surfaceBody, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(visibilityCoverage\)/);
+  assert.doesNotMatch(surfaceBody, /const surfaceFieldCoverage = brushFieldCoverage\.mul\(depthGate\)/);
+  assert.match(surfaceBody, /const frontmostSurfaceHardCoverage = visibleDepthDelta[\s\S]*?lessThanEqual\(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE\)[\s\S]*?\.toVar\(\)/);
+  assert.match(surfaceBody, /const frontmostSurfaceSoftRamp = clamp\([\s\S]*?VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER[\s\S]*?\.toVar\(\)/);
+  assert.match(surfaceBody, /const frontmostSurfaceCoverage = mix\([\s\S]*?frontmostSurfaceSoftCoverage,[\s\S]*?frontmostSurfaceHardCoverage,[\s\S]*?hardVisibleEdge[\s\S]*?\)\.toVar\(\)/);
+  assert.match(surfaceBody, /const closerDepthRamp = clamp\([\s\S]*?visibleDepthDelta\.mul\(-1\)[\s\S]*?VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE[\s\S]*?VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER[\s\S]*?\.toVar\(\)/);
+  assert.match(surfaceBody, /const visibleDepthCoverageBase = frontmostSurfaceCoverage\.mul\(closerDepthCoverage\)\.toVar\(\)/);
+  assert.match(surfaceBody, /const visibleSoftEdgeCoverageForOffset = \(offset\) => max\([\s\S]*?visibleTextureNode\.sample[\s\S]*?vec2\(offset\.x, 0\)[\s\S]*?vec2\(0, offset\.y\)[\s\S]*?\);/);
+  assert.match(surfaceBody, /const visibleSoftEdgeCoverage = max\([\s\S]*?VISIBLE_SURFACE_SOFT_EDGE_COVERAGE[\s\S]*?VISIBLE_SURFACE_SOFT_EDGE_FAR_COVERAGE[\s\S]*?float\(1\)\.sub\(hardVisibleEdge\)[\s\S]*?\.toVar\(\)/);
+  assert.match(surfaceBody, /const visibleDepthCoverage = max\([\s\S]*?visibleDepthCoverageBase,[\s\S]*?visibleSoftEdgeCoverage\.mul\(visibleSampleValid\)[\s\S]*?\)\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /const visibleDepthCoverage = max\(visibleDepthCoverageBase, visibleSoftEdgeCoverage\)\.toVar\(\)/);
+  assert.match(surfaceBody, /const depthGate = mix\(float\(1\), visibleDepthCoverage, visibleActive\)\.toVar\(\)/);
+  assert.match(surfaceBody, /const frontmostSurfaceLocalityAuthority = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?\.mul\(visibleDepthCoverageBase\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /depthGate = mix\(float\(1\), visibleDepthCoverage, visibleActive\.mul\(visibleSampleValid\)\)/);
+  assert.doesNotMatch(surfaceBody, /frontmostSurfaceLocalityAuthority = visibleActive[\s\S]*?\.mul\(visibleDepthCoverage\)[\s\S]*?\.toVar\(\)/);
+  assert.match(surfaceBody, /const segmentHasDirectionalView = segmentHasView[\s\S]*?segmentViewLengthRaw\.greaterThan\(0\.000001\)[\s\S]*?\.toVar\(\)/);
+  assert.match(surfaceBody, /const segmentHasPointView = segmentHasView[\s\S]*?segmentViewLengthRaw\.lessThanEqual\(0\.000001\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /frontmostDistanceGate|frontmostDistanceRamp|frontmostDistanceLimit|frontmostDistanceFeather/);
+  assert.match(surfaceBody, /const segmentDepthGate = segmentHasDirectionalView[\s\S]*?\.select\([\s\S]*?segmentDepthFeathered,[\s\S]*?segmentHasPointView\.select\(segmentDepthFeathered, float\(1\)\)[\s\S]*?\)[\s\S]*?\.toVar\(\)/);
+  assert.match(surfaceBody, /const strictSegmentLocalityGate = opposedNormalGate[\s\S]*?\.mul\(segmentDistanceGate\)[\s\S]*?\.mul\(segmentDepthGate\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /frontmostSegmentLocalityGate/);
+  assert.match(surfaceBody, /const segmentLocalityGate = mix\([\s\S]*?strictSegmentLocalityGate,[\s\S]*?float\(1\),[\s\S]*?frontmostSurfaceLocalityAuthority[\s\S]*?\)\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(hasViewGate\.select\(viewCoverage, float\(1\)\)\)/);
+  assert.match(surfaceBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthGate\)[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(surfaceBody, /visibleCoverage|visiblePermission|visibleSoftPermission|visibleGateCoverage/);
   assert.doesNotMatch(surfaceBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(componentPermission\)/);
   assert.doesNotMatch(surfaceBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthPermission\)/);
   assert.doesNotMatch(surfaceBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(bridgePermission\)/);
@@ -222,9 +343,21 @@ test("TSL surface airbrush keeps brush falloff independent from visible-depth oc
   assert.doesNotMatch(surfaceBody, /mix\(viewCoverage, float\(1\)/);
   assert.match(projectedBody, /gatedCoverage/);
   assert.match(projectedBody, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
+  assert.match(projectedBody, /const frontmostSurfaceLocalityAuthority = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?\.mul\(visibleDepthCoverageBase\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(projectedBody, /frontmostSurfaceLocalityAuthority = visibleActive[\s\S]*?\.mul\(visibleDepthCoverage\)[\s\S]*?\.toVar\(\)/);
+  assert.match(projectedBody, /const segmentHasDirectionalView = segmentHasView[\s\S]*?segmentViewLengthRaw\.greaterThan\(0\.000001\)[\s\S]*?\.toVar\(\)/);
+  assert.match(projectedBody, /const segmentHasPointView = segmentHasView[\s\S]*?segmentViewLengthRaw\.lessThanEqual\(0\.000001\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(projectedBody, /frontmostDistanceGate|frontmostDistanceRamp|frontmostDistanceLimit|frontmostDistanceFeather/);
+  assert.match(projectedBody, /const segmentDepthGate = segmentHasDirectionalView[\s\S]*?\.select\([\s\S]*?segmentDepthFeathered,[\s\S]*?segmentHasPointView\.select\(segmentDepthFeathered, float\(1\)\)[\s\S]*?\)[\s\S]*?\.toVar\(\)/);
+  assert.match(projectedBody, /const strictSegmentLocalityGate = opposedNormalGate[\s\S]*?\.mul\(segmentDistanceGate\)[\s\S]*?\.mul\(segmentDepthGate\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(projectedBody, /frontmostSegmentLocalityGate/);
+  assert.match(projectedBody, /const segmentLocalityGate = mix\([\s\S]*?strictSegmentLocalityGate,[\s\S]*?float\(1\),[\s\S]*?frontmostSurfaceLocalityAuthority[\s\S]*?\)\.toVar\(\)/);
+  assert.doesNotMatch(projectedBody, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(visibilityCoverage\)/);
+  assert.doesNotMatch(projectedBody, /const surfaceFieldCoverage = brushFieldCoverage\.mul\(depthGate\)/);
+  assert.doesNotMatch(projectedBody, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(hasViewGate\.select\(viewCoverage, float\(1\)\)\)/);
   assert.doesNotMatch(projectedBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(componentPermission\)/);
   assert.doesNotMatch(projectedBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(bridgePermission\)/);
-  assert.match(projectedBody, /const sampleCoverage = baseSampleCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.mul\(visibleGateCoverage\)/);
+  assert.match(projectedBody, /const sampleCoverage = baseSampleCoverage[\s\S]*?\.mul\(depthGate\)[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
   assert.doesNotMatch(projectedBody, /sampleCoverage = baseSampleCoverage[\s\S]*?\.mul\(visibleCoverage\)/);
   assert.doesNotMatch(projectedBody, /const sampleCoverage = baseSampleCoverage[\s\S]*?\.mul\(depthPermission\)/);
   assert.doesNotMatch(projectedBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?viewDistancePermission/);
@@ -233,30 +366,37 @@ test("TSL surface airbrush keeps brush falloff independent from visible-depth oc
   assert.match(projectedBody, /gutterOnly[\s\S]*?\.select\(insideOriginalTriangle\.or\(noCoverage\), noCoverage\)/);
   assert.match(projectedBody, /discardFragment\.discard\(\)/);
   assert.doesNotMatch(projectedBody, /const screenOnlyCoverage = visibleActive\.greaterThan\(0\.5\)/);
-  assert.match(projectedBody, /const viewEnd = segmentViewEnds\.element\(i\)/);
-  assert.doesNotMatch(projectedBody, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
-  assert.match(projectedBody, /const visibleDepthCoverage = float\(1\)\.sub\(visibleDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(projectedBody, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
+  assert.match(projectedBody, /const segmentViewEnds = uniformArray/);
+  assert.doesNotMatch(projectedBody, /const viewEnd = segmentViewEnds\.element\(i\)/);
+  assert.doesNotMatch(projectedBody, /const visibleDepthGate =/);
+  assert.doesNotMatch(projectedBody, /const viewRadius = max\(mix\(viewStart\.w, viewEnd\.w, viewT\), 0\.0001\)\.toVar\(\)/);
+  assert.doesNotMatch(projectedBody, /const viewDistancePixels/);
+  assert.doesNotMatch(projectedBody, /visibilityCoverage|visibleDepthFade|visibleDepthSmoothFade/);
+  assert.doesNotMatch(projectedBody, /visibleGateCoverage/);
   assert.doesNotMatch(projectedBody, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(projectedBody, /const componentPermission = hasComponentGate/);
   assert.doesNotMatch(projectedBody, /normalCompatibility|surfacePlanePermission/);
+  assert.match(projectedBody, /const screenCoverage = edgeCoverage\.toVar\(\)/);
   assert.match(projectedBody, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
+  assert.doesNotMatch(projectedBody, /const surfaceCoverage =/);
+  assert.doesNotMatch(projectedBody, /screenGate/);
+  assert.doesNotMatch(projectedBody, /surfaceCoverage\.mul\(screenGate\)/);
   assert.doesNotMatch(projectedBody, /viewRadiusRaw\.greaterThan\(0\.0001\)[\s\S]*?\.select\(mix\(viewCoverage/);
   assert.doesNotMatch(projectedBody, /screenCoverage\.mul\(surfaceGate\)/);
 });
 
-test("TSL surface airbrush evaluates coverage in captured hit-screen space", () => {
+test("TSL surface airbrush evaluates coverage from fragment-projected surface points", () => {
   const body = functionSource("createSurfaceMaterial");
   const projectedBody = functionSource("createProjectedSurfaceMaterial");
   const sourceVertexBody = functionSource("addSourceRasterVertex");
   assert.match(body, /paintView\.assign\(attribute\("paintView", "vec3"\)\)/);
   assert.match(body, /paintScreen\.assign\(attribute\("paintScreen", "vec3"\)\)/);
-  assert.match(body, /const surfaceScreen = paintScreen\.toVar\(\)/);
-  assert.match(projectedBody, /const surfaceScreen = paintScreen\.toVar\(\)/);
-  assert.doesNotMatch(body, /const projectedClip = editorProjectionMatrix\.mul\(vec4\(editorView, 1\)\)\.toVar\(\)/);
-  assert.doesNotMatch(projectedBody, /const projectedClip = editorProjectionMatrix\.mul\(vec4\(editorView, 1\)\)\.toVar\(\)/);
-  assert.doesNotMatch(body, /const projectedSurfaceScreen = vec3/);
-  assert.doesNotMatch(projectedBody, /const projectedSurfaceScreen = vec3/);
+  assert.match(body, /const projectedClip = editorProjectionMatrix\.mul\(vec4\(editorView, 1\)\)\.toVar\(\)/);
+  assert.match(projectedBody, /const projectedClip = editorProjectionMatrix\.mul\(vec4\(editorView, 1\)\)\.toVar\(\)/);
+  assert.match(body, /const projectedNdc = projectedClip\.xyz\.div\(projectedW\)\.toVar\(\)/);
+  assert.match(projectedBody, /const projectedNdc = projectedClip\.xyz\.div\(projectedW\)\.toVar\(\)/);
+  assert.match(body, /const surfaceScreen = vec3\([\s\S]*?editorViewportSize\.x[\s\S]*?editorViewportSize\.y[\s\S]*?paintScreen\.z[\s\S]*?\)\.toVar\(\)/);
+  assert.match(projectedBody, /const surfaceScreen = vec3\([\s\S]*?editorViewportSize\.x[\s\S]*?editorViewportSize\.y[\s\S]*?paintScreen\.z[\s\S]*?\)\.toVar\(\)/);
   assert.match(source, /function ensureSurfaceProjectionAttributes/);
   assert.match(source, /screenPointForWorld\(editor, world\)/);
   assert.match(source, /function textureNodeAppliesFlipY/);
@@ -320,21 +460,20 @@ test("TSL surface airbrush feathers normal cutoff for soft strokes and hard-cuts
   const updateBody = functionSource("updateSurfaceMaterial");
   assert.match(body, /hardVisibleEdge/);
   assert.match(body, /visibleNormalEdge/);
-  assert.match(source, /const SOFT_FACING_NORMAL_BACK_FEATHER = 0\.45/);
-  assert.match(source, /const SOFT_FACING_NORMAL_FRONT_FEATHER = 0\.12/);
+  assert.match(source, /const SOFT_FACING_NORMAL_BACK_FEATHER = 0\.28/);
+  assert.match(source, /const SOFT_FACING_NORMAL_FRONT_FEATHER = 0\.16/);
+  assert.match(source, /const VISIBLE_SURFACE_NORMAL_RESCUE_MIN_LOCAL_Z = -0\.02/);
   assert.doesNotMatch(source, /SURFACE_NORMAL_COMPATIBILITY_MIN/);
   assert.doesNotMatch(source, /SURFACE_NORMAL_COMPATIBILITY_FULL/);
   assert.match(source, /const VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS = 0\.18/);
-  assert.match(source, /const VISIBLE_SURFACE_DEPTH_GATE_MIN_RADIUS = 0\.45/);
-  assert.match(source, /const VISIBLE_SURFACE_DEPTH_GATE_VIEW_RADIUS_SCALE = 0\.38/);
-  assert.match(source, /const VISIBLE_SURFACE_DEPTH_GATE_FEATHER_SCALE = 0\.55/);
+  assert.doesNotMatch(source, /VISIBLE_SURFACE_DEPTH_GATE_/);
   assert.doesNotMatch(body, /strokeNormalGate|strokeNormalRamp|strokeNormalCoverage|strokeNormalPresence/);
   assert.doesNotMatch(body, /strokeFacingSign/);
   assert.doesNotMatch(body, /mix\(float\(1\), strokeFacingSign, normalPresence\)/);
   assert.match(body, /const currentFacingNormalZ = editorNormalLength\.greaterThan\(0\.0002\)/);
   assert.doesNotMatch(source, /VISIBLE_NORMAL_RESCUE_DEPTH_TOLERANCE/);
   assert.match(body, /const visibleFacingSampleZ = visibleSample\.g\.mul\(2\.0\)\.sub\(1\.0\)\.toVar\(\)/);
-  assert.match(body, /const visibleNormalRescue = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?visibleDelta\.lessThanEqual\(VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS\)/);
+  assert.match(body, /const visibleNormalRescue = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?currentFacingNormalZ\.greaterThanEqual\(VISIBLE_SURFACE_NORMAL_RESCUE_MIN_LOCAL_Z\)[\s\S]*?visibleDelta\.lessThanEqual\(VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS\)/);
   assert.match(body, /mix\(\s*currentFacingNormalZ,\s*visibleFacingSampleZ,\s*visibleNormalRescue\s*\)/);
   assert.doesNotMatch(body, /max\(currentFacingNormalZ, visibleFacingSampleZ\)/);
   assert.match(body, /const softFacingRamp = clamp\([\s\S]*?facingNormalZ\.add\(SOFT_FACING_NORMAL_BACK_FEATHER\)[\s\S]*?SOFT_FACING_NORMAL_FRONT_FEATHER[\s\S]*?\)\.toVar\(\)/);
@@ -347,9 +486,11 @@ test("TSL surface airbrush feathers normal cutoff for soft strokes and hard-cuts
   assert.match(body, /\.mul\(normalGate\)/);
   assert.doesNotMatch(body, /\.mul\(strokeNormalGate\)/);
   assert.match(projectedBody, /const visibleFacingSampleZ = visibleSample\.g\.mul\(2\.0\)\.sub\(1\.0\)\.toVar\(\)/);
-  assert.match(projectedBody, /const visibleNormalRescue = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?visibleDelta\.lessThanEqual\(VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS\)/);
-  assert.match(body, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
-  assert.match(projectedBody, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
+  assert.match(projectedBody, /const visibleNormalRescue = visibleActive[\s\S]*?\.mul\(visibleSampleValid\)[\s\S]*?currentFacingNormalZ\.greaterThanEqual\(VISIBLE_SURFACE_NORMAL_RESCUE_MIN_LOCAL_Z\)[\s\S]*?visibleDelta\.lessThanEqual\(VISIBLE_SURFACE_NORMAL_SAMPLE_RADIUS\)/);
+  assert.doesNotMatch(body, /visibilityCoverage|visibleDepthFade|visibleDepthSmoothFade/);
+  assert.doesNotMatch(projectedBody, /visibilityCoverage|visibleDepthFade|visibleDepthSmoothFade/);
+  assert.doesNotMatch(body, /visibleGateCoverage/);
+  assert.doesNotMatch(projectedBody, /visibleGateCoverage/);
   assert.doesNotMatch(body, /visibleBehindDepth|visibleDepthGate/);
   assert.doesNotMatch(projectedBody, /visibleBehindDepth|visibleDepthGate/);
   assert.doesNotMatch(body, /visibleRadius|visibleFeatherRadius/);
@@ -363,6 +504,8 @@ test("TSL surface airbrush feathers normal cutoff for soft strokes and hard-cuts
   assert.match(projectedBody, /\.mul\(normalGate\)/);
   assert.doesNotMatch(projectedBody, /\.mul\(strokeNormalGate\)/);
   assert.match(body, /const visibleUvRaw = clamp\(surfaceScreen\.xy\.div\(editorViewportSize\), vec2\(0\), vec2\(1\)\)\.toVar\(\)/);
+  assert.match(body, /const visibleInViewport = surfaceScreen\.x\.greaterThanEqual\(0\)[\s\S]*?surfaceScreen\.x\.lessThanEqual\(editorViewportSize\.x\)[\s\S]*?surfaceScreen\.y\.greaterThanEqual\(0\)[\s\S]*?surfaceScreen\.y\.lessThanEqual\(editorViewportSize\.y\)[\s\S]*?\.toVar\(\)/);
+  assert.match(body, /const visibleSampleValid = clamp\(visibleSample\.a\.mul\(32\.0\), 0\.0, 1\.0\)[\s\S]*?\.mul\(visibleInViewport\.select\(float\(1\), float\(0\)\)\)[\s\S]*?\.toVar\(\)/);
   assert.match(body, /const visibleUv = vec2\(visibleUvRaw\.x, float\(1\)\.sub\(visibleUvRaw\.y\)\)\.toVar\(\)/);
   assert.match(projectedBody, /const visibleUv = vec2\(visibleUvRaw\.x, float\(1\)\.sub\(visibleUvRaw\.y\)\)\.toVar\(\)/);
   assert.doesNotMatch(body, /normalPresence\.mul\(hardness\)\.mul\(0\.35\)/);
@@ -374,12 +517,12 @@ test("TSL surface airbrush feathers normal cutoff for soft strokes and hard-cuts
   assert.match(updateBody, /state\.visibleNormalEdge\.value = debugParams\?\.has\("debugAirbrushNoNormalGate"\) === true[\s\S]*?\? 0[\s\S]*?: visibleEdgeMode === "hard" \|\| visibleEdgeMode === "soft" \? 1 : 0/);
 });
 
-test("TSL visible-surface depth and normal buffer uses linear filtering", () => {
+test("TSL visible-surface depth and normal buffer uses unblended texels", () => {
   const body = functionSource("createVisibleSurfaceTarget");
-  assert.match(body, /target\.texture\.minFilter = THREE\.LinearFilter/);
-  assert.match(body, /target\.texture\.magFilter = THREE\.LinearFilter/);
-  assert.doesNotMatch(body, /target\.texture\.minFilter = THREE\.NearestFilter/);
-  assert.doesNotMatch(body, /target\.texture\.magFilter = THREE\.NearestFilter/);
+  assert.match(body, /target\.texture\.minFilter = THREE\.NearestFilter/);
+  assert.match(body, /target\.texture\.magFilter = THREE\.NearestFilter/);
+  assert.doesNotMatch(body, /target\.texture\.minFilter = THREE\.LinearFilter/);
+  assert.doesNotMatch(body, /target\.texture\.magFilter = THREE\.LinearFilter/);
 });
 
 test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
@@ -398,12 +541,17 @@ test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
     assert.match(body, new RegExp(token));
     assert.match(projectedBody, new RegExp(token));
   }
-  assert.match(body, /const softness = float\(1\)\.sub\(hardness\)\.toVar\(\)/);
-  assert.match(body, /scatter\.mul\(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE\)/);
-  assert.match(body, /softness\.mul\(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE\)/);
-  assert.match(projectedBody, /const softness = float\(1\)\.sub\(hardness\)\.toVar\(\)/);
-  assert.match(projectedBody, /scatter\.mul\(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE\)/);
-  assert.match(projectedBody, /softness\.mul\(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE\)/);
+  assert.doesNotMatch(source, /TEXTURE_AIRBRUSH_SCATTER_OUTER_RADIUS_SCALE/);
+  assert.match(body, /const haloRadius = radius\.toVar\(\)/);
+  assert.match(projectedBody, /const haloRadius = radius\.toVar\(\)/);
+  assert.doesNotMatch(body, /scatter\.mul\(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE\)/);
+  assert.doesNotMatch(projectedBody, /scatter\.mul\(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE\)/);
+  assert.doesNotMatch(body, /SCATTER_OUTER_RADIUS_SCALE/);
+  assert.doesNotMatch(projectedBody, /SCATTER_OUTER_RADIUS_SCALE/);
+  assert.doesNotMatch(body, /const softness = float\(1\)\.sub\(hardness\)\.toVar\(\)/);
+  assert.doesNotMatch(projectedBody, /const softness = float\(1\)\.sub\(hardness\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /softness\.mul\(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE\)/);
+  assert.doesNotMatch(projectedBody, /softness\.mul\(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE\)/);
   assert.doesNotMatch(body, /scatter\.mul\(0\.15\)/);
   assert.doesNotMatch(projectedBody, /scatter\.mul\(0\.15\)/);
   assert.doesNotMatch(body, /viewRadius\.mul\(float\(1\)\.add\(scatter\.mul\(0\.15\)\)\)\.toVar\(\)/);
@@ -412,16 +560,26 @@ test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
   assert.match(projectedBody, /const fadeRadius = max\(haloRadius\.sub\(coreRadius\), 0\.0001\)/);
   assert.match(body, /const edgeCoverage = max\(0\.0, float\(1\)\.sub\(smoothEdge\)\)\.toVar\(\)/);
   assert.match(body, /const screenCoverage = edgeCoverage\.toVar\(\)/);
-  assert.match(body, /const viewEnd = segmentViewEnds\.element\(i\)/);
-  assert.doesNotMatch(body, /const viewDistance = length\(editorView\.sub\(viewClosest\)\)/);
+  assert.match(body, /const segmentViewEnds = uniformArray/);
+  assert.doesNotMatch(body, /const viewEnd = segmentViewEnds\.element\(i\)/);
+  assert.doesNotMatch(body, /const visibleDepthGate =/);
+  assert.doesNotMatch(body, /const viewRadius = max\(mix\(viewStart\.w, viewEnd\.w, viewT\), 0\.0001\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /const viewDistancePixels/);
   assert.doesNotMatch(body, /const viewDistanceCoverage = viewEdgeCoverage\.toVar\(\)/);
   assert.doesNotMatch(body, /const surfaceProjectedCoverage = min\(screenCoverage, viewCoverage\)\.toVar\(\)/);
   assert.doesNotMatch(body, /const componentPermission = hasComponentGate/);
   assert.doesNotMatch(body, /normalCompatibility|surfacePlanePermission/);
   assert.match(body, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
+  assert.doesNotMatch(body, /const surfaceCoverage =/);
+  assert.doesNotMatch(body, /screenGate/);
+  assert.doesNotMatch(body, /surfaceCoverage\.mul\(screenGate\)/);
+  assert.doesNotMatch(body, /viewContinuityCoverage|viewContinuityFade|viewContinuitySmoothFade/);
   assert.match(body, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
-  assert.match(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
-  assert.doesNotMatch(body, /visibleCoverage|visiblePermission|visibleSoftPermission/);
+  assert.doesNotMatch(body, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(visibilityCoverage\)/);
+  assert.doesNotMatch(body, /const surfaceFieldCoverage = brushFieldCoverage\.mul\(depthGate\)/);
+  assert.doesNotMatch(body, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(hasViewGate\.select\(viewCoverage, float\(1\)\)\)/);
+  assert.match(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthGate\)[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(body, /visibleCoverage|visiblePermission|visibleSoftPermission|visibleGateCoverage/);
   assert.doesNotMatch(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(componentPermission\)/);
   assert.doesNotMatch(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthPermission\)/);
   assert.doesNotMatch(body, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(bridgePermission\)/);
@@ -440,7 +598,7 @@ test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
   assert.equal(TEXTURE_AIRBRUSH_EDGE_EXPONENT_BASE, 1.0);
   assert.equal(TEXTURE_AIRBRUSH_EDGE_HARDNESS_POWER, 2.2);
   assert.equal(TEXTURE_AIRBRUSH_EDGE_HARDNESS_SCALE, 15);
-  assert.equal(TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE, 0);
+  assert.equal(TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE, 0.85);
 });
 
 test("TSL surface airbrush can gate ambiguous UV overlap texels", () => {
@@ -448,6 +606,10 @@ test("TSL surface airbrush can gate ambiguous UV overlap texels", () => {
   assert.match(source, /function surfaceAirbrushUvOverlapMaskEnabled/);
   assert.match(source, /debugAirbrushNoUvOverlapMask/);
   assert.match(source, /function sourceObjectUvOverlapMaskTexture/);
+  assert.match(source, /function triangleSharesSurfaceEdge/);
+  assert.match(source, /function trianglesHaveAmbiguousUvOverlap/);
+  assert.match(source, /positionKeys: points\.map\(\(point\) => overlapMaskPositionKey\(point\)\)/);
+  assert.match(source, /trianglesHaveAmbiguousUvOverlap\(triangles\[previous\], triangle\)/);
   assert.match(source, /UV_OVERLAP_DISTANCE_THRESHOLD/);
   assert.match(source, /new THREE\.DataTexture/);
   const body = functionSource("createSurfaceMaterial");
@@ -456,6 +618,8 @@ test("TSL surface airbrush can gate ambiguous UV overlap texels", () => {
   assert.match(body, /const overlapSample = overlapMaskTextureNode\.toVar\(\)/);
   assert.match(body, /const overlapCanWrite = overlapSample\.r\.greaterThan\(0\.5\)\.toVar\(\)/);
   assert.match(body, /\.or\(occupancySample\.r\.lessThan\(0\.5\)\)[\s\S]*?\.and\(overlapCanWrite\)/);
+  assert.match(body, /const sourceCoverage = originalMeshUvRaster[\s\S]*?\? gatedCoverage[\s\S]*?: gatedCoverage\.mul\(gutterCanWrite\.select\(float\(1\), float\(0\)\)\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /originalMeshUvRaster[\s\S]*?\? gatedCoverage\.mul\(overlapCanWrite\.select\(float\(1\), float\(0\)\)\)/);
   assert.match(source, /tslSurfaceOverlapMaskAmbiguousTexels/);
 });
 
@@ -482,7 +646,8 @@ test("TSL live source-mesh raster always includes source material slots", () => 
   const scopeHelperBody = functionSource("materialScopeOptionsForSourceObject");
   const rasterBody = functionSource("ensureUvRasterMeshes");
   const occupancyBody = functionSource("ensureUvOccupancyMask");
-  assert.match(body, /sourceObjectsForEditable\(editor, candidate, editable, sourceTexture, referenceTexture\)/);
+  assert.match(functionSource("sourceObjectsForEditable"), /options\.restrictSourceRasterToCandidateObject === true[\s\S]*?addUniqueSourceObject\(output, seen, fallbackObject\)[\s\S]*?return output/);
+  assert.match(body, /sourceObjectsForEditable\(editor, candidate, editable, sourceTexture, referenceTexture, \{[\s\S]*?restrictSourceRasterToCandidateObject: options\.neighborPaintSeed\?\.enabled === true[\s\S]*?\|\| options\.largeLiveNeighborPaint === true[\s\S]*?\}\)/);
   assert.match(body, /const materialScopeOptions = \{\}/);
   assert.doesNotMatch(body, /debugAirbrushAllMaterialSlots/);
   assert.doesNotMatch(body, /includeFallbackObjectMaterialIndices: true/);
@@ -509,13 +674,14 @@ test("TSL surface airbrush recognizes cloned editable texture images across mate
   assert.doesNotMatch(body, /userData\.clonePaintOriginalMap\?\.image,[\s\S]*?userData\.clonePaintOriginalMap\?\.source\?\.data/);
 });
 
-test("TSL surface airbrush rebinds shared source-image material slots", () => {
+test("TSL surface airbrush does not rebind live targets by loose source-image matches", () => {
   const matcherBody = functionSource("materialUsesEditableTexture");
   const bindBody = functionSource("bindSurfaceTextureToMatchingMaterials");
-  assert.match(matcherBody, /const allowImageMatch = options\.allowImageMatch !== false/);
+  assert.match(matcherBody, /const allowImageMatch = options\.allowImageMatch === true/);
   assert.match(matcherBody, /allowImageMatch && materialImage && editableImages\.has\(materialImage\)/);
   assert.match(matcherBody, /allowImageMatch && materialImage && textureImage && materialImage === textureImage/);
-  assert.match(bindBody, /materialUsesEditableTexture\(candidateMaterial, editable, textureSet, \{ allowImageMatch: true \}\)/);
+  assert.match(bindBody, /allowImageMatch: options\.allowImageMatch === true/);
+  assert.doesNotMatch(bindBody, /allowImageMatch: true/);
 });
 
 test("TSL surface airbrush does not use unpainted cache display targets as stroke bases", () => {
@@ -673,7 +839,8 @@ test("TSL surface airbrush keeps scoped projected triangles opt-in instead of th
   assert.match(body, /screen-and-view-projected-triangles/);
   assert.match(source, /function surfaceAirbrushSourceRasterClipEnabled/);
   assert.match(source, /debugAirbrushSourceRasterClip/);
-  assert.doesNotMatch(body, /debugAirbrushNoSourceRasterClip/);
+  assert.doesNotMatch(functionSource("surfaceAirbrushSourceRasterClipEnabled"), /return false/);
+  assert.match(functionSource("surfaceAirbrushSourceRasterClipEnabled"), /has\("debugAirbrushSourceRasterClip"\)/);
   assert.doesNotMatch(body, /debugAirbrushClipSourceRaster/);
   assert.match(source, /function surfaceAirbrushOriginalMeshUvRasterEnabled/);
   assert.match(source, /debugAirbrushSourceMeshUvRaster/);
@@ -683,23 +850,80 @@ test("TSL surface airbrush keeps scoped projected triangles opt-in instead of th
   assert.match(body, /const liveProjectedPaint = options\.liveProjectedPaint === true/);
   assert.match(body, /const screenStrokePaint = options\.screenStrokePaint === true/);
   assert.match(body, /const liveStrokeMaskComposite = useStrokeMaskComposite[\s\S]*?&& \(liveProjectedPaint \|\| screenStrokePaint\)/);
-  assert.match(body, /const useSourceRasterClip = !layerMode\s+&& useStrokeMaskComposite\s+&& surfaceAirbrushSourceRasterClipEnabled\(\)/);
-  assert.match(body, /const sourceRasterClipPath = useSourceRasterClip[\s\S]*?simplifiedSourceRasterClipSegments\(renderPaintSegments, 18\)/);
+  assert.match(body, /const useSourceRasterClip = useStrokeMaskComposite\s+&& surfaceAirbrushSourceRasterClipEnabled\(\)/);
+  assert.doesNotMatch(body, /const useSourceRasterClip = !layerMode\s+&& useStrokeMaskComposite/);
+  assert.match(body, /const sourceRasterClipPath = useSourceRasterClip[\s\S]*?simplifiedSourceRasterClipSegments\(renderPaintSegments, MAX_TSL_SURFACE_SEGMENTS\)/);
   assert.match(body, /const useOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled\(\)/);
-  assert.doesNotMatch(body, /const useOriginalMeshUvRaster = layerMode[\s\S]*?\? false/);
   assert.match(body, /originalMeshUvRaster: useOriginalMeshUvRaster/);
   assert.match(body, /sourceRasterClipSegments: sourceRasterClipPath/);
-  assert.match(body, /tslSurfaceSourceRasterClipActive: sourceRasterOptions\.originalMeshUvRaster !== true[\s\S]*?&& sourceRasterClipSegments\(sourceRasterOptions\)\.length > 0/);
+  assert.match(body, /sourceRasterClipRequired: useSourceRasterClip/);
+  assert.match(body, /const sourceRasterClipSegmentCount = sourceRasterClipSegments\(sourceRasterOptions\)\.length/);
+  assert.match(body, /tslSurfaceSourceRasterClipSegmentCount: sourceRasterClipSegmentCount/);
+  assert.match(body, /tslSurfaceSourceRasterClipActive: sourceRasterOptions\.sourceRasterClipRequired === true[\s\S]*?&& sourceRasterClipSegmentCount > 0/);
   assert.doesNotMatch(body, /sourceRasterClipSegments: paintSegments/);
   const clipRadiusBody = functionSource("sourceRasterClipDomainRadius");
-  assert.match(clipRadiusBody, /scatter \* \(TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE \+ 0\.35\)/);
+  assert.match(clipRadiusBody, /scatter \* TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE/);
+  assert.doesNotMatch(clipRadiusBody, /SCATTER_OUTER_RADIUS_SCALE/);
   assert.match(clipRadiusBody, /const hardness = sourceRasterClipHardness\(options\)/);
   assert.match(clipRadiusBody, /const softness = 1 - hardness/);
   assert.match(clipRadiusBody, /softness \* TEXTURE_AIRBRUSH_SOFT_HALO_SCALE/);
   assert.match(functionSource("sourceRasterClipKey"), /sourceRasterClipHardness\(options\)/);
+  assert.match(functionSource("sourceRasterClipKey"), /finiteComponentId\(segment\.componentStart\)/);
+  assert.match(functionSource("sourceRasterClipKey"), /finiteComponentId\(segment\.componentEnd\)/);
+  const sourceRasterClipSegmentsBody = functionSource("sourceRasterClipSegments");
+  assert.match(sourceRasterClipSegmentsBody, /finitePoint\(segment\?\.start\) \|\| finitePoint\(segment\?\.screenStart\)/);
+  assert.match(sourceRasterClipSegmentsBody, /finitePoint\(segment\?\.end\) \|\| finitePoint\(segment\?\.screenEnd\)/);
+  assert.match(sourceRasterClipSegmentsBody, /const viewStart = finiteView\(segment\?\.viewStart\)/);
+  assert.match(sourceRasterClipSegmentsBody, /const viewEnd = finiteView\(segment\?\.viewEnd\)/);
+  assert.match(sourceRasterClipSegmentsBody, /segment\?\.viewRadius[\s\S]*?segment\?\.worldRadius[\s\S]*?segment\?\.viewRadiusPixels/);
+  assert.match(sourceRasterClipSegmentsBody, /const componentStart = finiteComponentId\(segment\?\.componentStart\)/);
+  assert.match(sourceRasterClipSegmentsBody, /const componentEnd = finiteComponentId\(segment\?\.componentEnd\)/);
+  const sourceRasterClipKeyBody = functionSource("sourceRasterClipKey");
+  assert.match(sourceRasterClipKeyBody, /roundedSurfaceKeyNumber\(segment\.viewStart\?\.x, 1000\)/);
+  assert.match(sourceRasterClipKeyBody, /roundedSurfaceKeyNumber\(segment\.viewEnd\?\.z, 1000\)/);
+  assert.match(sourceRasterClipKeyBody, /roundedSurfaceKeyNumber\(segment\.viewRadius, 1000\)/);
+  assert.match(sourceRasterClipKeyBody, /sourceRasterClipComponentGateEnabled\(options\) \? "component" : "all-components"/);
+  assert.match(functionSource("screenTriangleNearSourceRasterClip"), /sourceRasterClipRequired === true \? false : true/);
+  assert.doesNotMatch(source, /function viewTriangleNearSourceRasterClip/);
+  assert.doesNotMatch(functionSource("screenTriangleNearSourceRasterClip"), /viewTriangleNearSourceRasterClip\(screenPoints, segment\)/);
   assert.match(body, /sourceRasterClipHardness: options\.hardness/);
   assert.match(source, /function simplifiedSourceRasterClipSegments/);
   assert.match(source, /const TSL_SURFACE_DILATION_PASSES = 1/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1/);
+});
+
+test("TSL source raster dispatch constrains components without changing brush field shape", () => {
+  const sourceRasterClipBody = functionSource("screenTriangleNearSourceRasterClip");
+  const sourceRasterTrianglesBody = functionSource("sourceUvRasterTriangles");
+  const exposeStart = strokeSource.indexOf("const exposeSurfaceComponentIds = Boolean");
+  assert.notEqual(exposeStart, -1, "component exposure decision should exist");
+  const strokeBody = strokeSource.slice(
+    exposeStart,
+    strokeSource.indexOf("const stripSurfaceComponents", exposeStart)
+  );
+  assert.match(source, /function sourceRasterClipSegmentAllowsComponent/);
+  assert.doesNotMatch(source, /function sourceRasterClipHasComponentConstraint/);
+  assert.doesNotMatch(sourceRasterClipBody, /componentConstrained/);
+  assert.match(sourceRasterClipBody, /sourceRasterClipSegmentAllowsComponent\(segment, componentId, options\)/);
+  assert.match(sourceRasterTrianglesBody, /screenTriangleNearSourceRasterClip\(\[screenA, screenB, screenC\], options, componentId\)/);
+  assert.match(sourceRasterTrianglesBody, /const componentId = componentIdForTriangleVertices\(componentState, ia, ib, ic\)/);
+  assert.match(source, /function sourceRasterAllowedComponentIds/);
+  assert.match(source, /function sourceRasterTriangleAllowsComponent/);
+  assert.match(functionSource("sourceRasterClipKey"), /sourceRasterAllowedComponentKey\(options\)/);
+  assert.match(sourceRasterTrianglesBody, /if \(!sourceRasterTriangleAllowsComponent\(componentId, options\)\) \{[\s\S]*?continue;/);
+  assert.match(functionSource("texturePaintRunTslSurfaceAirbrush"), /sourceRasterAllowedComponentIds: options\.sourceRasterAllowedComponentIds/);
+  assert.match(source, /tslSurfaceSourceRasterAllowedComponentIds/);
+  assert.match(strokeBody, /options\.useTslSurfaceAirbrush !== false/);
+  assert.match(strokeBody, /options\.liveProjectedPaint === true/);
+  assert.match(strokeBody, /options\.fullProjectedSurfaceRenderTriangles === true/);
+  for (const materialBody of [functionSource("createProjectedSurfaceMaterial"), functionSource("createSurfaceMaterial")]) {
+    assert.doesNotMatch(materialBody, /sourceRasterClipSegmentAllowsComponent/);
+    assert.doesNotMatch(materialBody, /sourceRasterClipHasComponentConstraint/);
+    assert.match(materialBody, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
+    assert.match(materialBody, /const componentGateActive = componentGateEnabled[\s\S]*?\.and\(paintComponent\.greaterThan\(0\.5\)\)/);
+    assert.doesNotMatch(materialBody, /const surfaceFieldCoverage = brushFieldCoverage\.[^\n]*componentGate/);
+    assert.match(materialBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(componentGate\)/);
+  }
 });
 
 test("TSL surface airbrush skips duplicate live batches before projected geometry work", () => {
@@ -736,8 +960,8 @@ test("TSL surface airbrush keeps GPU dilation live without CPU fallback", () => 
   const ensureDilationBody = functionSource("ensureDilationResources");
   const dilationMaterialBody = functionSource("createDilationMaterial");
   assert.doesNotMatch(body, /const liveSurfaceStroke = options\.liveProjectedPaint === true \|\| options\.screenStrokePaint === true/);
-  assert.match(body, /strokeMaskDilationPasses = surfaceAirbrushDilationPasses\(\)/);
-  assert.match(body, /runSurfaceDilation\([\s\S]*?strokeMaskTarget,[\s\S]*?strokeMaskDilationPasses,[\s\S]*?preserveSourceAlpha: true,[\s\S]*?alphaThreshold: 0\.000001/);
+  assert.match(body, /strokeMaskDilationPasses = surfaceAirbrushStrokeMaskDilationPasses\(\)/);
+  assert.match(body, /runSurfaceDilation\([\s\S]*?strokeMaskTarget,[\s\S]*?strokeMaskDilationPasses,[\s\S]*?preserveSourceAlpha: true,[\s\S]*?alphaThreshold: 0\.000001,[\s\S]*?sampleAlphaThreshold: TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,[\s\S]*?interiorOnly: true/);
   assert.match(body, /compositeMaskTarget\?\.texture \|\| strokeMaskTarget\.texture/);
   assert.match(body, /const surfaceDilationPasses = useStrokeMaskComposite\s+\?\s+0\s+:\s+projectedGutterTriangleCount > 0\s+\?\s+0\s+:\s+surfaceAirbrushDilationPasses\(\)/);
   assert.match(body, /runSurfaceDilation\([\s\S]*?surfaceDilationPasses,[\s\S]*?\{\s*preserveSourceAlpha: Boolean\(layerMode\)\s*\}/);
@@ -749,6 +973,9 @@ test("TSL surface airbrush keeps GPU dilation live without CPU fallback", () => 
   assert.match(source, /strokeMaskDilation: stats\.tslSurfaceStrokeMaskDilation === true/);
   assert.match(dilationBody, /passCount = surfaceAirbrushDilationPasses\(\),\s*options = \{\}/);
   assert.match(dilationBody, /const passes = Math\.max\(0, Math\.floor\(finiteNumber\(passCount/);
+  assert.match(functionSource("surfaceAirbrushStrokeMaskDilationPasses"), /debugAirbrushStrokeMaskDilation/);
+  assert.match(functionSource("surfaceAirbrushStrokeMaskDilationPasses"), /return TSL_SURFACE_STROKE_MASK_DILATION_PASSES/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1/);
   assert.match(dilationSeedBody, /options = \{\}/);
   assert.match(dilationSeedBody, /const preserveSourceAlpha = options\.preserveSourceAlpha === true/);
   assert.match(dilationSeedBody, /return vec4\(color\.rgb, preserveSourceAlpha \? color\.a : mask\.r\)/);
@@ -757,11 +984,24 @@ test("TSL surface airbrush keeps GPU dilation live without CPU fallback", () => 
   assert.doesNotMatch(updateDilationSeedBody, /preserveSourceAlpha\.value/);
   assert.match(ensureDilationBody, /cache\.dilationSeedAlphaMaterial \|\|= createDilationSeedMaterial\([\s\S]*?preserveSourceAlpha: true/);
   assert.match(dilationBody, /const seedMaterial = options\.preserveSourceAlpha === true[\s\S]*?cache\.dilationSeedAlphaMaterial[\s\S]*?: cache\.dilationSeedMaterial/);
-  assert.match(source, /const TSL_SURFACE_DILATION_SAMPLE_RADII = \[1, 2, 4, 8, 16\]/);
+  assert.match(source, /const TSL_SURFACE_DILATION_SAMPLE_RADII = \[1, 2, 4, 8, 12\]/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS = 8/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD = 0\.08/);
   assert.match(dilationMaterialBody, /TSL_SURFACE_DILATION_SAMPLE_RADII\.flatMap/);
   assert.match(dilationMaterialBody, /const alphaThreshold = uniform\(0\.5, "float"\)/);
+  assert.match(dilationMaterialBody, /const sampleAlphaThreshold = uniform\(0, "float"\)/);
+  assert.match(dilationMaterialBody, /const interiorOnly = uniform\(0, "float"\)/);
   assert.match(dilationMaterialBody, /result\.a\.lessThan\(alphaThreshold\)/);
+  assert.match(dilationMaterialBody, /sample\.a\.greaterThan\(max\(candidate\.a, sampleAlphaThreshold\)\)/);
+  assert.match(dilationMaterialBody, /const bridgePairs = TSL_SURFACE_DILATION_SAMPLE_RADII[\s\S]*?\.filter\(\(radius\) => radius <= TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS\)[\s\S]*?\[\[-radius, -radius\], \[radius, radius\]\]/);
+  assert.match(dilationMaterialBody, /If\(interiorOnly\.lessThan\(0\.5\)[\s\S]*?candidate\.assign\(vec4\(sample\.rgb, sample\.a\)\)/);
+  assert.match(dilationMaterialBody, /If\(interiorOnly\.greaterThan\(0\.5\)[\s\S]*?const bridgeAlpha = min\(firstSample\.a, secondSample\.a\)\.toVar\(\)/);
+  assert.match(dilationMaterialBody, /const bridgeThreshold = max\(sampleAlphaThreshold, float\(TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD\)\)\.toVar\(\)/);
+  assert.match(dilationMaterialBody, /bridgeAlpha\.greaterThan\(max\(candidate\.a, bridgeThreshold\)\)[\s\S]*?candidate\.assign\(vec4\(bridgeAlpha, bridgeAlpha, bridgeAlpha, bridgeAlpha\)\)/);
+  assert.doesNotMatch(dilationMaterialBody, /leftAxis|rightAxis|topAxis|bottomAxis|horizontalBridge|verticalBridge/);
   assert.match(functionSource("updateDilationMaterial"), /finiteNumber\(options\.alphaThreshold, 0\.5\)/);
+  assert.match(functionSource("updateDilationMaterial"), /finiteNumber\(options\.sampleAlphaThreshold, 0\)/);
+  assert.match(functionSource("updateDilationMaterial"), /options\.interiorOnly === true \? 1 : 0/);
   assert.match(dilationMaterialBody, /transparent: true/);
   assert.match(dilationMaterialBody, /blending: THREE\.NoBlending/);
 });
@@ -776,11 +1016,11 @@ test("TSL surface airbrush prewarms the same seam-bleed live source raster", () 
   assert.match(body, /const prewarmWriteTexture = prewarmTarget\?\.texture \|\| prewarmBaseTexture/);
   assert.match(body, /const prewarmStrokeMaskTarget = ensureSurfacePrewarmStrokeMaskTarget\(cache, width, height\)/);
   assert.match(body, /const prewarmRasterWriteTexture = prewarmStrokeMaskTarget\?\.texture \|\| prewarmWriteTexture/);
-  assert.match(body, /const usePrewarmSourceRasterClip = !layerMode && surfaceAirbrushSourceRasterClipEnabled\(\)/);
-  assert.match(body, /const prewarmRasterClipPath = usePrewarmSourceRasterClip[\s\S]*?\? simplifiedSourceRasterClipSegments\(prewarmSegments, 18\)[\s\S]*?: \[\]/);
+  assert.match(body, /const usePrewarmSourceRasterClip = surfaceAirbrushSourceRasterClipEnabled\(\)/);
+  assert.match(body, /const prewarmRasterClipPath = usePrewarmSourceRasterClip[\s\S]*?\? simplifiedSourceRasterClipSegments\(prewarmSegments, MAX_TSL_SURFACE_SEGMENTS\)[\s\S]*?: \[\]/);
   assert.match(body, /ensureUvOccupancyMask\([\s\S]*?prewarmRasterWriteTexture,[\s\S]*?width,[\s\S]*?height/);
   assert.match(body, /const prewarmOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled\(\)/);
-  assert.match(body, /ensureUvRasterMeshes\([\s\S]*?prewarmBaseTexture,[\s\S]*?\{\s*\.\.\.materialScopeOptions,[\s\S]*?originalMeshUvRaster: prewarmOriginalMeshUvRaster,[\s\S]*?sourceRasterGutterPixels: surfaceAirbrushSourceRasterGutterPixels\(\),[\s\S]*?sourceRasterClipSegments: prewarmRasterClipPath,[\s\S]*?sourceRasterClipHardness: finiteNumber\(options\.hardness,[\s\S]*?maskOnly: true,[\s\S]*?sourceRasterClipPaddingPixels: Math\.max\([\s\S]*?writeTexture: prewarmRasterWriteTexture,[\s\S]*?sampleTexture: prewarmBaseTexture[\s\S]*?\}/);
+  assert.match(body, /ensureUvRasterMeshes\([\s\S]*?prewarmBaseTexture,[\s\S]*?\{\s*\.\.\.materialScopeOptions,[\s\S]*?originalMeshUvRaster: prewarmOriginalMeshUvRaster,[\s\S]*?sourceRasterGutterPixels: surfaceAirbrushSourceRasterGutterPixels\(\),[\s\S]*?sourceRasterClipSegments: prewarmRasterClipPath,[\s\S]*?sourceRasterClipRequired: usePrewarmSourceRasterClip,[\s\S]*?sourceRasterClipHardness: finiteNumber\(options\.hardness,[\s\S]*?maskOnly: true,[\s\S]*?sourceRasterClipPaddingPixels: Math\.max\([\s\S]*?writeTexture: prewarmRasterWriteTexture,[\s\S]*?sampleTexture: prewarmBaseTexture[\s\S]*?\}/);
   assert.match(body, /clearSurfacePrewarmStrokeMaskTarget\(renderer, cache\)/);
   assert.match(body, /renderSurfaceStrokeComposite\([\s\S]*?prewarmTarget,[\s\S]*?prewarmBaseTexture,[\s\S]*?strokeMaskTarget\.texture/);
   const prewarmMaskBlockStart = body.indexOf("const prewarmStrokeMaskTarget = ensureSurfacePrewarmStrokeMaskTarget");
@@ -807,7 +1047,6 @@ test("TSL surface airbrush prewarms the same seam-bleed live source raster", () 
   assert.match(body, /target: prewarmDisplayTarget/);
   const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
   assert.match(runBody, /const useOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled\(\)/);
-  assert.doesNotMatch(runBody, /const useOriginalMeshUvRaster = layerMode[\s\S]*?\? false/);
   assert.match(runBody, /const rasterGutterScale = Math\.min\([\s\S]*?rasterWriteSize\.width \/ Math\.max\(1, width\)[\s\S]*?rasterWriteSize\.height \/ Math\.max\(1, height\)/);
   assert.match(runBody, /const sourceRasterGutterPixels = useStrokeMaskComposite[\s\S]*?Math\.ceil\(surfaceAirbrushSourceRasterGutterPixels\(\) \* rasterGutterScale\)[\s\S]*?: surfaceAirbrushSourceRasterGutterPixels\(\)/);
   assert.match(runBody, /sourceRasterGutterPixels,/);
@@ -836,6 +1075,7 @@ test("TSL surface render targets preserve layer alpha", () => {
 test("TSL layer airbrush keeps empty layer writes in base texture coordinates", () => {
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
   const baseBody = functionSource("surfaceLayerBaseTexture");
+  const bindMatchingBody = functionSource("bindSurfaceTextureToMatchingMaterials");
   const compositeBody = functionSource("createLayerCompositeMaterial");
   const updateCompositeBody = functionSource("updateLayerCompositeMaterial");
   assert.match(body, /const layerCoordinateReferenceTexture = layerMode[\s\S]*?layerBaseTexture \|\| materialOriginalMap \|\| material\.map \|\| editable\.texture/);
@@ -844,9 +1084,13 @@ test("TSL layer airbrush keeps empty layer writes in base texture coordinates", 
   assert.match(body, /cache\.strokeBaseTexture = freezeLiveStrokeBase[\s\S]*?ensureSurfaceStrokeBaseTexture\([\s\S]*?coordinateReferenceTexture \|\| referenceTexture \|\| sourceTexture[\s\S]*?: surfaceStrokeStartBaseTexture\(cache, sourceTexture\)/);
   assert.match(body, /texturePaintTslSurfaceDisplayFlipY = \(coordinateReferenceTexture \|\| referenceTexture\)\?\.flipY === true/);
   assert.match(body, /renderSurfaceLayerComposite\([\s\S]*?displayBaseTexture \|\| coordinateReferenceTexture \|\| referenceTexture/);
-  assert.match(body, /renderSurfaceLayerComposite\([\s\S]*?\{ alphaFallback: true \}/);
-  assert.match(baseBody, /const stableBase = userData\.clonePaintTexture[\s\S]*?userData\.textureAirbrushWebGpuCanvasMap[\s\S]*?originalMap/);
-  assert.match(baseBody, /editable\?\.layerMode === true[\s\S]*?return stableBase/);
+  assert.match(body, /renderSurfaceLayerComposite\([\s\S]*?\{ alphaFallback: false \}/);
+  assert.match(bindMatchingBody, /allowImageMatch: options\.allowImageMatch === true/);
+  assert.match(baseBody, /editable\?\.layerMode === true/);
+  assert.match(baseBody, /const stableReferenceBase = \[[\s\S]*?userData\.textureAirbrushWebGpuCanvasMap,[\s\S]*?userData\.clonePaintOriginalMap,[\s\S]*?originalMap,[\s\S]*?material\?\.map[\s\S]*?surfaceLayerStableBaseCandidate/);
+  assert.match(baseBody, /const clonePaintBase = surfaceLayerStableBaseCandidate\(material, editable, userData\.clonePaintTexture\)/);
+  assert.match(baseBody, /const layerBase = stableReferenceBase[\s\S]*?\|\| clonePaintBase[\s\S]*?\|\| canvasBase/);
+  assert.match(baseBody, /return layerBase \|\| null/);
   assert.match(compositeBody, /const alphaScale = uniform\(1, "float"\)/);
   assert.match(compositeBody, /const alphaFallback = uniform\(0, "float"\)/);
   assert.match(compositeBody, /const layerPresence = clamp\(max\(max\(layer\.r, layer\.g\), layer\.b\), 0\.0, 1\.0\)\.toVar\(\)/);
@@ -1161,54 +1405,114 @@ test("TSL layer-mode live display keeps lower layer composites as underlays", ()
   assert.match(avoidBody, /addTarget\(entry\?\.liveCompositeTarget \|\| null\)/);
 });
 
-test("TSL surface brush coverage respects connected-component gated segments", () => {
+test("TSL surface brush coverage applies component metadata only when enabled", () => {
   const projectedBody = functionSource("createProjectedSurfaceMaterial");
   const surfaceBody = functionSource("createSurfaceMaterial");
   for (const materialBody of [projectedBody, surfaceBody]) {
+    assert.match(materialBody, /const segmentComponents = uniformArray/);
+    assert.match(materialBody, /const componentGateEnabled = uniform\(0, "float"\)/);
+    assert.match(materialBody, /const componentGateFrontmostRelax = uniform\(0, "float"\)/);
+    assert.match(materialBody, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
     assert.match(materialBody, /const segmentComponent = segmentComponents\.element\(i\)/);
-    assert.match(materialBody, /const connectedComponentGate = paintComponent\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.x\)\)\.lessThan\(0\.5\)[\s\S]*?abs\(paintComponent\.sub\(segmentComponent\.y\)\)\.lessThan\(0\.5\)/);
-    assert.match(materialBody, /const componentGate = connectedComponentGate\.toVar\(\)/);
-    assert.doesNotMatch(materialBody, /const componentGate = visibleActive\.greaterThan\(0\.5\)[\s\S]*?\.select\(float\(1\), connectedComponentGate\)/);
-    assert.match(materialBody, /\.mul\(componentGate\)[\s\S]*?\.mul\(normalGate\)/);
+    assert.match(materialBody, /const connectedComponentGate =/);
+    assert.match(materialBody, /const strictComponentGate = componentGateActive[\s\S]*?\.select\(connectedComponentGate\.select\(float\(1\), float\(0\)\), float\(1\)\)/);
+    assert.match(materialBody, /const componentGateRelaxAuthority = frontmostSurfaceLocalityAuthority[\s\S]*?\.mul\(componentGateFrontmostRelax\)[\s\S]*?\.toVar\(\)/);
+    assert.match(materialBody, /const componentGate = mix\([\s\S]*?strictComponentGate,[\s\S]*?float\(1\),[\s\S]*?componentGateRelaxAuthority[\s\S]*?\)\.toVar\(\)/);
+    assert.match(materialBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(componentGate\)/);
+    assert.match(materialBody, /\.mul\(normalGate\)/);
+    assert.doesNotMatch(materialBody, /visibleGateCoverage/);
+    assert.doesNotMatch(materialBody, /const surfaceFieldCoverage = brushFieldCoverage\.[^\n]*\.mul\(componentGate\)/);
   }
+  assert.match(functionSource("sourceRasterClipComponentGateEnabled"), /debugAirbrushNoComponentGate/);
+  assert.match(functionSource("updateSurfaceMaterial"), /const componentGateEnabled = sourceRasterClipComponentGateEnabled\(options\)/);
+  assert.match(functionSource("updateSurfaceMaterial"), /state\.componentGateEnabled\.value = componentGateEnabled \? 1 : 0/);
+  assert.match(functionSource("updateSurfaceMaterial"), /state\.componentGateFrontmostRelax\.value = options\.relaxComponentGateOnFrontmost === true \? 1 : 0/);
+  assert.match(functionSource("texturePaintRunTslSurfaceAirbrush"), /relaxComponentGateOnFrontmost: options\.relaxComponentGateOnFrontmost === true/);
+  assert.match(functionSource("texturePaintRunTslSurfaceAirbrush"), /tslSurfaceComponentGateFrontmostRelax: sourceRasterOptions\.relaxComponentGateOnFrontmost === true/);
+  assert.match(functionSource("exposeSurfaceRunDebug"), /componentGateFrontmostRelax: stats\.tslSurfaceComponentGateFrontmostRelax === true/);
 });
 
-test("TSL surface airbrush keeps visible-depth prepass out of brush opacity", () => {
+test("TSL surface airbrush uses visible-depth data only as a frontmost surface gate", () => {
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
   const materialBody = functionSource("createSurfaceMaterial");
   const updateBody = functionSource("updateSurfaceMaterial");
-  assert.match(body, /const needsVisibleSurfaceTexture = !useProjectedPrimary[\s\S]*?debugAirbrushNoVisibleSurface/);
+  assert.match(body, /const needsVisibleSurfaceTexture = debugParams\?\.has\("debugAirbrushNoVisibleSurface"\) !== true[\s\S]*?&& sourceObjects\.length > 0/);
+  assert.doesNotMatch(body, /const needsVisibleSurfaceTexture = !useProjectedPrimary/);
   assert.match(body, /renderVisibleSurfaceTarget\(/);
   assert.match(updateBody, /state\.visibleSurfaceEnabled\.value = options\.debugVisibleSurfaceDepth === true && visibleTexture \? 1 : 0/);
   assert.match(updateBody, /state\.visibleNormalEdge\.value = debugParams\?\.has\("debugAirbrushNoNormalGate"\) === true[\s\S]*?\? 0[\s\S]*?: visibleEdgeMode === "hard" \|\| visibleEdgeMode === "soft" \? 1 : 0/);
   assert.match(body, /debugVisibleSurfaceDepth: needsVisibleSurfaceTexture/);
-  assert.match(materialBody, /const visibleDepthFade = clamp\(/);
-  assert.match(materialBody, /const visibleDepthSmoothFade = visibleDepthFade[\s\S]*?\.mul\(visibleDepthFade\)/);
-  assert.match(materialBody, /const visibleDepthCoverage = float\(1\)\.sub\(visibleDepthSmoothFade\)\.toVar\(\)/);
-  assert.match(materialBody, /const visibleGateCoverage = float\(1\)\.toVar\(\)/);
+  assert.doesNotMatch(materialBody, /visibilityCoverage|visibleDepthFade|visibleDepthSmoothFade/);
+  assert.doesNotMatch(materialBody, /visibleGateCoverage/);
+  assert.match(materialBody, /const screenCoverage = edgeCoverage\.toVar\(\)/);
   assert.match(materialBody, /const brushFieldCoverage = screenCoverage\.toVar\(\)/);
+  assert.doesNotMatch(materialBody, /const surfaceCoverage =/);
+  assert.doesNotMatch(materialBody, /screenGate/);
+  assert.doesNotMatch(materialBody, /surfaceCoverage\.mul\(screenGate\)/);
   assert.doesNotMatch(materialBody, /visibleDepthGate|visibleBehindDepth/);
-  assert.match(materialBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.mul\(visibleGateCoverage\)[\s\S]*?\.toVar\(\)/);
+  assert.doesNotMatch(materialBody, /viewContinuityCoverage|viewContinuityFade|viewContinuitySmoothFade/);
+  assert.match(materialBody, /const surfaceFieldCoverage = brushFieldCoverage\.toVar\(\)/);
+  assert.doesNotMatch(materialBody, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(visibilityCoverage\)/);
+  assert.doesNotMatch(materialBody, /const surfaceFieldCoverage = brushFieldCoverage\.mul\(depthGate\)/);
+  assert.match(materialBody, /const frontmostSurfaceHardCoverage = visibleDepthDelta[\s\S]*?lessThanEqual\(VISIBLE_SURFACE_OCCLUSION_DEPTH_TOLERANCE\)[\s\S]*?\.toVar\(\)/);
+  assert.match(materialBody, /const frontmostSurfaceSoftRamp = clamp\([\s\S]*?VISIBLE_SURFACE_OCCLUSION_DEPTH_SOFT_FEATHER[\s\S]*?\.toVar\(\)/);
+  assert.match(materialBody, /const frontmostSurfaceCoverage = mix\([\s\S]*?frontmostSurfaceSoftCoverage,[\s\S]*?frontmostSurfaceHardCoverage,[\s\S]*?hardVisibleEdge[\s\S]*?\)\.toVar\(\)/);
+  assert.match(materialBody, /const closerDepthRamp = clamp\([\s\S]*?visibleDepthDelta\.mul\(-1\)[\s\S]*?VISIBLE_SURFACE_CLOSER_DEPTH_TOLERANCE[\s\S]*?VISIBLE_SURFACE_CLOSER_DEPTH_FEATHER[\s\S]*?\.toVar\(\)/);
+  assert.match(materialBody, /const visibleDepthCoverageBase = frontmostSurfaceCoverage\.mul\(closerDepthCoverage\)\.toVar\(\)/);
+  assert.match(materialBody, /const visibleSoftEdgeCoverageForOffset = \(offset\) => max\([\s\S]*?visibleTextureNode\.sample[\s\S]*?vec2\(offset\.x, 0\)[\s\S]*?vec2\(0, offset\.y\)[\s\S]*?\);/);
+  assert.match(materialBody, /const visibleSoftEdgeCoverage = max\([\s\S]*?VISIBLE_SURFACE_SOFT_EDGE_COVERAGE[\s\S]*?VISIBLE_SURFACE_SOFT_EDGE_FAR_COVERAGE[\s\S]*?float\(1\)\.sub\(hardVisibleEdge\)[\s\S]*?\.toVar\(\)/);
+  assert.match(materialBody, /const visibleDepthCoverage = max\([\s\S]*?visibleDepthCoverageBase,[\s\S]*?visibleSoftEdgeCoverage\.mul\(visibleSampleValid\)[\s\S]*?\)\.toVar\(\)/);
+  assert.doesNotMatch(materialBody, /const visibleDepthCoverage = max\(visibleDepthCoverageBase, visibleSoftEdgeCoverage\)\.toVar\(\)/);
+  assert.match(materialBody, /const depthGate = mix\(float\(1\), visibleDepthCoverage, visibleActive\)\.toVar\(\)/);
+  assert.doesNotMatch(materialBody, /depthGate = mix\(float\(1\), visibleDepthCoverage, visibleActive\.mul\(visibleSampleValid\)\)/);
+  assert.doesNotMatch(materialBody, /occlusionDepthRamp|occlusionDepthCoverage|depthGateWeight|depthGateInfluence|behindVisibleSurface/);
+  assert.doesNotMatch(materialBody, /const surfaceFieldCoverage = brushFieldCoverage[\s\S]*?\.mul\(hasViewGate\.select\(viewCoverage, float\(1\)\)\)/);
+  assert.match(materialBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthGate\)[\s\S]*?\.mul\(normalGate\)[\s\S]*?\.toVar\(\)/);
   assert.doesNotMatch(materialBody, /visiblePermission|visibleSoftPermission/);
   assert.doesNotMatch(materialBody, /strokeNormalGate|strokeNormalRamp|strokeNormalCoverage|strokeNormalPresence/);
   assert.doesNotMatch(materialBody, /const gatedCoverage = surfaceFieldCoverage[\s\S]*?\.mul\(depthPermission\)/);
   assert.doesNotMatch(materialBody, /bridgePermission/);
   assert.match(materialBody, /const normalGate = mix\(float\(1\), facingCoverage, visibleNormalEdge\)\.toVar\(\)/);
   assert.match(materialBody, /const facingCoverage = mix\(softFacingCoverage, hardFacingCoverage, hardVisibleEdge\)\.toVar\(\)/);
-  assert.match(source, /VISIBLE_SURFACE_DEPTH_GATE_/);
+  assert.doesNotMatch(source, /VISIBLE_SURFACE_DEPTH_GATE_/);
   assert.doesNotMatch(materialBody, /visibleRadius/);
   assert.doesNotMatch(materialBody, /viewRadius\.mul\(float\(0\.85\)/);
 });
 
-test("TSL surface airbrush visible-depth prepass uses the same material scope", () => {
+test("TSL surface airbrush visible-depth prepass uses all visible source objects for occlusion", () => {
   const body = functionSource("ensureVisibleSurfaceResources");
+  const visibleSourceBody = functionSource("sourceObjectsForVisibleOcclusion");
+  const visibleAddBody = functionSource("addUniqueVisibleOcclusionObject");
+  const objectVisibleBody = functionSource("objectVisibleInScene");
+  const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
+  const prewarmBody = functionSource("texturePaintPrewarmTslSurfaceAirbrush");
   const materialBody = functionSource("createVisibleSurfaceMaterial");
   assert.match(body, /surfaceRasterMaterialsForSourceObject/);
   assert.match(body, /cache\.visibleMaterial/);
+  assert.match(source, /function sourceObjectsForVisibleOcclusion/);
+  assert.match(visibleSourceBody, /editor\?\.model\?\.traverse\?\.\(\(node\) =>/);
+  assert.match(visibleSourceBody, /addUniqueVisibleOcclusionObject\(output, seen, node\)/);
+  assert.match(visibleAddBody, /geometry\?\.attributes\?\.position/);
+  assert.doesNotMatch(visibleAddBody, /attributes\?\.uv/);
+  assert.match(objectVisibleBody, /current\.visible === false/);
+  assert.match(runBody, /const visibleOcclusionSourceObjects = sourceObjectsForVisibleOcclusion\(editor, candidate\)/);
+  assert.match(runBody, /const visibleOcclusionScopeOptions = \{ includeAllMaterialIndices: true \}/);
+  assert.match(runBody, /renderVisibleSurfaceTarget\([\s\S]*?visibleOcclusionSourceObjects\.length \? visibleOcclusionSourceObjects : sourceObjects,[\s\S]*?editor,[\s\S]*?null,[\s\S]*?new Set\(\),[\s\S]*?sourceObject,[\s\S]*?materialIndex,[\s\S]*?visibleOcclusionScopeOptions[\s\S]*?\)/);
+  assert.match(prewarmBody, /const visibleOcclusionSourceObjects = sourceObjectsForVisibleOcclusion\(editor, candidate\)/);
+  assert.match(prewarmBody, /const visibleOcclusionScopeOptions = \{ includeAllMaterialIndices: true \}/);
+  assert.match(prewarmBody, /renderVisibleSurfaceTarget\([\s\S]*?visibleOcclusionSourceObjects\.length \? visibleOcclusionSourceObjects : sourceObjects,[\s\S]*?editor,[\s\S]*?null,[\s\S]*?new Set\(\),[\s\S]*?sourceObject,[\s\S]*?materialIndex,[\s\S]*?visibleOcclusionScopeOptions[\s\S]*?\)/);
+  assert.match(runBody, /ensureUvOccupancyMask\([\s\S]*?sourceObjects,[\s\S]*?editable,[\s\S]*?editableTextures,[\s\S]*?sourceObject,[\s\S]*?materialIndex,[\s\S]*?materialScopeOptions[\s\S]*?\)/);
+  assert.match(runBody, /ensureUvRasterMeshes\([\s\S]*?sourceObjects,[\s\S]*?editable,[\s\S]*?editableTextures,[\s\S]*?sourceObject,[\s\S]*?materialIndex,[\s\S]*?sourceRasterOptions[\s\S]*?\)/);
   assert.match(body, /sourceObject === fallbackSourceObject \? fallbackMaterialIndex : null/);
   assert.match(materialBody, /normalView/);
+  assert.match(materialBody, /floor/);
+  assert.match(materialBody, /const visibleDepth = positionView\.z\.mul\(-1\)\.toVar\(\)/);
+  assert.match(materialBody, /const visibleDepthBase = floor\(visibleDepth\)\.toVar\(\)/);
+  assert.match(materialBody, /const visibleDepthRemainder = visibleDepth\.sub\(visibleDepthBase\)\.toVar\(\)/);
   assert.match(materialBody, /const encodedNormalZ = clamp\(normalView\.z\.mul\(0\.5\)\.add\(0\.5\), 0\.0, 1\.0\)\.toVar\(\)/);
-  assert.match(materialBody, /vec4\(positionView\.z\.mul\(-1\), encodedNormalZ, 0, 1\)/);
+  assert.match(materialBody, /vec4\(visibleDepthBase, encodedNormalZ, visibleDepthRemainder, 1\)/);
+  assert.match(functionSource("createProjectedSurfaceMaterial"), /const visibleDepth = visibleSample\.r\.add\(visibleSample\.b\)\.toVar\(\)/);
+  assert.match(functionSource("createSurfaceMaterial"), /const visibleDepth = visibleSample\.r\.add\(visibleSample\.b\)\.toVar\(\)/);
 });
 
 test("TSL original-mesh UV raster evaluates normals in the editor camera view", () => {
@@ -1284,7 +1588,12 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.ok(
     newStrokeBody.indexOf("if (surfaceStrokeStyleChanged(cache, styleKey))")
       < newStrokeBody.indexOf("const explicitReset = candidate?.strokeReset === true"),
-    "brush style changes must reset before same-owner continuation"
+    "brush or Neighbor style changes must clear the accumulated stroke mask before duplicate checks"
+  );
+  assert.ok(
+    newStrokeBody.indexOf("const explicitReset = candidate?.strokeReset === true")
+      < newStrokeBody.indexOf("if (surfaceStrokeSegmentsAlreadyCovered(cache, segments))"),
+    "explicit stroke resets must win before duplicate same-stroke continuation"
   );
   assert.match(newStrokeBody, /const explicitReset = candidate\?\.strokeReset === true/);
   assert.ok(
@@ -1338,6 +1647,26 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.match(body, /const baseTexture = cache\.strokeBaseTexture \|\| sourceTexture/);
   assert.match(strokeBaseBody, /surfaceAirbrushCacheOwnsTexture\(cache, sourceTexture\)/);
   assert.doesNotMatch(body, /direct-paint-target/);
+});
+
+test("TSL surface airbrush stroke style key includes Neighbor eligibility state", () => {
+  const body = functionSource("surfaceStrokeStyleKey");
+  assert.match(body, /const neighborSeed = options\.neighborPaintSeed \|\| candidate\?\.options\?\.neighborPaintSeed \|\| null/);
+  assert.match(body, /const neighborKey = String\(/);
+  assert.match(body, /options\.neighborPaintKey/);
+  assert.match(body, /candidate\?\.options\?\.neighborPaintKey/);
+  assert.match(body, /neighborSeed\?\.key/);
+  assert.match(body, /const neighborEnabled = Boolean\(/);
+  assert.match(body, /neighborSeed\?\.enabled === true/);
+  assert.match(body, /options\.largeLiveNeighborPaint === true/);
+  assert.match(body, /candidate\?\.options\?\.largeLiveNeighborPaint === true/);
+  assert.match(body, /neighborEnabled \? "neighbor" : "no-neighbor"/);
+  assert.match(body, /neighborKey/);
+  assert.match(body, /"large-neighbor"/);
+  assert.match(body, /"component-gate"/);
+  assert.match(body, /const styleRadiusPixels = finiteNumber\(\s*options\.screenRadiusPixels/);
+  assert.match(body, /candidate\?\.options\?\.screenRadiusPixels/);
+  assert.match(body, /Math\.round\(styleRadiusPixels \* 100\)/);
 });
 
 test("TSL surface airbrush renders live segments instead of retaining a stale target", () => {

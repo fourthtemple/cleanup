@@ -41,7 +41,7 @@ function fakeCanvas(width = 2, height = 1) {
   return canvas;
 }
 
-test("background target stays on the base canvas and does not auto-create a layer", () => {
+test("airbrush target creates a paint layer instead of painting the background", () => {
   const editor = new TestEditor();
   const canvas = fakeCanvas();
   const texture = { needsUpdate: false };
@@ -62,9 +62,17 @@ test("background target stays on the base canvas and does not auto-create a laye
   assert.equal(editor.texturePaintHasActivePaintLayer(material), false);
 
   const target = editor.texturePaintEditableLayerTarget(material, editable);
-  assert.equal(target, editable);
-  assert.equal(stack.layers.length, 0);
-  assert.equal(editor.texturePaintHasActivePaintLayer(material), false);
+  assert.notEqual(target, editable);
+  assert.equal(target.layerMode, true);
+  assert.equal(target.layerStack, stack);
+  assert.equal(target.layer.name, "Paint 1");
+  assert.equal(target.canvas, target.layer.canvas);
+  assert.equal(target.compositeCanvas, canvas);
+  assert.equal(target.texture, texture);
+  assert.equal(stack.layers.length, 1);
+  assert.equal(stack.activeLayerId, target.layer.id);
+  assert.equal(editor.texturePaintActiveLayerSelectionTemplate?.id, target.layer.id);
+  assert.equal(editor.texturePaintBackgroundSelectionActive, false);
 });
 
 test("active paint layer is mirrored onto newly hit material stacks", () => {
@@ -150,7 +158,7 @@ test("selected third paint layer overrides stale active layers on hit materials"
   assert.equal(hitStack.activeLayerId, "paint-3");
 });
 
-test("background selection overrides stale active layers on hit materials", () => {
+test("airbrush background selection falls forward to the hit material paint layer", () => {
   const editor = new TestEditor();
   const activeMaterial = { userData: {} };
   const hitMaterial = { userData: {} };
@@ -183,9 +191,14 @@ test("background selection overrides stale active layers on hit materials", () =
 
   const target = editor.texturePaintEditableLayerTarget(hitMaterial, hitEditable);
 
-  assert.equal(target, hitEditable);
+  assert.notEqual(target, hitEditable);
+  assert.equal(target.layerMode, true);
+  assert.equal(target.layer.id, "paint-1");
+  assert.equal(target.layerStack, hitStack);
+  assert.equal(target.compositeCanvas, hitEditable.canvas);
   assert.equal(hitStack.layers.length, 1);
   assert.equal(hitStack.activeLayerId, "paint-1");
+  assert.equal(editor.texturePaintBackgroundSelectionActive, false);
 });
 
 test("background commits keep the layer stack base canvas current", () => {
@@ -611,6 +624,94 @@ test("hiding and showing cached top layer keeps the live underlay fast", () => {
   assert.equal(material.map, underlayTexture);
   assert.equal(liveState.layerOpacity, 1);
   assert.equal(liveState.shader.uniforms.texturePaintLiveLayerOpacity.value, 1);
+});
+
+test("hiding a TSL surface display layer drops the stale live display cache", () => {
+  const editor = new TestEditor();
+  const baseTexture = { uuid: "base-texture", needsUpdate: false };
+  const layerTexture = { uuid: "painted-layer-texture" };
+  const tslDisplayTexture = {
+    uuid: "tsl-display-texture",
+    userData: {
+      texturePaintTslSurfaceAirbrushDisplayTexture: true
+    }
+  };
+  const material = {
+    map: tslDisplayTexture,
+    needsUpdate: false,
+    userData: {
+      clonePaintTexture: baseTexture,
+      texturePaintLiveLayerShaderComposite: { shader: null }
+    }
+  };
+  const targetEntry = {
+    target: { texture: layerTexture },
+    displayTarget: { texture: tslDisplayTexture },
+    liveCompositeTarget: { texture: tslDisplayTexture },
+    liveCompositeBaseTexture: baseTexture,
+    liveCompositeLayerCount: 1,
+    liveCompositeLayerIndex: 0,
+    liveCompositeLayerOpacity: 1,
+    liveCompositeLayerBlendMode: "source-over",
+    liveCompositeUnderlayKey: "",
+    liveCompositeLayerMutationSerial: 0,
+    emptyTransparent: false,
+    paintRevision: 1
+  };
+  const layer = {
+    id: "paint-1",
+    name: "Paint 1",
+    visible: true,
+    opacity: 1,
+    canvas: fakeCanvas(),
+    context: fakeCanvas().getContext("2d"),
+    isEmpty: false,
+    gpuTarget: targetEntry
+  };
+  targetEntry.layer = layer;
+  targetEntry.liveCompositeLayer = layer;
+  material.userData.texturePaintLayerStack = {
+    baseCanvas: fakeCanvas(),
+    width: 2,
+    height: 1,
+    activeLayerId: layer.id,
+    selectedLayerIds: [layer.id],
+    selectionAnchorLayerId: layer.id,
+    layers: [layer]
+  };
+  editor.texturePaintActiveMaterial = material;
+  let disabledLiveComposite = 0;
+  let canceledDisplayComposite = 0;
+  editor.texturePaintDisableLiveLayerShaderComposite = (candidateMaterial) => {
+    assert.equal(candidateMaterial, material);
+    disabledLiveComposite += 1;
+    delete candidateMaterial.userData.texturePaintLiveLayerShaderComposite;
+    return true;
+  };
+  editor.cancelTexturePaintLayerDisplayComposite = (candidateMaterial) => {
+    assert.equal(candidateMaterial, material);
+    canceledDisplayComposite += 1;
+    return true;
+  };
+  editor.texturePaintCompositeMaterialLayerGpuTargets = () => {
+    throw new Error("TSL display hide should fall back to the CPU/base display instead of reusing stale live display");
+  };
+  editor.scheduleTexturePaintLayerDisplayComposite = () => {
+    throw new Error("TSL display hide should not defer a stale live display");
+  };
+  editor.renderTexturePaintLayerPanel = () => true;
+
+  assert.equal(editor.toggleTexturePaintLayerVisibility(layer.id), true);
+  assert.equal(layer.visible, false);
+  assert.equal(material.map, baseTexture);
+  assert.equal(material.needsUpdate, true);
+  assert.ok(disabledLiveComposite >= 1);
+  assert.equal(canceledDisplayComposite, 1);
+  assert.equal(targetEntry.liveCompositeTarget, undefined);
+  assert.equal(targetEntry.liveCompositeBaseTexture, undefined);
+  assert.equal(targetEntry.liveCompositeLayer, undefined);
+  assert.equal(targetEntry.liveCompositeLayerIndex, undefined);
+  assert.equal(targetEntry.liveCompositeLayerMutationSerial, undefined);
 });
 
 test("showing a painted layer queues exact display instead of accepting stale non-live composite", () => {

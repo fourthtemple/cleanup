@@ -119,8 +119,24 @@ function texturePaintCopyRenderTargetTextureSettings(targetTexture = null, sourc
   targetTexture.wrapS = sourceTexture.wrapS || THREE?.ClampToEdgeWrapping || targetTexture.wrapS;
   targetTexture.wrapT = sourceTexture.wrapT || THREE?.ClampToEdgeWrapping || targetTexture.wrapT;
   targetTexture.magFilter = sourceTexture.magFilter || THREE?.LinearFilter || targetTexture.magFilter;
-  targetTexture.minFilter = sourceTexture.minFilter || THREE?.LinearFilter || targetTexture.minFilter;
-  targetTexture.generateMipmaps = false;
+  const mipmapMinFilters = new Set([
+    THREE?.NearestMipmapNearestFilter,
+    THREE?.NearestMipmapLinearFilter,
+    THREE?.LinearMipmapNearestFilter,
+    THREE?.LinearMipmapLinearFilter
+  ].filter((value) => value != null));
+  const wantsMipmaps = sourceTexture.generateMipmaps === true || mipmapMinFilters.has(sourceTexture.minFilter);
+  targetTexture.minFilter = wantsMipmaps
+    ? mipmapMinFilters.has(sourceTexture.minFilter)
+      ? sourceTexture.minFilter
+      : THREE?.LinearMipmapLinearFilter || THREE?.LinearFilter || targetTexture.minFilter
+    : mipmapMinFilters.has(sourceTexture.minFilter)
+      ? THREE?.LinearFilter || targetTexture.minFilter
+      : sourceTexture.minFilter || THREE?.LinearFilter || targetTexture.minFilter;
+  targetTexture.generateMipmaps = wantsMipmaps;
+  if (Number.isFinite(Number(sourceTexture.anisotropy))) {
+    targetTexture.anisotropy = sourceTexture.anisotropy;
+  }
   return true;
 }
 
@@ -277,6 +293,15 @@ function texturePaintGpuTargetEffectivelyEmpty(targetEntry = null) {
     return false;
   }
   if (
+    layer?.isEmpty === true
+    && layer?.texturePaintGpuPainted !== true
+    && layer?.texturePaintHasPaint !== true
+  ) {
+    targetEntry.emptyTransparent = true;
+    targetEntry.texturePaintLayerHasPaint = false;
+    return true;
+  }
+  if (
     layer?.texturePaintGpuPainted === true
     || layer?.texturePaintHasPaint === true
     || targetEntry.texturePaintLayerHasPaint === true
@@ -300,10 +325,7 @@ function texturePaintActiveLayerMode(editor = null, material = null) {
   if (editor?.texturePaintLayerModeActive?.() !== true) {
     return false;
   }
-  if (typeof editor.texturePaintHasActivePaintLayer !== "function") {
-    return true;
-  }
-  return editor.texturePaintHasActivePaintLayer(material) === true;
+  return true;
 }
 
 function texturePaintLiveProjectionFrameNeedsVisibleRewarm(editor = null) {
@@ -2080,13 +2102,19 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
     },
 
     texturePaintUndoEntryKey(type, record, materialIndex, material, targetEntry = null, layerId = "") {
+      const targetLayerId = type === "gpu" && targetEntry?.layerMode === true
+        ? targetEntry?.layer?.id || layerId || ""
+        : layerId || "";
+      const targetKey = targetLayerId
+        ? ""
+        : targetEntry?.target?.uuid || targetEntry?.target?.texture?.uuid || "";
       return [
         type,
         this.paintRecords?.indexOf?.(record) ?? -1,
         materialIndex ?? 0,
         material?.uuid || material?.id || "material",
-        targetEntry?.target?.uuid || targetEntry?.target?.texture?.uuid || "",
-        layerId || ""
+        targetKey,
+        targetLayerId
       ].join(":");
     },
 
@@ -2464,6 +2492,24 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       };
     },
 
+    texturePaintTransparentImageDataForCanvasUndoBounds(canvas = null, bounds = null) {
+      if (!canvas?.width || !canvas.height) {
+        return null;
+      }
+      const normalized = this.texturePaintNormalizeCanvasUndoBounds?.(canvas, bounds);
+      const width = Math.max(1, Math.floor(Number(normalized?.width || canvas.width) || 1));
+      const height = Math.max(1, Math.floor(Number(normalized?.height || canvas.height) || 1));
+      const data = new Uint8ClampedArray(width * height * 4);
+      if (typeof ImageData !== "undefined") {
+        try {
+          return new ImageData(data, width, height);
+        } catch {
+          return { width, height, data };
+        }
+      }
+      return { width, height, data };
+    },
+
     captureTexturePaintCanvasUndoTarget(record, material, editable, materialIndex = 0, options = {}) {
       const stroke = this.texturePaintActiveStrokeUndo?.() || this.texturePaintStrokeUndo;
       const canvas = editable?.canvas;
@@ -2506,7 +2552,11 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             entry.bounds = this.texturePaintUnionCanvasUndoBounds?.(canvas, entry.bounds, bounds) || entry.bounds;
             entry.regions.push({
               bounds,
-              before: source ? null : this.texturePaintCanvasUndoRegionSnapshot?.(context, canvas, bounds, null),
+              before: source
+                ? null
+                : options.emptyBefore === true
+                  ? this.texturePaintTransparentImageDataForCanvasUndoBounds?.(canvas, bounds)
+                  : this.texturePaintCanvasUndoRegionSnapshot?.(context, canvas, bounds, null),
               after: null
             });
           }
@@ -2541,7 +2591,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             bounds: regionBounds,
             before: sourceBeforeImageData
               ? null
-              : this.texturePaintCanvasUndoRegionSnapshot?.(context, canvas, regionBounds, null),
+              : options.emptyBefore === true
+                ? this.texturePaintTransparentImageDataForCanvasUndoBounds?.(canvas, regionBounds)
+                : this.texturePaintCanvasUndoRegionSnapshot?.(context, canvas, regionBounds, null),
             after: null
           }))
         : null;
@@ -2549,7 +2601,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         ? null
         : regions?.length
           ? null
-        : this.texturePaintImageDataForCanvasUndoBounds?.(context, canvas, bounds);
+        : options.emptyBefore === true
+          ? this.texturePaintTransparentImageDataForCanvasUndoBounds?.(canvas, bounds)
+          : this.texturePaintImageDataForCanvasUndoBounds?.(context, canvas, bounds);
       const entry = {
         type: "canvas",
         key,
@@ -2574,6 +2628,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         layer: Boolean(entry.layer),
         bounds,
         regionCount: regions?.length || 0,
+        emptyBefore: options.emptyBefore === true,
         beforeSource: texturePaintDebugImageDataStats(sourceBeforeImageData),
         before: texturePaintDebugImageDataStats(beforeImageData)
       });
@@ -3488,6 +3543,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             this.disposeTexturePaintGpuPrewarmSnapshot?.(entry.targetEntry);
             if (entry.targetEntry.layer) {
               entry.targetEntry.layer.isEmpty = true;
+              entry.targetEntry.layer.texturePaintHasPaint = false;
+              entry.targetEntry.layer.texturePaintCpuPainted = false;
+              entry.targetEntry.layer.texturePaintGpuPainted = false;
               entry.targetEntry.layer.context?.clearRect?.(
                 0,
                 0,

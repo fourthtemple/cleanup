@@ -392,6 +392,8 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       const materialIndex = hit.face?.materialIndex ?? 0;
       const editable = this.editableClonePaintTexture?.(material) || null;
       const seedNormal = normalizedNormal(hit.face?.normal);
+      const componentState = this.textureAirbrushNeighborComponentState?.(record) || null;
+      const componentId = Math.floor(Number(componentState?.componentIds?.[seedVertexIndex]));
       const seed = {
         enabled: true,
         record,
@@ -402,7 +404,10 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         editable,
         seedVertexIndex,
         seedNormal,
-        component: this.textureAirbrushNeighborComponent?.(record, seedVertexIndex) || null
+        componentId: Number.isFinite(componentId) && componentId >= 0 ? componentId : -1,
+        component: Number.isFinite(componentId) && componentId >= 0
+          ? this.textureAirbrushNeighborComponentSet?.(record, componentId) || null
+          : this.textureAirbrushNeighborComponent?.(record, seedVertexIndex) || null
       };
       seed.key = this.textureAirbrushNeighborSeedKey?.(seed) || "";
       return seed;

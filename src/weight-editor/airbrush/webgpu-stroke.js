@@ -1523,6 +1523,22 @@ function neighborSeedAllowsHit(editor = null, seed = null, record = null, hit = 
     && neighborSeedAllowsTriangle(editor, seed, record, hit?.face || null);
 }
 
+function relaxNeighborComponentGate(options = {}) {
+  return options.relaxNeighborComponentGate === true
+    && options.liveProjectedPaint === true
+    && options.useTslSurfaceAirbrush !== false;
+}
+
+function neighborSeedAllowsStrokeHit(editor = null, seed = null, record = null, hit = null, material = null, materialIndex = null, options = {}) {
+  if (!seed?.enabled) {
+    return true;
+  }
+  if (relaxNeighborComponentGate(options)) {
+    return neighborSeedRecordMatches(editor, seed, record);
+  }
+  return neighborSeedAllowsHit(editor, seed, record, hit, material, materialIndex);
+}
+
 function textureAirbrushHitVertexIndices(record = null, hit = null) {
   const face = hit?.face || null;
   const faceVertices = [face?.a, face?.b, face?.c]
@@ -4302,13 +4318,7 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
   const baseEditable = resolvedEditable || editor?.editableClonePaintTexture?.(material);
   let editable = baseEditable;
   const layerModeRequested = options.layerMode === true
-    || (
-      editor?.texturePaintLayerModeActive?.() === true
-      && (
-        typeof editor.texturePaintHasActivePaintLayer !== "function"
-        || editor.texturePaintHasActivePaintLayer(material) === true
-      )
-    );
+    || editor?.texturePaintLayerModeActive?.() === true;
   if (!resolvedEditable && layerModeRequested && typeof editor?.texturePaintEditableLayerTarget === "function") {
     const layerEditable = editor.texturePaintEditableLayerTarget(material, baseEditable);
     if (layerEditable?.layerMode === true && layerEditable?.canvas && layerEditable?.context) {
@@ -4330,13 +4340,14 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
       ?? 0;
   const neighborPaintSeed = options.neighborPaintSeed || null;
   const neighborPaintKey = neighborSeedCacheKey(editor, neighborPaintSeed);
-  if (neighborSeedAllowsHit(
+  if (neighborSeedAllowsStrokeHit(
     editor,
     neighborPaintSeed,
     record,
     hit,
     material,
-    materialIndex
+    materialIndex,
+    options
   ) === false) {
     options.debugReject?.("neighbor-rejected", {
       ...hitDebug(record, hit),
@@ -4587,13 +4598,14 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     if (
 	      hitMatchesPaintTarget(editor, startHit, record, material, materialIndex, editable)
 	      && startHit?.hit?.uv
-      && neighborSeedAllowsHit(
+      && neighborSeedAllowsStrokeHit(
         editor,
         neighborPaintSeed,
         startHit.record,
         startHit.hit,
         startMaterial,
-        startMaterialIndex
+        startMaterialIndex,
+        options
       )
     ) {
       const startPixel = pixelFromUv(startHit.hit.uv, strokeReferenceUv);
@@ -4681,13 +4693,14 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
 	    if (!hitMatchesPaintTarget(editor, hitResult, record, material, materialIndex, editable)) {
 	      return null;
 	    }
-    if (!neighborSeedAllowsHit(
+    if (!neighborSeedAllowsStrokeHit(
       editor,
       neighborPaintSeed,
       hitResult.record,
       hitResult.hit,
       material,
-      materialIndex
+      materialIndex,
+      options
     )) {
       return null;
     }
@@ -5141,7 +5154,41 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     const normalDot = normalDotBetween(leftNormal, rightNormal);
     return normalDot === null || normalDot >= normalDotMin;
   };
+  const neighborSurfacePaintActive = options.neighborPaintSeed?.enabled === true
+    || Boolean(options.neighborPaintKey)
+    || options.largeLiveNeighborPaint === true;
+  const neighborComponentCanConstrainSurfaceField = Boolean(
+    options.neighborPaintSeed?.enabled === true
+    && options.neighborPaintSeed?.component?.size
+    && options.liveProjectedPaint === true
+    && options.useTslSurfaceAirbrush !== false
+    && preferTslFullSurfaceUvRaster
+  );
+  const neighborSeedComponentId = (() => {
+    if (!neighborComponentCanConstrainSurfaceField) {
+      return -1;
+    }
+    const componentId = Math.floor(Number(options.neighborPaintSeed?.componentId));
+    return Number.isFinite(componentId) && componentId >= 0 ? componentId : -1;
+  })();
+  const neighborSourceRasterComponentIds = neighborSeedComponentId >= 0
+    ? [neighborSeedComponentId]
+    : null;
+  const neighborComponentGateRelaxed = relaxNeighborComponentGate(options);
+  // Neighbor is the only mode that may use a connected-component write mask.
+  // Ordinary strokes must stay surface-continuous and must not inherit this
+  // gate, or they break into mesh-component-shaped holes.
+  const neighborComponentCanGateSurfacePermission = neighborComponentCanConstrainSurfaceField;
+  const componentIdsCanConstrainSurfaceField = neighborComponentCanConstrainSurfaceField;
+  const localComponentCanGateSurfacePermission = neighborComponentCanGateSurfacePermission;
+  const hardTextureComponentCanGateSurfacePermission = false;
+  const componentIdsCanGateSurfaceField = localComponentCanGateSurfacePermission;
+  const componentGateCanRelaxOnFrontmost = false;
+  const componentIdsSplitSurfaceSegments = componentIdsCanGateSurfaceField;
   const sameSurfaceComponent = (leftComponent = -1, rightComponent = -1) => {
+    if (!componentIdsSplitSurfaceSegments) {
+      return true;
+    }
     const left = Math.floor(Number(leftComponent));
     const right = Math.floor(Number(rightComponent));
     return !Number.isFinite(left) || left < 0 || !Number.isFinite(right) || right < 0 || left === right;
@@ -5204,7 +5251,8 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     for (const segment of surfaceProjectedStrokeSegments) {
       const segmentComponentStart = Math.floor(Number(segment?.componentStart));
       const segmentComponentEnd = Math.floor(Number(segment?.componentEnd));
-      const segmentCrossesComponents = Number.isFinite(segmentComponentStart)
+      const segmentCrossesComponents = componentIdsSplitSurfaceSegments
+        && Number.isFinite(segmentComponentStart)
         && segmentComponentStart >= 0
         && Number.isFinite(segmentComponentEnd)
         && segmentComponentEnd >= 0
@@ -5320,7 +5368,26 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
         segment?.componentEnd
       );
     }
-    const needsIndexedNormalAnchors = !anchors.length || !anchors.some((anchor) => anchor?.normal);
+    for (const sample of [strokeStartSample, currentSample]) {
+      const screenPoint = sample?.client
+        ? screenPointFromClientPoint(editor, sample.client)
+        : null;
+      rememberAnchor(
+        screenPoint,
+        sample?.view,
+        screenRadiusPixels,
+        null,
+        sample?.normal,
+        sample?.component
+      );
+    }
+    const shouldAddIndexedStrokeAnchors = options.liveProjectedPaint === true
+      && options.useTslSurfaceAirbrush !== false
+      && preferTslFullSurfaceUvRaster
+      && screenPaintStrokeSegments.length > 0;
+    const needsIndexedNormalAnchors = !anchors.length
+      || !anchors.some((anchor) => anchor?.normal)
+      || shouldAddIndexedStrokeAnchors;
     const canBuildIndexedNormalAnchors = Boolean(editor?.camera?.matrixWorldInverse);
     if (
       needsIndexedNormalAnchors
@@ -5351,15 +5418,18 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
         if (!screenPoint || !clientPoint || !pointEvent) {
           return;
         }
-        const indexed = screenIndexedHitResultForClientPoint(editor, pointEvent, event, {
+        let indexed = screenIndexedHitResultForClientPoint(editor, pointEvent, event, {
           ...options,
           screenHitRect: rect,
           liveProjectedPaint: true,
           visibleSurfaceMaskRequired: true,
           requireVisibilityMask: true,
           allowAnimationProgressMismatch: true,
-          raycastFallbackOnScreenMiss: false
+          raycastFallbackOnScreenMiss: true
         });
+        if (indexed === undefined && typeof editor.texturePaintHitForEvent === "function") {
+          indexed = editor.texturePaintHitForEvent(pointEvent, "airbrush");
+        }
         if (!indexed?.hit || !indexedAnchorRecordMatches(indexed)) {
           return;
         }
@@ -5404,14 +5474,51 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
       }
       return bestDistance <= maxScreenDistance ? best : null;
     };
-    return screenPaintStrokeSegments.map((segment) => {
+    const anchoredSegments = [];
+    const pushAnchoredPointSegment = (segment = null, point = null, anchor = null, radius = screenRadiusPixels, radiusWorld = 0) => {
+      const screenPoint = finitePoint(point);
+      if (
+        !screenPoint
+        || !Number.isFinite(anchor?.view?.x)
+        || !Number.isFinite(anchor?.view?.y)
+        || !Number.isFinite(anchor?.view?.z)
+      ) {
+        return;
+      }
+      if (anchoredSegments.length >= TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS) {
+        return;
+      }
+      const resolvedRadiusWorld = Math.max(
+        0.0001,
+        Number(radiusWorld) || 0,
+        Number(anchor?.radiusWorld) || 0,
+        viewRadiusForSample(anchor.view, radius) || 0
+      );
+      anchoredSegments.push({
+        ...segment,
+        start: { x: screenPoint.x, y: screenPoint.y },
+        end: { x: screenPoint.x, y: screenPoint.y },
+        radiusPixels: radius,
+        viewStart: anchor.view,
+        viewEnd: anchor.view,
+        viewRadiusPixels: resolvedRadiusWorld,
+        ...(Number.isFinite(Number(anchor.component)) && Number(anchor.component) >= 0
+          ? {
+              componentStart: Math.floor(Number(anchor.component)),
+              componentEnd: Math.floor(Number(anchor.component))
+            }
+          : {}),
+        ...(anchor.normal ? { viewNormalStart: anchor.normal, viewNormalEnd: anchor.normal } : {})
+      });
+    };
+    for (const segment of screenPaintStrokeSegments) {
       const startPoint = finitePoint(segment?.start);
       const endPoint = finitePoint(segment?.end);
       const radius = Math.max(0.75, Number(segment?.radiusPixels) || screenRadiusPixels);
       const startAnchor = nearestAnchor(startPoint, radius);
       const endAnchor = nearestAnchor(endPoint, radius);
       if (!startAnchor || !endAnchor) {
-        return null;
+        continue;
       }
       const viewStart = startAnchor.view;
       const viewEnd = endAnchor.view;
@@ -5423,9 +5530,17 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
         viewRadiusForSample(viewEnd, radius) || 0
       );
       if (!viewStart || !viewEnd) {
-        return null;
+        continue;
       }
-      const crossesComponents = !sameSurfaceComponent(startAnchor.component, endAnchor.component);
+      const screenGap = startPoint && endPoint ? pointDistance(startPoint, endPoint) : 0;
+      const viewGap = viewDistanceBetween(viewStart, viewEnd);
+      const degenerateViewSegment = screenGap > Math.max(2, radius * 0.08)
+        && (
+          !Number.isFinite(viewGap)
+          || viewGap <= Math.max(0.0001, radiusWorld * 0.015)
+        );
+      const crossesComponents = componentIdsSplitSurfaceSegments
+        && !sameSurfaceComponent(startAnchor.component, endAnchor.component);
       const remoteViewEnd = crossesComponents || !sameSurfaceEndpoint(
         viewStart,
         viewEnd,
@@ -5438,19 +5553,23 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
           normalDotMin: -0.12
         }
       );
-      const safeViewEnd = remoteViewEnd
-        ? viewStart
-        : viewEnd;
-      const safeEndNormal = remoteViewEnd
-        ? startAnchor.normal
-        : endAnchor.normal;
-      const safeEndComponent = remoteViewEnd
-        ? startAnchor.component
-        : endAnchor.component;
-      return {
+      if (remoteViewEnd) {
+        pushAnchoredPointSegment(segment, startPoint, startAnchor, radius, radiusWorld);
+        pushAnchoredPointSegment(segment, endPoint, endAnchor, radius, radiusWorld);
+        continue;
+      }
+      const useDirectionalViewSegment = !degenerateViewSegment;
+      const safeEndNormal = useDirectionalViewSegment
+        ? endAnchor.normal
+        : null;
+      const safeEndComponent = endAnchor.component;
+      if (anchoredSegments.length >= TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS) {
+        break;
+      }
+      anchoredSegments.push({
         ...segment,
         viewStart,
-        viewEnd: safeViewEnd,
+        viewEnd,
         viewRadiusPixels: radiusWorld,
         ...(Number.isFinite(Number(startAnchor.component)) && Number(startAnchor.component) >= 0
           ? { componentStart: Math.floor(Number(startAnchor.component)) }
@@ -5458,27 +5577,87 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
         ...(Number.isFinite(Number(safeEndComponent)) && Number(safeEndComponent) >= 0
           ? { componentEnd: Math.floor(Number(safeEndComponent)) }
           : {}),
-        ...(startAnchor.normal ? { viewNormalStart: startAnchor.normal } : {}),
+        ...(useDirectionalViewSegment && startAnchor.normal ? { viewNormalStart: startAnchor.normal } : {}),
         ...(safeEndNormal ? { viewNormalEnd: safeEndNormal } : {})
-      };
-    }).filter(Boolean);
+      });
+    }
+    return anchoredSegments;
   })();
+  const annotateSurfaceFieldComponents = (segments = []) => {
+    if (!componentIdsCanGateSurfaceField || !Array.isArray(segments) || !segments.length) {
+      return segments;
+    }
+    const fallbackComponent = Math.floor(Number(currentComponent));
+    const resolvedFallbackComponent = neighborSeedComponentId >= 0
+      ? neighborSeedComponentId
+      : fallbackComponent;
+    if (!Number.isFinite(resolvedFallbackComponent) || resolvedFallbackComponent < 0) {
+      return segments;
+    }
+    return segments.map((segment) => {
+      if (!segment) {
+        return segment;
+      }
+      const componentStart = Math.floor(Number(segment.componentStart));
+      const componentEnd = Math.floor(Number(segment.componentEnd));
+      const hasStart = Number.isFinite(componentStart) && componentStart >= 0;
+      const hasEnd = Number.isFinite(componentEnd) && componentEnd >= 0;
+      const gatedComponentStart = hasStart
+        ? componentStart
+        : resolvedFallbackComponent;
+      const gatedComponentEnd = hasEnd
+        ? componentEnd
+        : hasStart
+          ? componentStart
+          : resolvedFallbackComponent;
+      return {
+        ...segment,
+        componentStart: gatedComponentStart,
+        componentEnd: gatedComponentEnd
+      };
+    });
+  };
   // The visible projected brush field must follow the continuous pointer
   // polyline. Hit-resampled UV/surface pieces are allowed to seed visibility
   // and dispatch, but using them as the field makes strokes break at UV seams,
   // missed ray samples, and triangle boundaries.
-  const projectedFieldStrokeSegments = surfaceEnrichedScreenPaintStrokeSegments.length
-    ? surfaceEnrichedScreenPaintStrokeSegments
-    : projectedSurfaceBrushSegments.length
-    ? projectedSurfaceBrushSegments
-    : screenPaintStrokeSegments;
-  const usesScreenProjectedVisibility = options.useVisibilityTrianglePaintRegions === true
-    && options.liveProjectedPaint === true
-    && projectedFieldStrokeSegments.length
-    && (
-      preferTslFullSurfaceUvRaster
-      || visibilityTriangles.some((triangle) => triangle.screenA && triangle.screenB && triangle.screenC)
-    );
+	  const continuousNeighborScreenFieldSegments = preferTslFullSurfaceUvRaster
+	    && neighborSurfacePaintActive
+	    && screenPaintStrokeSegments.length
+	    ? screenPaintStrokeSegments.slice(0, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS)
+	    : [];
+	  const projectedFieldStrokeSegments = annotateSurfaceFieldComponents(continuousNeighborScreenFieldSegments.length
+	    ? continuousNeighborScreenFieldSegments
+	    : surfaceEnrichedScreenPaintStrokeSegments.length
+	    ? surfaceEnrichedScreenPaintStrokeSegments
+	    : projectedSurfaceBrushSegments.length
+	    ? projectedSurfaceBrushSegments
+	    : screenPaintStrokeSegments);
+	  const cameraFacingSurfaceFieldStrokeSegments = (() => {
+	    if (!projectedFieldStrokeSegments.length) {
+	      return [];
+	    }
+	    const visibleEdgeMode = String(options.visibleEdgeMode || "soft").toLowerCase();
+	    const rejectZ = visibleEdgeMode === "hard" ? 0 : -0.28;
+	    const normalZ = (normal = null) => (
+	      Number.isFinite(Number(normal?.z)) ? Number(normal.z) : null
+	    );
+	    return projectedFieldStrokeSegments.filter((segment) => {
+	      const startZ = normalZ(segment?.viewNormalStart);
+	      const endZ = normalZ(segment?.viewNormalEnd);
+	      if (startZ === null && endZ === null) {
+	        return true;
+	      }
+	      return Math.max(startZ ?? endZ, endZ ?? startZ) >= rejectZ;
+	    });
+	  })();
+	  const usesScreenProjectedVisibility = options.useVisibilityTrianglePaintRegions === true
+	    && options.liveProjectedPaint === true
+	    && cameraFacingSurfaceFieldStrokeSegments.length
+	    && (
+	      preferTslFullSurfaceUvRaster
+	      || visibilityTriangles.some((triangle) => triangle.screenA && triangle.screenB && triangle.screenC)
+	    );
   const preferTslSurfaceProjectedPrimary = options.useTslSurfaceAirbrush !== false
     && options.projectedPrimary === true
     && options.liveProjectedPaint === true
@@ -5492,11 +5671,11 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
         editor,
         record,
         hit,
-        editable,
-        hitUv,
-        projectedFieldStrokeSegments,
-        screenRadiusPixels,
-        {
+	        editable,
+	        hitUv,
+	        cameraFacingSurfaceFieldStrokeSegments,
+	        screenRadiusPixels,
+	        {
           materialIndex,
           material,
           neighborPaintSeed,
@@ -5536,12 +5715,12 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
         height: editable.canvas?.height || 1
       }, editable.canvas)
     : null;
-  const brushProjectedPaintRegions = usesScreenProjectedVisibility
-      ? (fullTextureProjectedPaintRegion
-        ? [fullTextureProjectedPaintRegion]
-        : screenProjectedBrushPaintRegions(projectedRegionTriangles, projectedFieldStrokeSegments, editable.canvas, {
-        radiusPixels: screenRadiusPixels,
-        scatter: Number.isFinite(Number(options.scatter))
+	  const brushProjectedPaintRegions = usesScreenProjectedVisibility
+	      ? (fullTextureProjectedPaintRegion
+	        ? [fullTextureProjectedPaintRegion]
+	        : screenProjectedBrushPaintRegions(projectedRegionTriangles, cameraFacingSurfaceFieldStrokeSegments, editable.canvas, {
+	        radiusPixels: screenRadiusPixels,
+	        scatter: Number.isFinite(Number(options.scatter))
           ? Math.max(0, Math.min(1, Number(options.scatter)))
           : editor?.textureAirbrushScatter?.() ?? 0.35,
         maxTextureRadiusPixels: projectedTextureRadiusLimit,
@@ -5632,9 +5811,13 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
       })
     : null;
   const exposeSurfaceComponentIds = Boolean(
-    options.neighborPaintSeed?.enabled === true
-    || options.neighborPaintKey
-    || options.largeLiveNeighborPaint === true
+    componentIdsCanGateSurfaceField
+    || neighborSurfacePaintActive
+    || (
+      options.useTslSurfaceAirbrush !== false
+      && options.liveProjectedPaint === true
+      && options.fullProjectedSurfaceRenderTriangles === true
+    )
   );
   const stripSurfaceComponents = (segments = []) => (
     exposeSurfaceComponentIds
@@ -5644,8 +5827,8 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
           return rest;
         })
   );
-  const outputStrokeSegments = stripSurfaceComponents(strokeSegments);
-  const outputProjectedFieldStrokeSegments = stripSurfaceComponents(projectedFieldStrokeSegments);
+	  const outputStrokeSegments = stripSurfaceComponents(strokeSegments);
+	  const outputProjectedFieldStrokeSegments = stripSurfaceComponents(cameraFacingSurfaceFieldStrokeSegments);
   const brushOptions = {
     ...brushOptionSource,
     layerMode: editable.layerMode === true,
@@ -5667,6 +5850,9 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     screenRadiusPixels,
     keepVisibilitySamplesWithTriangles: usesScreenProjectedVisibility,
     strokeSegments: outputStrokeSegments,
+    ...(componentIdsCanGateSurfaceField ? { hardTextureAirbrushComponentGate: true } : {}),
+    ...(componentGateCanRelaxOnFrontmost ? { relaxComponentGateOnFrontmost: true } : {}),
+    ...(neighborSourceRasterComponentIds ? { sourceRasterAllowedComponentIds: neighborSourceRasterComponentIds } : {}),
     ...(fullProjectedSurfacePaint ? { fullProjectedSurfaceRenderTriangles: true } : {}),
     ...(preferTslSurfaceProjectedPrimary && visibilityTriangles.length ? { projectedPrimary: true } : {}),
     ...(usesScreenProjectedVisibility

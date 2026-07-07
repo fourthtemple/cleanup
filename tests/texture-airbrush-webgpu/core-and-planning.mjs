@@ -610,14 +610,7 @@ test("airbrush WebGPU kernel source exposes a compute texture paint pass", () =>
 
 test("airbrush shared brush math drives JS and WebGPU kernel falloff", () => {
   const halo = airbrushHaloRadius(10, 0.5, 0.4);
-  assert.equal(
-    halo,
-    10 * (
-      1
-      + 0.5 * TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE
-      + 0.6 * TEXTURE_AIRBRUSH_SOFT_HALO_SCALE
-    )
-  );
+  assert.equal(halo, 10);
   assert.equal(airbrushAlphaForDistance(halo + 0.01, 10, 0.8, 0.5, 0.4), 0);
   assert.equal(TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD, 0.004);
   assert.equal(TEXTURE_AIRBRUSH_SOFT_HALO_SCALE, 0.85);
@@ -632,16 +625,19 @@ test("airbrush shared brush math drives JS and WebGPU kernel falloff", () => {
 
   const nominalEdgeNoScatter = airbrushAlphaForDistance(10, 10, 1, 0, 0.35);
   const nominalEdgeWithScatter = airbrushAlphaForDistance(10, 10, 1, 0.8, 0.35);
-  assert.ok(nominalEdgeNoScatter > 0.5);
-  assert.ok(nominalEdgeNoScatter < 1);
-  assert.ok(nominalEdgeWithScatter > nominalEdgeNoScatter);
-  assert.ok(nominalEdgeWithScatter < 1);
+  assert.equal(nominalEdgeNoScatter, 0);
+  assert.equal(nominalEdgeWithScatter, 0);
+  const midNoScatter = airbrushAlphaForDistance(7, 10, 1, 0, 0.35);
+  const midWithScatter = airbrushAlphaForDistance(7, 10, 1, 0.8, 0.35);
+  assert.ok(midWithScatter > 0);
+  assert.ok(midWithScatter < midNoScatter);
   assert.ok(airbrushAlphaForDistance(airbrushHaloRadius(10, 0, 0.35), 10, 1, 0, 0.35) < 0.001);
   assert.ok(airbrushAlphaForDistance(airbrushHaloRadius(10, 0, 0.08) + 0.01, 10, 1, 0, 0.08) === 0);
 
   const source = textureAirbrushWebGpuKernelSource();
-  assert.match(source, new RegExp(`scatter \\* ${TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE}`));
-  assert.match(source, new RegExp(`softness \\* ${TEXTURE_AIRBRUSH_SOFT_HALO_SCALE}`));
+  assert.match(source, /let haloRadius = radius/);
+  assert.doesNotMatch(source, new RegExp(`scatter \\* ${TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE}`));
+  assert.doesNotMatch(source, new RegExp(`softness \\* ${TEXTURE_AIRBRUSH_SOFT_HALO_SCALE}`));
   assert.match(source, new RegExp(`${TEXTURE_AIRBRUSH_CORE_MIN_SCALE} \\+ pow\\(hardness, ${TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER}\\) \\* ${TEXTURE_AIRBRUSH_CORE_HARDNESS_SCALE}`));
   assert.match(source, new RegExp(`${TEXTURE_AIRBRUSH_EDGE_EXPONENT_BASE} \\+ pow\\(hardness, ${TEXTURE_AIRBRUSH_EDGE_HARDNESS_POWER}\\) \\* ${TEXTURE_AIRBRUSH_EDGE_HARDNESS_SCALE} - scatter \\* ${TEXTURE_AIRBRUSH_EDGE_SCATTER_SCALE}`));
   assert.match(source, /let fadeRadius = max\(1\.0, haloRadius - coreRadius\)/);
@@ -860,8 +856,8 @@ test("airbrush WebGPU paint plan prepares descriptors for dispatch", () => {
     }
   });
 
-  assert.deepEqual(plan.paintBounds, { x: 0, y: 0, width: 17, height: 24 });
-  assert.deepEqual(plan.dispatch, { x: 3, y: 3, workgroupSize: 8 });
+  assert.deepEqual(plan.paintBounds, { x: 0, y: 0, width: 15, height: 16 });
+  assert.deepEqual(plan.dispatch, { x: 2, y: 2, workgroupSize: 8 });
   assert.equal(plan.textures.source.usage, 31);
   assert.equal(plan.textures.source.mipLevelCount, 6);
   assert.equal(plan.textures.output.usage, 31);
@@ -869,9 +865,9 @@ test("airbrush WebGPU paint plan prepares descriptors for dispatch", () => {
   assert.equal(plan.buffers.strokes.usage, 136);
   assert.equal(plan.buffers.readback.usage, 9);
   assert.equal(plan.buffers.readback.layout.bytesPerRow, 256);
-  assert.equal(plan.buffers.readback.size, 256 * 24);
-  assert.equal(plan.buffers.readback.layout.width, 17);
-  assert.equal(plan.buffers.readback.layout.height, 24);
+  assert.equal(plan.buffers.readback.size, 256 * 16);
+  assert.equal(plan.buffers.readback.layout.width, 15);
+  assert.equal(plan.buffers.readback.layout.height, 16);
   assert.equal(plan.buffers.uniform.data.byteLength, 128);
   assert.equal(plan.buffers.strokes.data.length, 24);
   assert.equal(plan.buffers.visibilitySamples.data.length, 48);
@@ -892,10 +888,10 @@ test("airbrush WebGPU paint plan prepares descriptors for dispatch", () => {
     radiusPixels: 4,
     scatter: 0
   }), {
-    x: 31,
-    y: 21,
-    width: 24,
-    height: 24
+    x: 34,
+    y: 24,
+    width: 18,
+    height: 18
   });
   assert.deepEqual(textureAirbrushWebGpuReadbackLayout(3, 2), {
     bytesPerRow: 256,
@@ -1145,14 +1141,14 @@ test("airbrush WebGPU dispatch helper allocates resources and submits compute wo
   });
 
   assert.equal(run.result.dispatch.x, 3);
-  assert.equal(run.result.dispatch.y, 5);
+  assert.equal(run.result.dispatch.y, 4);
   assert.equal(run.result.outputTexture, run.resources.outputTexture);
   assert.ok(device.calls.some((call) => call[0] === "createShaderModule" && call[2] === true));
   assert.ok(device.calls.some((call) => call[0] === "createComputePipeline" && call[1] === "textureAirbrushPaint"));
   assert.ok(device.calls.some((call) => call[0] === "writeBuffer" && call[4] === 128));
   assert.ok(device.calls.some((call) => call[0] === "writeTexture" && call[3] === payload.plan.width * 4));
   assert.ok(device.calls.some((call) => call[0] === "createBindGroup" && call[1] === "0,1,2,3,4,5,6,7"));
-  assert.ok(device.calls.some((call) => call[0] === "dispatchWorkgroups" && call[1] === 3 && call[2] === 5 && call[3] === 1));
+  assert.ok(device.calls.some((call) => call[0] === "dispatchWorkgroups" && call[1] === 3 && call[2] === 4 && call[3] === 1));
   assert.deepEqual(device.calls.at(-1), ["submit", 1]);
 });
 
@@ -1715,8 +1711,8 @@ test("airbrush WebGPU triangle visibility mask scales soft cutoff modestly for l
 
   assert.equal(candidate.options.visibilityMaskPixels, undefined);
   assert.equal(candidate.options.visibilityMaskTriangles.length, 1);
-  assert.equal(candidate.options.visibilityBleedRadius, 31.979200000000002);
-  assert.ok(candidate.options.visibilityFeatherRadius > 70);
+  assert.equal(candidate.options.visibilityBleedRadius, 17.82);
+  assert.ok(candidate.options.visibilityFeatherRadius > 60);
 });
 
 test("airbrush projection keeps only front-surface depth-window hits", () => {
@@ -2822,6 +2818,7 @@ test("airbrush WebGPU stroke planner keeps unwrapped UV samples as the paint pat
     }]);
     assert.equal(candidate.radiusPixels, 160);
     assert.equal(candidate.options.radiusPixels, 160);
+    assert.equal(candidate.options.hardTextureAirbrushComponentGate, undefined);
     assert.equal(candidate.options.screenProjectedStrokeSegments, undefined);
     assert.deepEqual(candidate.options.visibilityMaskTriangles[0].screenA, { x: 25, y: 75 });
     assert.deepEqual(candidate.options.visibilityMaskTriangles[0].screenB, { x: 75, y: 75 });
@@ -3214,7 +3211,7 @@ test("airbrush WebGPU screen-projected footprint regions include soft visibility
   assert.ok(soft[0].height - tight[0].height >= 44);
 });
 
-test("airbrush WebGPU screen-projected footprint regions pad large soft halos", () => {
+test("airbrush WebGPU screen-projected footprint regions keep bounded large-brush padding", () => {
   const canvas = { width: 4096, height: 4096 };
   const triangle = {
     a: { x: 512, y: 512 },
@@ -3253,10 +3250,10 @@ test("airbrush WebGPU screen-projected footprint regions pad large soft halos", 
 
   assert.equal(modest.length, 1);
   assert.equal(large.length, 1);
-  assert.ok(modest[0].x - large[0].x >= 24);
-  assert.ok(modest[0].y - large[0].y >= 24);
-  assert.ok(large[0].width - modest[0].width >= 48);
-  assert.ok(large[0].height - modest[0].height >= 48);
+  assert.ok(modest[0].x - large[0].x >= 16);
+  assert.ok(modest[0].y - large[0].y >= 16);
+  assert.ok(large[0].width - modest[0].width >= 32);
+  assert.ok(large[0].height - modest[0].height >= 32);
   assert.ok(largeArea < 4_100_000);
 });
 
@@ -3719,6 +3716,156 @@ test("airbrush WebGPU neighbor visibility stays inside the active component", ()
     b: { x: 100, y: 0 },
     c: { x: 0, y: 100 }
   });
+});
+
+test("airbrush WebGPU TSL Neighbor surface field does not gate front coverage by seed component", () => {
+  class Vector3 {
+    constructor(x = 0, y = 0, z = 0) {
+      this.x = x;
+      this.y = y;
+      this.z = z;
+    }
+
+    fromBufferAttribute(attribute, index) {
+      this.x = attribute.getX(index);
+      this.y = attribute.getY(index);
+      this.z = attribute.getZ(index);
+      return this;
+    }
+
+    project() {
+      return this;
+    }
+  }
+  const previousThree = globalThis.THREE;
+  globalThis.THREE = { Vector3 };
+  try {
+    const material = { uuid: "material-neighbor-tsl-component-gate" };
+    const { editable } = fakeEditableTexture(257, 257, new Uint8Array(257 * 257 * 4));
+    const positions = [
+      -0.3, -0.3, 0,
+       0.1, -0.3, 0,
+      -0.3,  0.1, 0,
+       0.5,  0.5, 0,
+       0.8,  0.5, 0,
+       0.5,  0.8, 0
+    ];
+    const uvs = [
+      0.10, 0.10,
+      0.35, 0.10,
+      0.10, 0.35,
+      0.62, 0.62,
+      0.88, 0.62,
+      0.62, 0.88
+    ];
+    const attribute = (values, itemSize) => ({
+      count: values.length / itemSize,
+      getX(index) {
+        return values[index * itemSize];
+      },
+      getY(index) {
+        return values[index * itemSize + 1];
+      },
+      getZ(index) {
+        return values[index * itemSize + 2];
+      }
+    });
+    const geometry = {
+      attributes: {
+        position: attribute(positions, 3),
+        uv: attribute(uvs, 2)
+      }
+    };
+    const record = {
+      id: "record-neighbor-tsl-component-gate",
+      geometry,
+      object: {
+        geometry,
+        localToWorld(point) {
+          return point;
+        }
+      }
+    };
+    const currentHit = {
+      object: record.object,
+      uv: { x: 0.18, y: 0.18 },
+      face: { a: 0, b: 1, c: 2, materialIndex: 0, normal: { z: 1 } },
+      faceIndex: 0
+    };
+    const editor = {
+      renderer: {
+        isWebGPURenderer: true,
+        backend: { isWebGPUBackend: true }
+      },
+      camera: {},
+      canvas: {
+        getBoundingClientRect() {
+          return { left: 0, top: 0, width: 100, height: 100 };
+        }
+      },
+      textureBrushRadiusValue: () => 0.2,
+      textureBrushRadiusScreenPixels: () => 34,
+      clonePaintMaterialForHit(hitRecord) {
+        return hitRecord === record ? material : null;
+      },
+      editableClonePaintTexture(candidateMaterial) {
+        return candidateMaterial === material ? editable : null;
+      },
+      clonePaintTextureUv(uv) {
+        return { x: uv.x, y: uv.y };
+      },
+      clonePaintPixelFromMappedTextureUv(mapped, canvas) {
+        return {
+          x: Math.round(mapped.x * (canvas.width - 1)),
+          y: Math.round(mapped.y * (canvas.height - 1))
+        };
+      },
+      clonePaintPixelFromUv(uv, canvas, texture, options) {
+        return this.clonePaintPixelFromMappedTextureUv(this.clonePaintTextureUv(uv), canvas, texture, options);
+      }
+    };
+    const neighborPaintSeed = {
+      enabled: true,
+      record,
+      material,
+      materialIndex: 0,
+      seedVertexIndex: 0,
+      componentId: 0,
+      component: new Set([0, 1, 2]),
+      key: "record-neighbor-tsl-component-gate:0:material:0"
+    };
+
+    const candidate = textureAirbrushWebGpuStrokeCandidateFromHit(editor, record, currentHit, {
+      clientX: 38,
+      clientY: 62
+    }, {
+      radiusPixels: 34,
+      textureRadiusPixels: 180,
+      liveProjectedPaint: true,
+      useTslSurfaceAirbrush: true,
+      useVisibilityTrianglePaintRegions: true,
+      fullProjectedSurfaceRenderTriangles: true,
+      requireVisibilityTriangles: true,
+      neighborPaintSeed,
+      strokeStart: { clientX: 32, clientY: 62 },
+      strokeSegments: [{
+        start: { clientX: 32, clientY: 62 },
+        end: { clientX: 44, clientY: 62 }
+      }]
+    });
+
+    assert.notEqual(candidate.options.hardTextureAirbrushComponentGate, true);
+    assert.notEqual(candidate.options.relaxComponentGateOnFrontmost, true);
+    assert.equal(candidate.options.fullProjectedSurfaceRenderTriangles, true);
+    assert.ok(candidate.options.screenProjectedStrokeSegments.length > 0);
+    const segmentComponents = candidate.options.screenProjectedStrokeSegments.map((segment) => [
+      segment.componentStart,
+      segment.componentEnd
+    ]);
+    assert.ok(segmentComponents.some(([start, end]) => start !== 0 || end !== 0));
+  } finally {
+    globalThis.THREE = previousThree;
+  }
 });
 
 test("airbrush WebGPU stroke planner does not authorize vertex-only UV neighbors", () => {
@@ -6259,4 +6406,130 @@ test("airbrush WebGPU Neighbor discovery includes under camera-facing intersecti
   assert.ok(candidates.every((candidateItem) => (
     candidateItem.options.visibilityMaskTriangles || []
   ).every((triangle) => (triangle.coverage ?? 1) > 0)));
+});
+
+test("airbrush WebGPU projected surface grouping discovers all visible material passes", () => {
+  class TestEditor {}
+  installTextureAirbrushWebGpuMethods(TestEditor);
+  const editor = new TestEditor();
+  const materialA = { uuid: "material-projected-surface-a", name: "A" };
+  const materialB = { uuid: "material-projected-surface-b", name: "B" };
+  const editableA = { texture: { uuid: "texture-a" }, canvas: { width: 64, height: 64 } };
+  const editableB = { texture: { uuid: "texture-b" }, canvas: { width: 64, height: 64 } };
+  const record = {
+    id: "record-projected-surface-materials",
+    object: { uuid: "object-projected-surface-materials", material: [materialA, materialB] },
+    geometry: {
+      attributes: {
+        position: { count: 6 },
+        uv: { count: 6 }
+      }
+    }
+  };
+  record.object.geometry = record.geometry;
+  const directHit = {
+    object: record.object,
+    uv: { x: 0.2, y: 0.4 },
+    face: { a: 0, b: 1, c: 2, materialIndex: 0 },
+    faceIndex: 0
+  };
+  const screenEntry = (materialIndex, faceIndex, offset = 0) => ({
+    record,
+    object: record.object,
+    face: { a: offset, b: offset + 1, c: offset + 2, materialIndex },
+    faceIndex,
+    uvs: [
+      { x: 0.2, y: 0.4 },
+      { x: 0.3, y: 0.4 },
+      { x: 0.2, y: 0.5 }
+    ],
+    screen: [
+      { x: 32 + offset, y: 48, z: 1 },
+      { x: 48 + offset, y: 48, z: 1 },
+      { x: 32 + offset, y: 64, z: 1 }
+    ]
+  });
+  let screenTriangleOptions = null;
+  const candidateCalls = [];
+
+  editor.model = { updateMatrixWorld() {} };
+  editor.canvas = {
+    getBoundingClientRect() {
+      return { left: 0, top: 0, width: 100, height: 100 };
+    }
+  };
+  editor.camera = {};
+  editor.pointer = { x: 0, y: 0 };
+  editor.raycaster = {
+    setFromCamera() {},
+    intersectObjects() {
+      return [];
+    }
+  };
+  editor.paintRecords = [record];
+  editor.texturePaintHitForEvent = () => ({ record, hit: directHit });
+  editor.clonePaintMaterialForHit = (candidateRecord, hit) => (
+    hit?.face?.materialIndex === 1 ? materialB : materialA
+  );
+  editor.editableClonePaintTexture = (material) => (
+    material === materialB ? editableB : material === materialA ? editableA : null
+  );
+  editor.textureAirbrushScreenTrianglesNearSegments = (segments, radiusPixels, options) => {
+    screenTriangleOptions = options;
+    return [screenEntry(0, 0, 0), screenEntry(1, 1, 3)];
+  };
+  editor.textureAirbrushWebGpuStrokeCandidateFromHit = (candidateRecord, hit, event, options = {}) => {
+    const material = Object.prototype.hasOwnProperty.call(options, "resolvedMaterial")
+      ? options.resolvedMaterial
+      : editor.clonePaintMaterialForHit(candidateRecord, hit);
+    const editable = Object.prototype.hasOwnProperty.call(options, "resolvedEditable")
+      ? options.resolvedEditable
+      : editor.editableClonePaintTexture(material);
+    const candidate = {
+      record: candidateRecord,
+      hit,
+      material,
+      editable,
+      materialIndex: options.resolvedMaterialIndex ?? hit?.face?.materialIndex ?? 0,
+      center: { x: event?.clientX ?? 0, y: event?.clientY ?? 0 },
+      radiusPixels: 12,
+      strokeSegments: options.strokeSegments || [],
+      options: {
+        ...options,
+        liveProjectedPaint: true
+      }
+    };
+    candidateCalls.push(candidate);
+    return candidate;
+  };
+
+  const candidates = editor.textureAirbrushWebGpuCandidatesFromEvent({
+    clientX: 60,
+    clientY: 50,
+    pointerType: "pen",
+    pressure: 1,
+    button: 0,
+    buttons: 1
+  }, {
+    liveProjectedPaint: true,
+    visibleSurfaceMaskRequired: true,
+    requireVisibilityMask: true,
+    directVisibilityOnly: false,
+    paintProjectedSurfaceCandidates: true,
+    projectedSurfaceScreenCandidateGroups: true,
+    radiusPixels: 20,
+    strokeStart: { clientX: 30, clientY: 50 },
+    strokeSegments: [{
+      start: { clientX: 30, clientY: 50 },
+      end: { clientX: 60, clientY: 50 }
+    }]
+  });
+
+  assert.ok(screenTriangleOptions);
+  assert.equal(screenTriangleOptions.materialIndex, undefined);
+  assert.equal(screenTriangleOptions.material, undefined);
+  assert.equal(screenTriangleOptions.editable, undefined);
+  assert.ok(candidateCalls.some((candidate) => candidate.material === materialA && candidate.editable === editableA));
+  assert.ok(candidateCalls.some((candidate) => candidate.material === materialB && candidate.editable === editableB));
+  assert.ok(candidates.some((candidate) => candidate.material === materialB && candidate.editable === editableB));
 });
