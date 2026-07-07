@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inflateSync } from "node:zlib";
 
@@ -617,6 +617,7 @@ async function captureValidationScreenshot(cdp) {
   if (!result?.data) {
     throw new Error("Validation screenshot capture returned no data.");
   }
+  await mkdir(dirname(args.screenshot), { recursive: true });
   await writeFile(args.screenshot, Buffer.from(result.data, "base64"));
 }
 
@@ -1416,6 +1417,8 @@ function runtimeVisualAirbrushMatrixProofChecks(result) {
     assetLoaded: result?.loaded === true,
     matrixLayerCreated: result?.sameLayer?.layerName === "Paint Matrix 1",
     secondLayerCreated: result?.twoLayer?.layerName === "Paint Matrix 2",
+    secondLayerBlendModeApplied: result?.twoLayer?.blendMode === "multiply"
+      && result?.twoLayer?.stroke?.stats?.tslSurfaceLayerBlendMode === "multiply",
     opacityLowPainted: Number(result?.opacity?.low?.coverage?.paintedSamples) >= 3,
     opacityHighPainted: Number(result?.opacity?.high?.coverage?.paintedSamples) >= 3,
     opacityVisiblyDifferent: opacityHighAlpha >= opacityLowAlpha + 32,
@@ -3689,6 +3692,10 @@ function runtimeVisualAirbrushMatrixProofExpression() {
     const beforeSecondLayer = layerStats(baseLayer);
     const secondLayer = await addLayerForMaterial(material, "Paint Matrix 2");
     const newLayer = secondLayer.layer || activeLayerForMaterial(material);
+    const secondLayerBlendSet = newLayer?.id
+      ? editor.setTexturePaintLayerBlendMode?.(newLayer.id, "multiply") === true
+      : false;
+    await waitFrame();
     setBrush({ color: "#3f7cff", radius: 0.21, opacity: 0.62, hardness: 0.16, scatter: 0.18, spacing: 0.1, visibleEdgeMode: "soft" });
     const twoLayerStrokeShape = makeStroke(torsoHit, -radius * 1.25, radius * 1.25, radius * 2.55);
     const twoLayerStroke = await paintStroke("matrix-two-layer", twoLayerStrokeShape, newLayer, material);
@@ -3760,6 +3767,8 @@ function runtimeVisualAirbrushMatrixProofExpression() {
       twoLayer: {
         layerAdded: secondLayer.added === true,
         layerName: newLayer?.name || "",
+        blendModeSet: secondLayerBlendSet,
+        blendMode: newLayer?.blendMode || "",
         stroke: twoLayerStroke,
         baseBeforeSecondLayer: beforeSecondLayer,
         baseAfterSecondLayer,

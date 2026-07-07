@@ -18,6 +18,24 @@ const MAX_TSL_SURFACE_SEGMENTS = Math.min(48, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMEN
 const MAX_TSL_SURFACE_STROKE_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
 const MAX_TSL_SURFACE_STROKE_MASK_SIZE = 4096;
 const MAX_TSL_SURFACE_LAYER_COMPOSITE_TARGETS = 4;
+const SURFACE_LAYER_BLEND_MODE_CODES = Object.freeze({
+  normal: 0,
+  multiply: 1,
+  screen: 2,
+  overlay: 3,
+  darken: 4,
+  lighten: 5,
+  "color-dodge": 6,
+  "color-burn": 7,
+  "hard-light": 8,
+  "soft-light": 9,
+  difference: 10,
+  exclusion: 11,
+  hue: 12,
+  saturation: 13,
+  color: 14,
+  luminosity: 15
+});
 const UV_GUTTER_PIXELS = 0;
 const UV_SEAM_BLEED_PIXELS = 8;
 const UV_OVERLAP_MASK_SIZE = 1024;
@@ -88,6 +106,11 @@ function finiteComponentId(value) {
 
 function clamp01(value) {
   return Math.max(0, Math.min(1, finiteNumber(value, 0)));
+}
+
+function surfaceLayerBlendModeCode(value) {
+  const key = String(value || "normal").toLowerCase();
+  return SURFACE_LAYER_BLEND_MODE_CODES[key] ?? SURFACE_LAYER_BLEND_MODE_CODES.normal;
 }
 
 function finitePoint(point = null) {
@@ -2621,6 +2644,7 @@ function surfaceLayerCompositeUnderlayTexture(
       layer.visible === false ? 0 : layer.opacity ?? 1,
       {
         alphaFallback: false,
+        blendMode: layer?.blendMode || "normal",
         avoidTextures: [
           ...(Array.isArray(options.avoidTextures) ? options.avoidTextures : []),
           underlayTexture,
@@ -4921,15 +4945,19 @@ function createLayerCompositeMaterial(baseTexture = null, layerTexture = null) {
   }
   const {
     Fn,
+    abs,
     clamp,
     float,
     max,
+    min,
     mix,
     positionLocal,
+    pow,
     texture,
     uniform,
     uv,
     vec2,
+    vec3,
     vec4
   } = tsl;
   const baseTextureNode = texture(baseTexture);
@@ -4937,10 +4965,76 @@ function createLayerCompositeMaterial(baseTexture = null, layerTexture = null) {
   const opacity = uniform(1, "float");
   const alphaScale = uniform(1, "float");
   const alphaFallback = uniform(0, "float");
+  const blendMode = uniform(0, "float");
   const baseFlipY = uniform(0, "float");
   const layerFlipY = uniform(0, "float");
   const vertexNode = Fn(() => vec4(positionLocal.x, positionLocal.y, 0, 1))();
   const fragmentNode = Fn(() => {
+    const modeEnabled = (code) => blendMode
+      .greaterThan(code - 0.5)
+      .and(blendMode.lessThan(code + 0.5));
+    const lum = (color) => color.r.mul(0.3)
+      .add(color.g.mul(0.59))
+      .add(color.b.mul(0.11));
+    const sat = (color) => max(max(color.r, color.g), color.b)
+      .sub(min(min(color.r, color.g), color.b));
+    const clipColor = (color) => {
+      const clipped = color.toVar();
+      const colorLum = lum(clipped).toVar();
+      const colorMin = min(min(clipped.r, clipped.g), clipped.b).toVar();
+      const colorMax = max(max(clipped.r, clipped.g), clipped.b).toVar();
+      const lowScale = colorLum.div(max(colorLum.sub(colorMin), 0.0001)).toVar();
+      const lowColor = vec3(colorLum, colorLum, colorLum)
+        .add(clipped.sub(vec3(colorLum, colorLum, colorLum)).mul(lowScale))
+        .toVar();
+      clipped.assign(colorMin.lessThan(0.0).select(lowColor, clipped));
+      const highScale = float(1).sub(colorLum).div(max(colorMax.sub(colorLum), 0.0001)).toVar();
+      const highColor = vec3(colorLum, colorLum, colorLum)
+        .add(clipped.sub(vec3(colorLum, colorLum, colorLum)).mul(highScale))
+        .toVar();
+      clipped.assign(colorMax.greaterThan(1.0).select(highColor, clipped));
+      return clamp(clipped, 0.0, 1.0);
+    };
+    const setLum = (color, targetLum) => {
+      const colorLum = lum(color).toVar();
+      const delta = targetLum.sub(colorLum).toVar();
+      return clipColor(color.add(vec3(delta, delta, delta)));
+    };
+    const setSat = (color, targetSat) => {
+      const colorLum = lum(color).toVar();
+      const colorSat = max(sat(color), 0.0001).toVar();
+      const scaled = vec3(colorLum, colorLum, colorLum)
+        .add(color.sub(vec3(colorLum, colorLum, colorLum)).mul(targetSat.div(colorSat)))
+        .toVar();
+      return clipColor(scaled);
+    };
+    const overlayChannel = (baseChannel, layerChannel) => baseChannel.lessThanEqual(0.5)
+      .select(
+        baseChannel.mul(layerChannel).mul(2),
+        float(1).sub(float(2).mul(float(1).sub(baseChannel)).mul(float(1).sub(layerChannel)))
+      );
+    const hardLightChannel = (baseChannel, layerChannel) => layerChannel.lessThanEqual(0.5)
+      .select(
+        baseChannel.mul(layerChannel).mul(2),
+        float(1).sub(float(2).mul(float(1).sub(baseChannel)).mul(float(1).sub(layerChannel)))
+      );
+    const colorDodgeChannel = (baseChannel, layerChannel) => layerChannel.greaterThanEqual(0.9999)
+      .select(float(1), min(1.0, baseChannel.div(max(float(1).sub(layerChannel), 0.0001))));
+    const colorBurnChannel = (baseChannel, layerChannel) => layerChannel.lessThanEqual(0.0001)
+      .select(float(0), float(1).sub(min(1.0, float(1).sub(baseChannel).div(max(layerChannel, 0.0001)))));
+    const softLightChannel = (baseChannel, layerChannel) => {
+      const softD = baseChannel.lessThanEqual(0.25)
+        .select(
+          baseChannel.mul(16).sub(12).mul(baseChannel).add(4).mul(baseChannel),
+          pow(baseChannel, 0.5)
+        )
+        .toVar();
+      return layerChannel.lessThanEqual(0.5)
+        .select(
+          baseChannel.sub(float(1).sub(layerChannel.mul(2)).mul(baseChannel).mul(float(1).sub(baseChannel))),
+          baseChannel.add(layerChannel.mul(2).sub(1).mul(softD.sub(baseChannel)))
+        );
+    };
     const currentUv = uv().toVar();
     const baseUv = vec2(
       currentUv.x,
@@ -4965,9 +5059,74 @@ function createLayerCompositeMaterial(baseTexture = null, layerTexture = null) {
     const layerRgb = sourceAlpha.greaterThan(0.0001)
       .select(clamp(layer.rgb.div(max(sourceAlpha, 0.0001)), 0.0, 1.0), layer.rgb)
       .toVar();
-    const compositedRgb = mix(base.rgb, layerRgb, alpha).toVar();
-    const compositedAlpha = clamp(alpha.add(base.a.mul(float(1).sub(alpha))), 0.0, 1.0).toVar();
-    return vec4(compositedRgb, compositedAlpha);
+    const baseAlpha = clamp(base.a, 0.0, 1.0).toVar();
+    const baseRgb = clamp(base.rgb, 0.0, 1.0).toVar();
+    const multiplyBlend = baseRgb.mul(layerRgb).toVar();
+    const screenBlend = float(1).sub(float(1).sub(baseRgb).mul(float(1).sub(layerRgb))).toVar();
+    const overlayBlend = vec3(
+      overlayChannel(baseRgb.r, layerRgb.r),
+      overlayChannel(baseRgb.g, layerRgb.g),
+      overlayChannel(baseRgb.b, layerRgb.b)
+    ).toVar();
+    const darkenBlend = min(baseRgb, layerRgb).toVar();
+    const lightenBlend = max(baseRgb, layerRgb).toVar();
+    const colorDodgeBlend = vec3(
+      colorDodgeChannel(baseRgb.r, layerRgb.r),
+      colorDodgeChannel(baseRgb.g, layerRgb.g),
+      colorDodgeChannel(baseRgb.b, layerRgb.b)
+    ).toVar();
+    const colorBurnBlend = vec3(
+      colorBurnChannel(baseRgb.r, layerRgb.r),
+      colorBurnChannel(baseRgb.g, layerRgb.g),
+      colorBurnChannel(baseRgb.b, layerRgb.b)
+    ).toVar();
+    const hardLightBlend = vec3(
+      hardLightChannel(baseRgb.r, layerRgb.r),
+      hardLightChannel(baseRgb.g, layerRgb.g),
+      hardLightChannel(baseRgb.b, layerRgb.b)
+    ).toVar();
+    const softLightBlend = vec3(
+      softLightChannel(baseRgb.r, layerRgb.r),
+      softLightChannel(baseRgb.g, layerRgb.g),
+      softLightChannel(baseRgb.b, layerRgb.b)
+    ).toVar();
+    const differenceBlend = abs(baseRgb.sub(layerRgb)).toVar();
+    const exclusionBlend = baseRgb.add(layerRgb).sub(baseRgb.mul(layerRgb).mul(2)).toVar();
+    const baseLum = lum(baseRgb).toVar();
+    const layerLum = lum(layerRgb).toVar();
+    const baseSat = sat(baseRgb).toVar();
+    const layerSat = sat(layerRgb).toVar();
+    const hueBlend = setLum(setSat(layerRgb, baseSat), baseLum).toVar();
+    const saturationBlend = setLum(setSat(baseRgb, layerSat), baseLum).toVar();
+    const colorBlend = setLum(layerRgb, baseLum).toVar();
+    const luminosityBlend = setLum(baseRgb, layerLum).toVar();
+    const blendedRgb = layerRgb.toVar();
+    blendedRgb.assign(modeEnabled(1).select(multiplyBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(2).select(screenBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(3).select(overlayBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(4).select(darkenBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(5).select(lightenBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(6).select(colorDodgeBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(7).select(colorBurnBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(8).select(hardLightBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(9).select(softLightBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(10).select(differenceBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(11).select(exclusionBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(12).select(hueBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(13).select(saturationBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(14).select(colorBlend, blendedRgb));
+    blendedRgb.assign(modeEnabled(15).select(luminosityBlend, blendedRgb));
+    const oneMinusAlpha = float(1).sub(alpha).toVar();
+    const oneMinusBaseAlpha = float(1).sub(baseAlpha).toVar();
+    const compositedAlpha = clamp(alpha.add(baseAlpha.mul(oneMinusAlpha)), 0.0, 1.0).toVar();
+    const compositedPremul = baseRgb.mul(baseAlpha).mul(oneMinusAlpha)
+      .add(layerRgb.mul(alpha).mul(oneMinusBaseAlpha))
+      .add(blendedRgb.mul(alpha).mul(baseAlpha))
+      .toVar();
+    const compositedRgb = compositedAlpha.greaterThan(0.0001)
+      .select(compositedPremul.div(max(compositedAlpha, 0.0001)), blendedRgb)
+      .toVar();
+    return vec4(clamp(compositedRgb, 0.0, 1.0), compositedAlpha);
   })();
   const material = new THREE.MeshBasicNodeMaterial({
     transparent: false,
@@ -4985,6 +5144,7 @@ function createLayerCompositeMaterial(baseTexture = null, layerTexture = null) {
     opacity,
     alphaScale,
     alphaFallback,
+    blendMode,
     baseFlipY,
     layerFlipY
   };
@@ -5017,6 +5177,9 @@ function updateLayerCompositeMaterial(
   }
   if (state.alphaFallback) {
     state.alphaFallback.value = options.alphaFallback === true ? 1 : 0;
+  }
+  if (state.blendMode) {
+    state.blendMode.value = surfaceLayerBlendModeCode(options.blendMode);
   }
   if (state.baseFlipY) {
     state.baseFlipY.value = (
@@ -8308,6 +8471,7 @@ function exposeSurfaceRunDebug(stats = null) {
     layerMode: stats.tslSurfaceLayerMode === true,
     layerName: stats.tslSurfaceLayerName || "",
     layerOpacity: stats.tslSurfaceLayerOpacity ?? null,
+    layerBlendMode: stats.tslSurfaceLayerBlendMode || "normal",
     layerSourceEmpty: stats.tslSurfaceLayerSourceEmpty === true,
     layerSourceEmptyAtRunStart: stats.tslSurfaceLayerSourceEmptyAtRunStart === true,
     continuedEmptyLayerStroke: stats.tslSurfaceContinuedEmptyLayerStroke === true,
@@ -8808,18 +8972,20 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
 	            avoidTextures: surfaceLayerCompositeAvoidTextures(material, editable)
 	          }
 	        );
-	        const layerDisplay = renderSurfaceLayerComposite(
-	          renderer,
-	          cache,
-		          prewarmLayerDisplayBaseTexture || layerBaseTexture || coordinateReferenceTexture || referenceTexture,
-		          prewarmLayerTarget.texture,
-		          prewarmLayerDisplayBaseTexture || layerBaseTexture || coordinateReferenceTexture || referenceTexture,
-		          width,
-		          height,
-	          editable.layer?.opacity ?? 1,
-	          {
-	            avoidTextures: surfaceLayerCompositeAvoidTextures(material, editable)
-	          }
+        const layerDisplay = renderSurfaceLayerComposite(
+          renderer,
+          cache,
+          prewarmLayerDisplayBaseTexture || layerBaseTexture || coordinateReferenceTexture || referenceTexture,
+          prewarmLayerTarget.texture,
+          prewarmLayerDisplayBaseTexture || layerBaseTexture || coordinateReferenceTexture || referenceTexture,
+          width,
+          height,
+          editable.layer?.opacity ?? 1,
+          {
+            alphaFallback: false,
+            blendMode: editable.layer?.blendMode || "normal",
+            avoidTextures: surfaceLayerCompositeAvoidTextures(material, editable)
+          }
         );
         schedulePrewarmCompilePass(
           cache.layerCompositeScene,
@@ -9748,7 +9914,10 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       width,
       height,
       editable.layer?.opacity ?? 1,
-      { alphaFallback: false }
+      {
+        alphaFallback: false,
+        blendMode: editable.layer?.blendMode || "normal"
+      }
     );
     if (layerDisplayTarget?.texture) {
       layerDisplayMode = "texture-composite";
@@ -9763,7 +9932,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
         layerTargetEntry.liveCompositeLayerIndex = surfaceLayerIndex(stack, activeLayer);
         layerTargetEntry.liveCompositeLayerCount = stack?.layers?.length || 0;
         layerTargetEntry.liveCompositeLayerOpacity = activeLayer?.opacity ?? 1;
-        layerTargetEntry.liveCompositeLayerBlendMode = activeLayer?.blendMode || "source-over";
+        layerTargetEntry.liveCompositeLayerBlendMode = activeLayer?.blendMode || "normal";
         layerTargetEntry.liveCompositeLayerMutationSerial = surfaceLayerMutationSerial(editor);
         layerTargetEntry.liveCompositeUnderlayKey = surfaceLayerLiveUnderlayKey(editor, layerTargetEntry);
       }
@@ -9929,6 +10098,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     tslSurfaceLayerMode: Boolean(layerMode),
     tslSurfaceLayerName: String(editable?.layer?.name || ""),
     tslSurfaceLayerOpacity: editable?.layer?.opacity ?? null,
+    tslSurfaceLayerBlendMode: editable?.layer?.blendMode || "normal",
     tslSurfaceLayerSourceEmpty: emptyLayerSourceTexture,
     tslSurfaceLayerSourceEmptyAtRunStart: layerSourceEmpty,
     tslSurfaceContinuedEmptyLayerStroke: continuedEmptyLayerStroke,
