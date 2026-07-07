@@ -1048,6 +1048,78 @@ test("selecting a paint layer bakes pending background paint before returning", 
   assert.equal(material.userData.texturePaintLayerStack.activeLayerId, layer.id);
 });
 
+test("live layer underlay key tracks lower GPU layer state", () => {
+  const editor = new TestEditor();
+  editor.texturePaintLayerMutationSerial = 4;
+  const lowerCanvas = fakeCanvas();
+  const upperCanvas = fakeCanvas();
+  const lowerLayer = {
+    id: "paint-1",
+    name: "Paint 1",
+    visible: true,
+    opacity: 1,
+    blendMode: "normal",
+    canvas: lowerCanvas,
+    context: lowerCanvas.getContext("2d"),
+    isEmpty: false,
+    texturePaintGpuPainted: true,
+    texturePaintHasPaint: true,
+    gpuTarget: {
+      target: { texture: { uuid: "lower-a" } },
+      paintRevision: 1,
+      emptyTransparent: false,
+      texturePaintLayerHasPaint: true
+    }
+  };
+  const upperTarget = {
+    target: { texture: { uuid: "upper" } },
+    paintRevision: 10,
+    emptyTransparent: false,
+    texturePaintLayerHasPaint: true
+  };
+  const upperLayer = {
+    id: "paint-2",
+    name: "Paint 2",
+    visible: true,
+    opacity: 1,
+    blendMode: "normal",
+    canvas: upperCanvas,
+    context: upperCanvas.getContext("2d"),
+    isEmpty: false,
+    texturePaintGpuPainted: true,
+    texturePaintHasPaint: true,
+    gpuTarget: upperTarget
+  };
+  const stack = {
+    baseCanvas: fakeCanvas(),
+    width: 2,
+    height: 1,
+    activeLayerId: upperLayer.id,
+    selectedLayerIds: [upperLayer.id],
+    selectionAnchorLayerId: upperLayer.id,
+    layers: [lowerLayer, upperLayer]
+  };
+  lowerLayer.gpuTarget.layer = lowerLayer;
+  lowerLayer.gpuTarget.layerStack = stack;
+  upperTarget.layer = upperLayer;
+  upperTarget.layerStack = stack;
+
+  const baseKey = editor.texturePaintLiveLayerUnderlayKey(upperTarget);
+  upperTarget.paintRevision += 1;
+  assert.equal(editor.texturePaintLiveLayerUnderlayKey(upperTarget), baseKey);
+
+  lowerLayer.gpuTarget.paintRevision += 1;
+  const revisionKey = editor.texturePaintLiveLayerUnderlayKey(upperTarget);
+  assert.notEqual(revisionKey, baseKey);
+
+  lowerLayer.opacity = 0.5;
+  const opacityKey = editor.texturePaintLiveLayerUnderlayKey(upperTarget);
+  assert.notEqual(opacityKey, revisionKey);
+
+  lowerLayer.gpuTarget.target.texture = { uuid: "lower-b" };
+  assert.notEqual(editor.texturePaintLiveLayerUnderlayKey(upperTarget), opacityKey);
+});
+
 test("layer display changes can defer active layer prewarm off the input event", async () => {
   const editor = new TestEditor();
   const material = { userData: { texturePaintLayerStack: { layers: [] } } };

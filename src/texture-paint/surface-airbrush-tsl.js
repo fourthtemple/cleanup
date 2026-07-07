@@ -2461,16 +2461,68 @@ function surfaceLayerCompositeIsBelowActive(entry = null, editable = null) {
   return entryIndex >= 0 && activeIndex >= 0 && entryIndex < activeIndex;
 }
 
+function surfaceLayerFallbackUnderlayKey(editor = null, targetEntry = null) {
+  const stack = targetEntry?.layerStack || null;
+  const activeLayer = targetEntry?.layer || null;
+  const layers = Array.isArray(stack?.layers) ? stack.layers : [];
+  const activeIndex = activeLayer ? layers.indexOf(activeLayer) : -1;
+  if (activeIndex < 0) {
+    return "";
+  }
+  const parts = [
+    `serial:${surfaceLayerMutationSerial(editor)}`,
+    `active:${activeLayer.id || activeIndex}`,
+    `index:${activeIndex}`,
+    `count:${layers.length}`
+  ];
+  for (let index = 0; index < activeIndex; index += 1) {
+    const layer = layers[index] || null;
+    const gpuTarget = layer?.gpuTarget || null;
+    const texture = gpuTarget?.target?.texture || null;
+    parts.push([
+      index,
+      layer?.id || "",
+      layer?.visible === false ? 0 : 1,
+      clamp01(layer?.opacity, 1),
+      layer?.blendMode || "normal",
+      surfaceLayerGpuTargetHasPaint(layer) ? 1 : 0,
+      layer?.isEmpty === true ? 1 : 0,
+      Math.max(0, Math.floor(Number(gpuTarget?.paintRevision) || 0)),
+      gpuTarget?.emptyTransparent === true ? 1 : 0,
+      gpuTarget?.texturePaintLayerHasPaint === true ? 1 : 0,
+      texture?.uuid || texture?.id || texture?.name || "",
+      layer?.canvas?.width || 0,
+      layer?.canvas?.height || 0,
+      layer?.texturePaintCpuPainted === true ? 1 : 0,
+      layer?.texturePaintGpuPainted === true ? 1 : 0,
+      layer?.texturePaintHasPaint === true ? 1 : 0
+    ].join(":"));
+  }
+  return parts.join("|");
+}
+
+function surfaceLayerLiveUnderlayKey(editor = null, targetEntry = null) {
+  if (!targetEntry) {
+    return "";
+  }
+  const editorKey = typeof editor?.texturePaintLiveLayerUnderlayKey === "function"
+    ? editor.texturePaintLiveLayerUnderlayKey(targetEntry)
+    : "";
+  return editorKey || surfaceLayerFallbackUnderlayKey(editor, targetEntry);
+}
+
 function surfaceLayerStoredUnderlayTexture(editor = null, editable = null) {
   const layer = editable?.layer || null;
   const targetEntry = layer?.gpuTarget || null;
   const stack = editable?.layerStack || targetEntry?.layerStack || null;
+  const expectedUnderlayKey = surfaceLayerLiveUnderlayKey(editor, targetEntry);
   if (
     !targetEntry?.liveCompositeBaseTexture
     || targetEntry.liveCompositeLayer !== layer
     || targetEntry.liveCompositeLayerIndex !== surfaceLayerIndex(stack, layer)
     || targetEntry.liveCompositeLayerCount !== (stack?.layers?.length || 0)
     || targetEntry.liveCompositeLayerMutationSerial !== surfaceLayerMutationSerial(editor)
+    || (expectedUnderlayKey && (targetEntry.liveCompositeUnderlayKey || "") !== expectedUnderlayKey)
   ) {
     return null;
   }
@@ -2481,7 +2533,111 @@ function surfaceLayerStoredUnderlayTexture(editor = null, editable = null) {
   );
 }
 
-function surfaceLayerDisplayUnderlayTexture(editor = null, material = null, editable = null, originalMap = null, fallbackTexture = null) {
+function surfaceLayerPaintLayerVisible(layer = null) {
+  if (!layer || layer.visible === false || clamp01(layer.opacity, 1) <= 0) {
+    return false;
+  }
+  if (surfaceLayerGpuTargetHasPaint(layer)) {
+    return true;
+  }
+  if (
+    layer.texturePaintCpuPainted === true
+    || layer.texturePaintHasPaint === true
+    || layer.isEmpty === false
+  ) {
+    return !surfaceLayerCanvasIsEmpty(layer);
+  }
+  return false;
+}
+
+function surfaceLayerCanvasTextureForLayer(layer = null, referenceTexture = null) {
+  if (!layer?.canvas || typeof THREE.CanvasTexture !== "function") {
+    return null;
+  }
+  if (!layer.gpuLayerTexture) {
+    layer.gpuLayerTexture = new THREE.CanvasTexture(layer.canvas);
+    layer.gpuLayerTexture.name = `${layer.name || "Paint layer"} source`;
+  }
+  const texture = layer.gpuLayerTexture || null;
+  if (!texture) {
+    return null;
+  }
+  copyTextureSettings(texture, referenceTexture || texture);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+function surfaceLayerPaintLayerTexture(layer = null, referenceTexture = null) {
+  if (!surfaceLayerPaintLayerVisible(layer)) {
+    return null;
+  }
+  if (layer.gpuTarget?.target?.texture && surfaceLayerGpuTargetHasPaint(layer)) {
+    return layer.gpuTarget.target.texture;
+  }
+  return surfaceLayerCanvasTextureForLayer(layer, referenceTexture);
+}
+
+function surfaceLayerCompositeUnderlayTexture(
+  editor = null,
+  renderer = null,
+  cache = null,
+  material = null,
+  editable = null,
+  originalMap = null,
+  fallbackTexture = null,
+  width = 1,
+  height = 1,
+  options = {}
+) {
+  const stack = editable?.layerStack || material?.userData?.texturePaintLayerStack || null;
+  const activeLayer = editable?.layer || null;
+  const activeIndex = surfaceLayerIndex(stack, activeLayer);
+  const baseTexture = surfaceLayerBaseTexture(editor, material, editable, originalMap)
+    || fallbackTexture
+    || null;
+  if (!baseTexture || activeIndex <= 0) {
+    return baseTexture;
+  }
+  if (!renderer || !cache) {
+    return null;
+  }
+  const referenceTexture = options.referenceTexture || fallbackTexture || baseTexture;
+  let underlayTexture = baseTexture;
+  let compositedLowerLayerCount = 0;
+  for (let index = 0; index < activeIndex; index += 1) {
+    const layer = stack.layers[index] || null;
+    const layerTexture = surfaceLayerPaintLayerTexture(layer, referenceTexture || underlayTexture);
+    if (!layerTexture) {
+      continue;
+    }
+    const underlayTarget = renderSurfaceLayerComposite(
+      renderer,
+      cache,
+      underlayTexture,
+      layerTexture,
+      referenceTexture || underlayTexture,
+      width,
+      height,
+      layer.visible === false ? 0 : layer.opacity ?? 1,
+      {
+        alphaFallback: false,
+        avoidTextures: [
+          ...(Array.isArray(options.avoidTextures) ? options.avoidTextures : []),
+          underlayTexture,
+          layerTexture
+        ]
+      }
+    );
+    if (!underlayTarget?.texture) {
+      return compositedLowerLayerCount > 0 ? underlayTexture : null;
+    }
+    underlayTexture = underlayTarget.texture;
+    compositedLowerLayerCount += 1;
+  }
+  return underlayTexture;
+}
+
+function surfaceLayerDisplayUnderlayTexture(editor = null, material = null, editable = null, originalMap = null, fallbackTexture = null, options = {}) {
   if (editable?.layerMode !== true || !editable?.layer) {
     return fallbackTexture || null;
   }
@@ -2497,6 +2653,24 @@ function surfaceLayerDisplayUnderlayTexture(editor = null, material = null, edit
     if (safeUnderlayTexture) {
       return safeUnderlayTexture;
     }
+  }
+  const compositedUnderlay = surfaceLayerCompositeUnderlayTexture(
+    editor,
+    options.renderer || null,
+    options.cache || null,
+    material,
+    editable,
+    originalMap,
+    fallbackTexture,
+    options.width,
+    options.height,
+    {
+      referenceTexture: options.referenceTexture || fallbackTexture,
+      avoidTextures: options.avoidTextures
+    }
+  );
+  if (compositedUnderlay) {
+    return compositedUnderlay;
   }
   return surfaceLayerBaseTexture(editor, material, editable, originalMap)
     || fallbackTexture
@@ -8624,7 +8798,15 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
 	          material,
 	          editable,
 	          materialOriginalMap,
-	          layerBaseTexture || coordinateReferenceTexture || referenceTexture
+	          layerBaseTexture || coordinateReferenceTexture || referenceTexture,
+	          {
+	            renderer,
+	            cache,
+	            width,
+	            height,
+	            referenceTexture: coordinateReferenceTexture || referenceTexture,
+	            avoidTextures: surfaceLayerCompositeAvoidTextures(material, editable)
+	          }
 	        );
 	        const layerDisplay = renderSurfaceLayerComposite(
 	          renderer,
@@ -9538,7 +9720,18 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       material,
       editable,
       originalMap,
-      layerBaseTexture || coordinateReferenceTexture || referenceTexture
+      layerBaseTexture || coordinateReferenceTexture || referenceTexture,
+      {
+        renderer,
+        cache,
+        width,
+        height,
+        referenceTexture: coordinateReferenceTexture || referenceTexture,
+        avoidTextures: [
+          finalTarget.texture,
+          ...surfaceLayerCompositeAvoidTextures(material, editable)
+        ]
+      }
     );
     layerDisplayBaseTexture = displayBaseTexture || null;
     layerDisplayUsedLiveUnderlay = Boolean(
@@ -9572,7 +9765,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
         layerTargetEntry.liveCompositeLayerOpacity = activeLayer?.opacity ?? 1;
         layerTargetEntry.liveCompositeLayerBlendMode = activeLayer?.blendMode || "source-over";
         layerTargetEntry.liveCompositeLayerMutationSerial = surfaceLayerMutationSerial(editor);
-        layerTargetEntry.liveCompositeUnderlayKey = editor?.texturePaintLiveLayerUnderlayKey?.(layerTargetEntry) || "";
+        layerTargetEntry.liveCompositeUnderlayKey = surfaceLayerLiveUnderlayKey(editor, layerTargetEntry);
       }
     }
     if (layerDisplayTarget?.texture) {

@@ -448,6 +448,45 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       return Math.max(0, Math.floor(Number(this.texturePaintLayerMutationSerial) || 0));
     },
 
+    texturePaintLiveLayerUnderlayKey(targetEntry = null) {
+      const stack = targetEntry?.layerStack || null;
+      const activeLayer = targetEntry?.layer || null;
+      const layers = Array.isArray(stack?.layers) ? stack.layers : [];
+      const activeIndex = activeLayer ? layers.indexOf(activeLayer) : -1;
+      if (activeIndex < 0) {
+        return "";
+      }
+      const parts = [
+        `serial:${this.texturePaintLayerMutationSerialValue?.() ?? 0}`,
+        `active:${activeLayer.id || activeIndex}`,
+        `index:${activeIndex}`,
+        `count:${layers.length}`
+      ];
+      for (let index = 0; index < activeIndex; index += 1) {
+        const layer = layers[index] || null;
+        const gpuTarget = layer?.gpuTarget || null;
+        const texture = gpuTarget?.target?.texture || null;
+        parts.push([
+          index,
+          layer?.id || "",
+          layer?.visible === false ? 0 : 1,
+          clamp01(layer?.opacity, 1),
+          normalizeLayerBlendMode(layer?.blendMode),
+          layerEffectivelyEmpty(layer) ? 1 : 0,
+          Math.max(0, Math.floor(Number(gpuTarget?.paintRevision) || 0)),
+          gpuTarget?.emptyTransparent === true ? 1 : 0,
+          gpuTarget?.texturePaintLayerHasPaint === true ? 1 : 0,
+          texture?.uuid || texture?.id || texture?.name || "",
+          layer?.canvas?.width || 0,
+          layer?.canvas?.height || 0,
+          layer?.texturePaintCpuPainted === true ? 1 : 0,
+          layer?.texturePaintGpuPainted === true ? 1 : 0,
+          layer?.texturePaintHasPaint === true ? 1 : 0
+        ].join(":"));
+      }
+      return parts.join("|");
+    },
+
     bumpTexturePaintLayerMutationSerial() {
       this.texturePaintLayerMutationSerial = this.texturePaintLayerMutationSerialValue() + 1;
       return this.texturePaintLayerMutationSerial;
