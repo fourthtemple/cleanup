@@ -45,10 +45,11 @@ import {
   viewFromScreenPoint,
   worldFromView
 } from "./surface-airbrush/core.js";
+import { setSurfaceBrushColorUniform } from "./surface-airbrush/color.js";
+import { surfaceStrokeMaskSize } from "./surface-airbrush/performance.js";
 
 const MAX_TSL_SURFACE_SEGMENTS = Math.min(48, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
 const MAX_TSL_SURFACE_STROKE_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
-const MAX_TSL_SURFACE_STROKE_MASK_SIZE = 4096;
 const MAX_TSL_SURFACE_LAYER_COMPOSITE_TARGETS = 4;
 const SURFACE_LAYER_BLEND_MODE_CODES = Object.freeze({
   normal: 0,
@@ -4127,15 +4128,9 @@ function updateTextureCopyMaterial(material = null, sourceTexture = null) {
 }
 
 function createStrokeMaskTarget(width = 1, height = 1) {
-  const scale = Math.min(
-    1,
-    MAX_TSL_SURFACE_STROKE_MASK_SIZE / Math.max(1, Math.max(
-      Math.floor(Number(width) || 1),
-      Math.floor(Number(height) || 1)
-    ))
-  );
-  const targetWidth = Math.max(1, Math.round(Math.max(1, Math.floor(Number(width) || 1)) * scale));
-  const targetHeight = Math.max(1, Math.round(Math.max(1, Math.floor(Number(height) || 1)) * scale));
+  const size = surfaceStrokeMaskSize(width, height);
+  const targetWidth = size.width;
+  const targetHeight = size.height;
   const target = new THREE.RenderTarget(targetWidth, targetHeight, {
     depthBuffer: false,
     stencilBuffer: false,
@@ -4152,8 +4147,9 @@ function createStrokeMaskTarget(width = 1, height = 1) {
   target.texture.generateMipmaps = false;
   target.texture.userData ||= {};
   target.texture.userData.texturePaintTslSurfaceAirbrushStrokeMask = true;
-  target.texture.userData.texturePaintTslSurfaceAirbrushSourceWidth = Math.max(1, Math.floor(Number(width) || 1));
-  target.texture.userData.texturePaintTslSurfaceAirbrushSourceHeight = Math.max(1, Math.floor(Number(height) || 1));
+  target.texture.userData.texturePaintTslSurfaceAirbrushSourceWidth = size.sourceWidth;
+  target.texture.userData.texturePaintTslSurfaceAirbrushSourceHeight = size.sourceHeight;
+  target.texture.userData.texturePaintTslSurfaceAirbrushMaxSize = size.maxSize;
   return target;
 }
 
@@ -4161,32 +4157,16 @@ function ensureSurfaceStrokeMaskTarget(cache = null, width = 1, height = 1) {
   if (!cache) {
     return null;
   }
-  const targetWidth = Math.max(
-    1,
-    Math.round(Math.max(1, Math.floor(Number(width) || 1)) * Math.min(
-      1,
-      MAX_TSL_SURFACE_STROKE_MASK_SIZE / Math.max(1, Math.max(
-        Math.floor(Number(width) || 1),
-        Math.floor(Number(height) || 1)
-      ))
-    ))
-  );
-  const targetHeight = Math.max(
-    1,
-    Math.round(Math.max(1, Math.floor(Number(height) || 1)) * Math.min(
-      1,
-      MAX_TSL_SURFACE_STROKE_MASK_SIZE / Math.max(1, Math.max(
-        Math.floor(Number(width) || 1),
-        Math.floor(Number(height) || 1)
-      ))
-    ))
-  );
+  const size = surfaceStrokeMaskSize(width, height);
+  const targetWidth = size.width;
+  const targetHeight = size.height;
   if (
     !cache.strokeMaskTarget
     || cache.strokeMaskTarget.width !== targetWidth
     || cache.strokeMaskTarget.height !== targetHeight
-    || cache.strokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceWidth !== Math.max(1, Math.floor(Number(width) || 1))
-    || cache.strokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceHeight !== Math.max(1, Math.floor(Number(height) || 1))
+    || cache.strokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceWidth !== size.sourceWidth
+    || cache.strokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceHeight !== size.sourceHeight
+    || cache.strokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushMaxSize !== size.maxSize
   ) {
     retireSurfaceAirbrushResource(cache, cache.strokeMaskTarget);
     cache.strokeMaskTarget = createStrokeMaskTarget(width, height);
@@ -4199,32 +4179,16 @@ function ensureSurfacePrewarmStrokeMaskTarget(cache = null, width = 1, height = 
   if (!cache) {
     return null;
   }
-  const targetWidth = Math.max(
-    1,
-    Math.round(Math.max(1, Math.floor(Number(width) || 1)) * Math.min(
-      1,
-      MAX_TSL_SURFACE_STROKE_MASK_SIZE / Math.max(1, Math.max(
-        Math.floor(Number(width) || 1),
-        Math.floor(Number(height) || 1)
-      ))
-    ))
-  );
-  const targetHeight = Math.max(
-    1,
-    Math.round(Math.max(1, Math.floor(Number(height) || 1)) * Math.min(
-      1,
-      MAX_TSL_SURFACE_STROKE_MASK_SIZE / Math.max(1, Math.max(
-        Math.floor(Number(width) || 1),
-        Math.floor(Number(height) || 1)
-      ))
-    ))
-  );
+  const size = surfaceStrokeMaskSize(width, height);
+  const targetWidth = size.width;
+  const targetHeight = size.height;
   if (
     !cache.prewarmStrokeMaskTarget
     || cache.prewarmStrokeMaskTarget.width !== targetWidth
     || cache.prewarmStrokeMaskTarget.height !== targetHeight
-    || cache.prewarmStrokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceWidth !== Math.max(1, Math.floor(Number(width) || 1))
-    || cache.prewarmStrokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceHeight !== Math.max(1, Math.floor(Number(height) || 1))
+    || cache.prewarmStrokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceWidth !== size.sourceWidth
+    || cache.prewarmStrokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushSourceHeight !== size.sourceHeight
+    || cache.prewarmStrokeMaskTarget.texture?.userData?.texturePaintTslSurfaceAirbrushMaxSize !== size.maxSize
   ) {
     retireSurfaceAirbrushResource(cache, cache.prewarmStrokeMaskTarget);
     cache.prewarmStrokeMaskTarget = createStrokeMaskTarget(width, height);
@@ -4295,6 +4259,46 @@ function clearSurfacePrewarmStrokeMaskTarget(renderer = null, cache = null) {
   return clearSurfaceMaskTarget(renderer, cache?.prewarmStrokeMaskTarget || null);
 }
 
+function surfaceLayerPaintColor(
+  baseColor,
+  brushColor,
+  alpha,
+  emptyLayer,
+  options = {}
+) {
+  const {
+    clamp,
+    float,
+    max,
+    vec3,
+    vec4
+  } = options;
+  const oneMinusAlpha = float(1).sub(alpha).toVar();
+  const baseLayerPremul = (
+    options.basePremultiplied === true
+      ? baseColor.rgb
+      : baseColor.rgb.mul(baseColor.a)
+  ).toVar();
+  const compositedLayerAlpha = clamp(
+    alpha.add(baseColor.a.mul(oneMinusAlpha)),
+    0.0,
+    1.0
+  ).toVar();
+  const compositedLayerPremul = brushColor.rgb.mul(alpha)
+    .add(baseLayerPremul.mul(oneMinusAlpha))
+    .toVar();
+  const compositedLayerRgb = compositedLayerAlpha.greaterThan(0.0001)
+    .select(compositedLayerPremul.div(max(compositedLayerAlpha, 0.0001)), brushColor.rgb)
+    .toVar();
+  const cappedLayerAlpha = max(baseColor.a, alpha).toVar();
+  const layerOutAlpha = emptyLayer.select(alpha, cappedLayerAlpha).toVar();
+  const layerOutRgb = emptyLayer.select(brushColor.rgb, compositedLayerRgb).toVar();
+  const storedLayerRgb = layerOutAlpha.greaterThan(0.0001)
+    .select(layerOutRgb.mul(layerOutAlpha), vec3(0))
+    .toVar();
+  return vec4(storedLayerRgb.x, storedLayerRgb.y, storedLayerRgb.z, layerOutAlpha).toVar();
+}
+
 function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, options = {}) {
   const tsl = THREE.TSL || null;
   if (!tsl || typeof THREE.MeshBasicNodeMaterial !== "function") {
@@ -4338,21 +4342,15 @@ function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, o
     const alpha = clamp(mask.a, 0.0, 1.0).toVar();
     const emptyLayer = emptyLayerSource.greaterThan(0.5).toVar();
     emptyLayer.and(alpha.lessThanEqual(TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD)).discard();
-    const oneMinusAlpha = float(1).sub(alpha).toVar();
-    const baseLayerPremul = (layerOnly ? baseColor.rgb : baseColor.rgb.mul(baseColor.a)).toVar();
-    const compositedLayerAlpha = clamp(alpha.add(baseColor.a.mul(oneMinusAlpha)), 0.0, 1.0).toVar();
-    const compositedLayerPremul = brushColor.rgb.mul(alpha)
-      .add(baseLayerPremul.mul(oneMinusAlpha))
-      .toVar();
-    const compositedLayerRgb = compositedLayerAlpha.greaterThan(0.0001)
-      .select(compositedLayerPremul.div(max(compositedLayerAlpha, 0.0001)), brushColor.rgb)
-      .toVar();
-    const layerOutAlpha = emptyLayer.select(alpha, compositedLayerAlpha).toVar();
-    const layerOutRgb = emptyLayer.select(brushColor.rgb, compositedLayerRgb).toVar();
-    const storedLayerRgb = layerOutAlpha.greaterThan(0.0001).select(layerOutRgb.mul(layerOutAlpha), vec3(0)).toVar();
-    const brushOnlyColor = vec4(storedLayerRgb.x, storedLayerRgb.y, storedLayerRgb.z, layerOutAlpha).toVar();
     if (layerOnly) {
-      return brushOnlyColor;
+      return surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
+        basePremultiplied: true,
+        clamp,
+        float,
+        max,
+        vec3,
+        vec4
+      });
     }
     return vec4(mix(baseColor.rgb, brushColor.rgb, alpha), 1);
   })();
@@ -4410,12 +4408,10 @@ function updateStrokeCompositeMaterial(
     state.maskTextureNode.value = maskTexture;
     changed = true;
   }
-  const color = options.color || { r: 255, g: 255, b: 255 };
-  state.brushColor.value.set(
-    clamp01((Number(color.r) || 0) / 255),
-    clamp01((Number(color.g) || 0) / 255),
-    clamp01((Number(color.b) || 0) / 255),
-    1
+  setSurfaceBrushColorUniform(
+    state.brushColor.value,
+    options.color,
+    { r: 255, g: 255, b: 255 }
   );
   state.blendOnly.value = options.blendOnly === true ? 1 : 0;
   state.emptyLayerSource.value = options.emptyLayerSource === true ? 1 : 0;
@@ -6580,21 +6576,16 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
     discardFragment.discard();
     const gutterColor = vec4(mix(baseColor.rgb, brushColor.rgb, alpha), 1).toVar();
     const primaryColor = vec4(mix(baseColor.rgb, brushColor.rgb, alpha), 1).toVar();
-    const oneMinusAlpha = float(1).sub(alpha).toVar();
-    const compositedLayerAlpha = clamp(alpha.add(baseColor.a.mul(oneMinusAlpha)), 0.0, 1.0).toVar();
-    const compositedLayerPremul = brushColor.rgb.mul(alpha)
-      .add(baseColor.rgb.mul(baseColor.a).mul(oneMinusAlpha))
-      .toVar();
-    const compositedLayerRgb = compositedLayerAlpha.greaterThan(0.0001)
-      .select(compositedLayerPremul.div(max(compositedLayerAlpha, 0.0001)), brushColor.rgb)
-      .toVar();
     const emptyLayer = emptyLayerSource.greaterThan(0.5).toVar();
-    const layerOutAlpha = emptyLayer.select(alpha, compositedLayerAlpha).toVar();
-    const layerOutRgb = emptyLayer.select(brushColor.rgb, compositedLayerRgb).toVar();
-    const storedLayerRgb = layerOutAlpha.greaterThan(0.0001).select(layerOutRgb.mul(layerOutAlpha), vec3(0)).toVar();
-    const layerColor = vec4(storedLayerRgb.x, storedLayerRgb.y, storedLayerRgb.z, layerOutAlpha).toVar();
     if (layerOnly) {
-      return layerColor;
+      return surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
+        basePremultiplied: false,
+        clamp,
+        float,
+        max,
+        vec3,
+        vec4
+      });
     }
     return gutterOnly.select(gutterColor, primaryColor);
   })();
@@ -7139,21 +7130,16 @@ function createSurfaceMaterial(
       return vec4(alpha, alpha, alpha, alpha);
     }
     const baseColor = sourceTextureNode.toVar();
-    const oneMinusAlpha = float(1).sub(alpha).toVar();
-    const compositedLayerAlpha = clamp(alpha.add(baseColor.a.mul(oneMinusAlpha)), 0.0, 1.0).toVar();
-    const compositedLayerPremul = brushColor.rgb.mul(alpha)
-      .add(baseColor.rgb.mul(baseColor.a).mul(oneMinusAlpha))
-      .toVar();
-    const compositedLayerRgb = compositedLayerAlpha.greaterThan(0.0001)
-      .select(compositedLayerPremul.div(max(compositedLayerAlpha, 0.0001)), brushColor.rgb)
-      .toVar();
     const emptyLayer = emptyLayerSource.greaterThan(0.5).toVar();
-    const layerOutAlpha = emptyLayer.select(alpha, compositedLayerAlpha).toVar();
-    const layerOutRgb = emptyLayer.select(brushColor.rgb, compositedLayerRgb).toVar();
-    const storedLayerRgb = layerOutAlpha.greaterThan(0.0001).select(layerOutRgb.mul(layerOutAlpha), vec3(0)).toVar();
-    const brushOnlyColor = vec4(storedLayerRgb.x, storedLayerRgb.y, storedLayerRgb.z, layerOutAlpha).toVar();
     if (layerOnly) {
-      return brushOnlyColor;
+      return surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
+        basePremultiplied: false,
+        clamp,
+        float,
+        max,
+        vec3,
+        vec4
+      });
     }
     return vec4(mix(baseColor.rgb, brushColor.rgb, alpha), 1);
   })();
@@ -7365,12 +7351,10 @@ function updateSurfaceMaterial(
     Math.max(1, finiteNumber(rect?.width, editor?.canvas?.width || 1)),
     Math.max(1, finiteNumber(rect?.height, editor?.canvas?.height || 1))
   );
-  const color = options.color || { r: 0, g: 255, b: 102 };
-  state.brushColor.value.set(
-    clamp01(finiteNumber(color.r, 0) / 255),
-    clamp01(finiteNumber(color.g, 255) / 255),
-    clamp01(finiteNumber(color.b, 102) / 255),
-    1
+  setSurfaceBrushColorUniform(
+    state.brushColor.value,
+    options.color,
+    { r: 0, g: 255, b: 102 }
   );
   state.opacity.value = clamp01(finiteNumber(options.opacity, 0.42));
   state.hardness.value = clamp01(finiteNumber(options.hardness, 0.35));
