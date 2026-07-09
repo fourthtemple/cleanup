@@ -272,6 +272,37 @@ function continuousStrokePointsForPayload(payload = null) {
   return points.length >= 2 ? points : [];
 }
 
+function incrementalContinuousStrokePoints(payload = null, cursor = null) {
+  const points = continuousStrokePointsForPayload(payload);
+  const serial = Math.floor(Number(payload?.continuousStrokePathSerial));
+  const revision = Math.floor(Number(payload?.continuousStrokePathRevision));
+  if (!points.length || !Number.isFinite(serial) || !Number.isFinite(revision)) {
+    return { points, cursor };
+  }
+  const nextCursor = {
+    serial,
+    revision,
+    point: cloneClientPoint(points.at(-1))
+  };
+  if (!cursor || cursor.serial !== serial) {
+    return { points, cursor: nextCursor };
+  }
+  if (revision <= cursor.revision) {
+    return { points: [], cursor };
+  }
+  let resumeIndex = -1;
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    if (sameClientPoint(points[index], cursor.point)) {
+      resumeIndex = index;
+      break;
+    }
+  }
+  return {
+    points: resumeIndex >= 0 ? points.slice(resumeIndex) : points,
+    cursor: nextCursor
+  };
+}
+
 function applyContinuousStrokePointsToPayload(payload = null, points = []) {
   if (!payload) {
     return false;
@@ -535,6 +566,8 @@ function appendMergedStrokeBatch(merged = [], batch = null) {
       || batch.deferredPostCameraProjectionAccumulates === true;
     previous.continuousStrokePath = previous.continuousStrokePath === true
       || batch.continuousStrokePath === true;
+    previous.preSmoothedStrokePath = previous.preSmoothedStrokePath === true
+      || batch.preSmoothedStrokePath === true;
     previous.strokeStartedWithReset = previous.strokeStartedWithReset === true
       || batch.strokeStartedWithReset === true
       || previous.strokeReset === true
@@ -1001,6 +1034,7 @@ function smoothContinuousScreenStrokeBatch(batch = null) {
   if (
     !batch
     || batch.erase === true
+    || batch.preSmoothedStrokePath === true
     || Math.max(0.1, Math.min(200, Number(batch.spacing ?? 1))) > 100
     || !Array.isArray(batch.strokeSegments)
     || batch.strokeSegments.length < 2
@@ -1130,6 +1164,15 @@ function payloadStyleKey(payload = null) {
     payload.layerMode === true ? layerMutationSerial(payload.layerMutationSerial) : 0,
     payload.neighborPaintKey || "all"
   ].join(":");
+}
+
+function payloadContinuousPathKey(payload = null) {
+  return [
+    payloadStyleKey(payload),
+    payload?.neighborPaintKey || "all",
+    payload?.neighborPaintSeed?.enabled === true ? "neighbor" : "no-neighbor",
+    payload?.deferredNeighborPaintSeed === true ? "deferred-neighbor" : "resolved-neighbor"
+  ].join("|");
 }
 
 function payloadBrushStyle(payload = null, fallbacks = {}) {
@@ -1834,6 +1877,17 @@ function mergeCoalescedScreenStrokePayload(previous = null, next = null) {
   }
   previous.clientX = next.clientX;
   previous.clientY = next.clientY;
+  previous.preSmoothedStrokePath = previous.preSmoothedStrokePath === true
+    || next.preSmoothedStrokePath === true;
+  if (Number.isFinite(Number(next.continuousStrokePathSerial))) {
+    previous.continuousStrokePathSerial = Math.floor(Number(next.continuousStrokePathSerial));
+  }
+  if (Number.isFinite(Number(next.continuousStrokePathRevision))) {
+    previous.continuousStrokePathRevision = Math.max(
+      Math.floor(Number(previous.continuousStrokePathRevision)) || 0,
+      Math.floor(Number(next.continuousStrokePathRevision))
+    );
+  }
   previous.strokeStartedWithReset = previous.strokeStartedWithReset === true
     || next.strokeStartedWithReset === true
     || previous.strokeReset === true
@@ -1929,10 +1983,16 @@ function canRetargetContinuousPayload(previous = null, current = null, start = n
   return bendDistanceSq <= bendTolerance * bendTolerance;
 }
 
-function strokeSegmentsForPayload(payload = null, radiusPixels = 1) {
-  const points = continuousStrokePointsForPayload(payload).length
-    ? continuousStrokePointsForPayload(payload)
-    : payloadCurvePoints(payload);
+function strokeSegmentsForPayload(payload = null, radiusPixels = 1, options = {}) {
+  const hasContinuousPointOverride = Array.isArray(options.continuousStrokePoints);
+  const continuousPoints = hasContinuousPointOverride
+    ? normalizedContinuousStrokePoints(options.continuousStrokePoints)
+    : continuousStrokePointsForPayload(payload);
+  const points = hasContinuousPointOverride
+    ? continuousPoints
+    : continuousPoints.length
+      ? continuousPoints
+      : payloadCurvePoints(payload);
   const resetPointOnly = payload?.strokeReset === true && points.length <= 1;
   if (resetPointOnly) {
     return [];
@@ -2804,27 +2864,13 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const neighborPaintActive = this.texturePaintNeighborModeEnabled?.() === true
         && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
       if (neighborPaintActive) {
-        const neighborPaintHit = this.textureAirbrushNeighborPaintHitFromEvent?.(event, this.activeTool) || null;
         const previousNeighborPaintSeed = previous.neighborPaintSeed || null;
         if (previousNeighborPaintSeed?.enabled) {
-          const previousSeedStillMatches = this.textureAirbrushNeighborSeedAllowsPaintHit?.(
-            previousNeighborPaintSeed,
-            neighborPaintHit
-          ) === true;
-          if (!previousSeedStillMatches) {
-            this.textureAirbrushActiveNeighborPaintSeed = previousNeighborPaintSeed;
-            previous.neighborPaintSeed = previousNeighborPaintSeed;
-            previous.neighborPaintKey = this.textureAirbrushNeighborSeedKey?.(previousNeighborPaintSeed)
-              || previousNeighborPaintSeed.key
-              || previous.neighborPaintKey
-              || "neighbor";
-          } else if (!this.textureAirbrushActiveNeighborPaintSeed?.enabled) {
+          if (!this.textureAirbrushActiveNeighborPaintSeed?.enabled) {
             this.textureAirbrushActiveNeighborPaintSeed = previousNeighborPaintSeed;
           }
         } else {
-          const neighborPaintSeed = this.textureAirbrushSyncNeighborPaintSeedForHit?.(neighborPaintHit)
-            || this.textureAirbrushActiveNeighborPaintSeed
-            || null;
+          const neighborPaintSeed = this.textureAirbrushActiveNeighborPaintSeed || null;
           if (neighborPaintSeed?.enabled) {
             previous.neighborPaintSeed = neighborPaintSeed;
             previous.neighborPaintKey = this.textureAirbrushNeighborSeedKey?.(neighborPaintSeed)
@@ -2933,7 +2979,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         return false;
       }
       const key = [
-        payloadStyleKey(payload),
+        payloadContinuousPathKey(payload),
         payload.strokeUndo ? "undo" : "no-undo",
         payload.layerMode === true ? layerMutationSerial(payload.layerMutationSerial) : 0,
         payload.erase === true ? "erase" : "paint"
@@ -2956,16 +3002,32 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       if (mergedPoints.length > maxPoints) {
         mergedPoints.splice(0, mergedPoints.length - maxPoints);
       }
+      const previousSerial = Math.max(
+        0,
+        Math.floor(Number(this.textureAirbrushContinuousScreenStrokeSerial)) || 0
+      );
+      const serial = startsNewPath
+        ? previousSerial + 1
+        : Math.max(1, Math.floor(Number(existing?.serial)) || previousSerial || 1);
+      const revision = startsNewPath
+        ? 1
+        : Math.max(1, Math.floor(Number(existing?.revision)) + 1 || 1);
+      this.textureAirbrushContinuousScreenStrokeSerial = Math.max(previousSerial, serial);
       this.textureAirbrushContinuousScreenStrokePath = {
         key,
+        serial,
+        revision,
         strokeUndo: payload.strokeUndo || null,
         points: mergedPoints
       };
+      payload.continuousStrokePathSerial = serial;
+      payload.continuousStrokePathRevision = revision;
       return applyContinuousStrokePointsToPayload(payload, mergedPoints);
     },
 
     textureAirbrushResetStrokeSpacing() {
       this.textureAirbrushStrokeSpacingState = null;
+      this.textureAirbrushContinuousScreenStrokePath = null;
       this.textureAirbrushResetStrokeCurveState?.();
     },
 
@@ -3082,6 +3144,8 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       this.textureAirbrushNeighborSeedSwitchedForCurrentStrokeSample = false;
       const neighborPaintActive = this.texturePaintNeighborModeEnabled?.() === true
         && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
+      const neighborBreakPendingBeforeReset = neighborPaintActive
+        && this.textureAirbrushNeighborScreenStrokeBreakPending === true;
       const postCameraStrokeRewarmActive = this.textureAirbrushPostCameraProjectionStrokeRewarmedActive === true;
       const neighborStrokeRewarmActive = neighborPaintActive
         && this.textureAirbrushNeighborProjectionStrokeRewarmedActive === true;
@@ -3150,7 +3214,13 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         this.textureAirbrushResetLiveProjectionFrame?.({ keepCurrent: !neighborPaintActive });
         this.textureAirbrushResetStrokePressureState?.();
         this.textureAirbrushResetStrokeBrushState?.();
-        if (neighborPaintActive) {
+        if (
+          neighborPaintActive
+          && neighborBreakPendingBeforeReset
+          && this.textureAirbrushActiveNeighborPaintSeed?.enabled
+        ) {
+          deferredNeighborPaintSeed = false;
+        } else if (neighborPaintActive) {
           const deferNeighborResetWork = options.deferResetRewarm === true
             || largeLiveNeighborBrush;
           if (deferNeighborResetWork) {
@@ -3233,6 +3303,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       if (
         !strokeReset
         && !largeLiveNeighborBrush
+        && !neighborPaintActive
         && options.preserveCurveSamples !== true
         && this.textureAirbrushRetargetQueuedContinuousStroke?.(event, options.strokeStart, baseOptions)
       ) {
@@ -3264,6 +3335,9 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         payload.strokeReset = strokeReset || neighborSeedSwitched;
         if (options.preserveCurveSamples === true) {
           payload.preserveCurveSample = true;
+        }
+        if (options.preSmoothedStrokePath === true) {
+          payload.preSmoothedStrokePath = true;
         }
         if (postCameraProjectionRewarmed) {
           // DO NOT PAINT ON NON CAMERA FACING SIDES.
@@ -3631,6 +3705,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
     textureAirbrushScreenStrokeBatches(queue = []) {
       const batches = [];
       let activeBatch = null;
+      let continuousBatchCursor = this.textureAirbrushContinuousScreenStrokeBatchCursor || null;
       for (const segment of queue) {
         if (
           !segment
@@ -3680,6 +3755,12 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         const deferredNeighborProjectionRewarm = segment.deferredNeighborProjectionRewarm === true;
         const deferredPostCameraProjectionAccumulates = segment.deferredPostCameraProjectionAccumulates === true;
         const continuousStrokePath = continuousStrokePointsForPayload(segment).length >= 2;
+        const incrementalPath = continuousStrokePath
+          ? incrementalContinuousStrokePoints(segment, continuousBatchCursor)
+          : null;
+        if (incrementalPath) {
+          continuousBatchCursor = incrementalPath.cursor;
+        }
         if (
           !activeBatch
           || (segment.strokeReset === true && activeBatch.strokeSegments.length > 0)
@@ -3713,6 +3794,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             deferredNeighborProjectionRewarm,
             deferredPostCameraProjectionAccumulates,
             continuousStrokePath,
+            preSmoothedStrokePath: segment.preSmoothedStrokePath === true,
             strokeReset: segment.strokeReset === true,
             strokeStartedWithReset,
             layerCachedStartContinuation: segment.layerCachedStartContinuation === true,
@@ -3723,7 +3805,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           }
           batches.push(activeBatch);
         }
-        const strokeSegments = strokeSegmentsForPayload(segment, radiusPixels);
+        const strokeSegments = strokeSegmentsForPayload(
+          segment,
+          radiusPixels,
+          incrementalPath ? { continuousStrokePoints: incrementalPath.points } : {}
+        );
         activeBatch.strokeReset = activeBatch.strokeReset || segment.strokeReset === true;
         activeBatch.strokeStartedWithReset = activeBatch.strokeStartedWithReset
           || segment.strokeReset === true
@@ -3746,9 +3832,12 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           || segment.deferredPostCameraProjectionAccumulates === true;
         activeBatch.continuousStrokePath = activeBatch.continuousStrokePath === true
           || continuousStrokePath;
+        activeBatch.preSmoothedStrokePath = activeBatch.preSmoothedStrokePath === true
+          || segment.preSmoothedStrokePath === true;
         activeBatch.radiusPixels = Math.max(activeBatch.radiusPixels, radiusPixels);
         activeBatch.strokeSegments.push(...strokeSegments);
       }
+      this.textureAirbrushContinuousScreenStrokeBatchCursor = continuousBatchCursor;
       return batches.flatMap((batch) => splitStrokeBatch(batch));
     },
 

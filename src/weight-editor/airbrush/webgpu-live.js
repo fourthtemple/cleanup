@@ -4876,9 +4876,6 @@ export function installTextureAirbrushWebGpuLiveMethods(BirdWeightEditor) {
                   allowDisjointLiveBatchBounds: true
                 }
               : {}),
-            ...(sourceMeshTslNeighborPaint
-              ? { relaxNeighborComponentGate: true }
-              : {}),
             ...(boundedDisjointLiveBatch
               ? {
                   allowDisjointLiveBatchBounds: true,

@@ -8,6 +8,13 @@ const DEFAULT_MACRO_NAME = "airbrush";
 const AFTER_ORBIT_PAINT_REPRO_MACRO_NAME = "after-orbit-paint";
 const MACRO_POINTER_ID = 92817;
 const TEXTURE_BRUSH_MACRO_TOOLS = new Set(["airbrush", "clone", "texture-eraser"]);
+const TEXTURE_BRUSH_MACRO_SMOOTH_MAX_GAP_MS = 32;
+const TEXTURE_BRUSH_MACRO_SMOOTH_LONG_GAP_MS = 80;
+const TEXTURE_BRUSH_MACRO_SMOOTH_SAMPLE_MS = 16;
+const TEXTURE_BRUSH_MACRO_SMOOTH_MAX_STEP = 0.004;
+const TEXTURE_BRUSH_MACRO_SMOOTH_MAX_SAMPLES = 80;
+const TEXTURE_BRUSH_MACRO_HERMITE_GAP_MS = 450;
+const TEXTURE_BRUSH_MACRO_HERMITE_DISTANCE = 0.055;
 
 function nowMs() {
   return typeof performance !== "undefined" ? performance.now() : Date.now();
@@ -58,6 +65,316 @@ function sanitizedMacroName(value, fallback = DEFAULT_MACRO_NAME) {
 
 function macroToolUsesTextureBrush(tool = "") {
   return TEXTURE_BRUSH_MACRO_TOOLS.has(String(tool || ""));
+}
+
+function finiteMacroPointerPosition(event = null) {
+  const x = Number(event?.x);
+  const y = Number(event?.y);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+function macroPointerDistance(left = null, right = null) {
+  const leftPoint = finiteMacroPointerPosition(left);
+  const rightPoint = finiteMacroPointerPosition(right);
+  if (!leftPoint || !rightPoint) {
+    return 0;
+  }
+  return Math.hypot(rightPoint.x - leftPoint.x, rightPoint.y - leftPoint.y);
+}
+
+function macroPointerPressure(event = null) {
+  const pressure = Number(event?.brush?.pressure);
+  return Number.isFinite(pressure) ? Math.max(0.02, Math.min(1, pressure)) : null;
+}
+
+function interpolatedMacroBrush(left = null, right = null, ratio = 0.5) {
+  const leftBrush = left?.brush && typeof left.brush === "object" ? left.brush : null;
+  const rightBrush = right?.brush && typeof right.brush === "object" ? right.brush : null;
+  if (!leftBrush && !rightBrush) {
+    return null;
+  }
+  const brush = {
+    ...(leftBrush || {}),
+    ...(rightBrush || {})
+  };
+  const leftPressure = macroPointerPressure(left);
+  const rightPressure = macroPointerPressure(right);
+  if (leftPressure !== null && rightPressure !== null) {
+    brush.pressure = rounded(lerp(leftPressure, rightPressure, clamp01(ratio)), 5);
+  }
+  return brush;
+}
+
+function macroHermitePoint(start = null, end = null, startTangent = null, endTangent = null, ratio = 0.5) {
+  const u = clamp01(ratio);
+  const u2 = u * u;
+  const u3 = u2 * u;
+  const h00 = 2 * u3 - 3 * u2 + 1;
+  const h10 = u3 - 2 * u2 + u;
+  const h01 = -2 * u3 + 3 * u2;
+  const h11 = u3 - u2;
+  return {
+    x: h00 * start.x + h10 * startTangent.x + h01 * end.x + h11 * endTangent.x,
+    y: h00 * start.y + h10 * startTangent.y + h01 * end.y + h11 * endTangent.y
+  };
+}
+
+function macroHermiteTangent(previous = null, current = null, next = null) {
+  const previousPoint = finiteMacroPointerPosition(previous);
+  const currentPoint = finiteMacroPointerPosition(current);
+  const nextPoint = finiteMacroPointerPosition(next);
+  if (!currentPoint) {
+    return { x: 0, y: 0 };
+  }
+  if (previousPoint && nextPoint) {
+    return {
+      x: (nextPoint.x - previousPoint.x) * 0.5,
+      y: (nextPoint.y - previousPoint.y) * 0.5
+    };
+  }
+  if (nextPoint) {
+    return {
+      x: nextPoint.x - currentPoint.x,
+      y: nextPoint.y - currentPoint.y
+    };
+  }
+  if (previousPoint) {
+    return {
+      x: currentPoint.x - previousPoint.x,
+      y: currentPoint.y - previousPoint.y
+    };
+  }
+  return { x: 0, y: 0 };
+}
+
+function limitedMacroTangent(tangent = null, limit = 1) {
+  const x = Number(tangent?.x) || 0;
+  const y = Number(tangent?.y) || 0;
+  const length = Math.hypot(x, y);
+  const maxLength = Math.max(0, Number(limit) || 0);
+  if (!length || !maxLength || length <= maxLength) {
+    return { x, y };
+  }
+  const scale = maxLength / length;
+  return {
+    x: x * scale,
+    y: y * scale
+  };
+}
+
+function forwardMacroHermiteTangent(tangent = null, start = null, end = null, limit = 1) {
+  const limited = limitedMacroTangent(tangent, limit);
+  const startPoint = finiteMacroPointerPosition(start);
+  const endPoint = finiteMacroPointerPosition(end);
+  if (!startPoint || !endPoint) {
+    return limited;
+  }
+  const chordX = endPoint.x - startPoint.x;
+  const chordY = endPoint.y - startPoint.y;
+  const chordLengthSq = chordX * chordX + chordY * chordY;
+  if (chordLengthSq <= 0.0000000001) {
+    return { x: 0, y: 0 };
+  }
+  const chordProjection = (limited.x * chordX + limited.y * chordY) / chordLengthSq;
+  if (chordProjection >= 0) {
+    return limited;
+  }
+  return {
+    x: limited.x - chordX * chordProjection,
+    y: limited.y - chordY * chordProjection
+  };
+}
+
+function interpolatedMacroPointerEvent(left = null, right = null, ratio = 0.5, t = 0, options = {}) {
+  const leftPoint = finiteMacroPointerPosition(left);
+  const rightPoint = finiteMacroPointerPosition(right);
+  const point = options.hermite === true && leftPoint && rightPoint
+    ? macroHermitePoint(
+        leftPoint,
+        rightPoint,
+        options.startTangent || { x: 0, y: 0 },
+        options.endTangent || { x: 0, y: 0 },
+        ratio
+      )
+    : {
+        x: lerp(leftPoint?.x ?? rightPoint?.x ?? 0, rightPoint?.x ?? leftPoint?.x ?? 0, ratio),
+        y: lerp(leftPoint?.y ?? rightPoint?.y ?? 0, rightPoint?.y ?? leftPoint?.y ?? 0, ratio)
+      };
+  const brush = interpolatedMacroBrush(left, right, ratio);
+  return {
+    ...right,
+    kind: "move",
+    t: rounded(t, 1),
+    x: rounded(point.x, 5),
+    y: rounded(point.y, 5),
+    tool: right?.tool || left?.tool || "",
+    ...(brush ? { brush } : {}),
+    button: Number(right?.button ?? left?.button ?? 0),
+    buttons: Number(right?.buttons ?? left?.buttons ?? 1),
+    macroSmoothed: true,
+    ...(options.hermite === true ? { macroHermite: true } : {})
+  };
+}
+
+function nextActiveTextureBrushMove(events = [], startIndex = 0, tool = "") {
+  for (let index = startIndex + 1; index < events.length; index += 1) {
+    const event = events[index];
+    if (event?.type !== "pointer" || event.tool !== tool || event.kind === "wheel") {
+      continue;
+    }
+    if (event.kind === "up") {
+      return null;
+    }
+    if (event.kind === "move" && Number(event.buttons || 0) > 0) {
+      return event;
+    }
+  }
+  return null;
+}
+
+function smoothTextureBrushMacroPlaybackEvents(events = []) {
+  const output = [];
+  let activeBrushStroke = false;
+  let activeTool = "";
+  let previousPreviousBrushPointer = null;
+  let previousBrushPointer = null;
+  let timeShift = 0;
+
+  for (let sourceIndex = 0; sourceIndex < events.length; sourceIndex += 1) {
+    const sourceEvent = events[sourceIndex];
+    if (!sourceEvent || !Number.isFinite(Number(sourceEvent.t))) {
+      continue;
+    }
+    const event = { ...sourceEvent };
+    const isBrushPointer = event.type === "pointer"
+      && macroToolUsesTextureBrush(event.tool)
+      && event.kind !== "wheel";
+    if (!isBrushPointer) {
+      event.t = rounded(Number(event.t) - timeShift, 1);
+      output.push(event);
+      activeBrushStroke = false;
+      activeTool = "";
+      previousPreviousBrushPointer = null;
+      previousBrushPointer = null;
+      continue;
+    }
+
+    if (event.kind === "down" && Number(event.buttons || 1) > 0) {
+      event.t = rounded(Number(event.t) - timeShift, 1);
+      output.push(event);
+      activeBrushStroke = true;
+      activeTool = event.tool || "";
+      previousPreviousBrushPointer = null;
+      previousBrushPointer = event;
+      continue;
+    }
+
+    if (
+      !activeBrushStroke
+      || event.tool !== activeTool
+      || !previousBrushPointer
+      || (event.kind === "move" && Number(event.buttons || 0) <= 0)
+    ) {
+      event.t = rounded(Number(event.t) - timeShift, 1);
+      output.push(event);
+      previousPreviousBrushPointer = null;
+      previousBrushPointer = null;
+      activeBrushStroke = false;
+      activeTool = "";
+      continue;
+    }
+
+    const originalGap = Math.max(0, Number(event.t) - Number(previousBrushPointer.t));
+    const distance = macroPointerDistance(previousBrushPointer, event);
+    const longHermiteDiscontinuity = event.kind === "move"
+      && originalGap >= TEXTURE_BRUSH_MACRO_HERMITE_GAP_MS
+      && distance >= TEXTURE_BRUSH_MACRO_HERMITE_DISTANCE;
+    const shouldSmoothMove = event.kind === "move"
+      && (
+        originalGap > TEXTURE_BRUSH_MACRO_SMOOTH_LONG_GAP_MS
+        || distance > TEXTURE_BRUSH_MACRO_SMOOTH_MAX_STEP
+      );
+    const shouldHermiteBridge = event.kind === "move"
+      && distance > TEXTURE_BRUSH_MACRO_SMOOTH_MAX_STEP;
+    const sampleDistance = longHermiteDiscontinuity
+      ? TEXTURE_BRUSH_MACRO_SMOOTH_MAX_STEP * 0.45
+      : TEXTURE_BRUSH_MACRO_SMOOTH_MAX_STEP;
+    const sampleCount = shouldSmoothMove
+      ? Math.max(
+          1,
+          Math.min(
+            TEXTURE_BRUSH_MACRO_SMOOTH_MAX_SAMPLES,
+            Math.ceil(distance / sampleDistance),
+            originalGap > TEXTURE_BRUSH_MACRO_SMOOTH_LONG_GAP_MS && distance < 0.004
+              ? 1
+              : Infinity
+          )
+        )
+      : 1;
+    const compressedGap = shouldSmoothMove || originalGap > TEXTURE_BRUSH_MACRO_SMOOTH_LONG_GAP_MS
+      ? Math.min(
+          originalGap,
+          Math.max(
+            event.kind === "move" ? TEXTURE_BRUSH_MACRO_SMOOTH_SAMPLE_MS : TEXTURE_BRUSH_MACRO_SMOOTH_MAX_GAP_MS,
+            sampleCount * TEXTURE_BRUSH_MACRO_SMOOTH_SAMPLE_MS
+          )
+        )
+      : originalGap;
+    const previousOutputTime = Number(previousBrushPointer.t) - timeShift;
+    const currentOutputTime = previousOutputTime + compressedGap;
+    const tangentLimit = Math.max(0.00001, distance * 0.75);
+    const nextBrushMove = shouldHermiteBridge
+      ? nextActiveTextureBrushMove(events, sourceIndex, activeTool)
+      : null;
+    const startTangent = shouldHermiteBridge
+      ? forwardMacroHermiteTangent(
+          macroHermiteTangent(previousPreviousBrushPointer, previousBrushPointer, event),
+          previousBrushPointer,
+          event,
+          tangentLimit
+        )
+      : null;
+    const endTangent = shouldHermiteBridge
+      ? forwardMacroHermiteTangent(
+          macroHermiteTangent(previousBrushPointer, event, nextBrushMove),
+          previousBrushPointer,
+          event,
+          tangentLimit
+        )
+      : null;
+
+    const coalescedMoves = [];
+    if (shouldSmoothMove && sampleCount > 1) {
+      for (let index = 1; index < sampleCount; index += 1) {
+        const ratio = index / sampleCount;
+        coalescedMoves.push(interpolatedMacroPointerEvent(
+          previousBrushPointer,
+          event,
+          ratio,
+          previousOutputTime + compressedGap * ratio,
+          shouldHermiteBridge
+            ? { hermite: true, startTangent, endTangent }
+            : {}
+        ));
+      }
+    }
+
+    event.t = rounded(currentOutputTime, 1);
+    if (coalescedMoves.length) {
+      event.macroCoalesced = coalescedMoves;
+    }
+    output.push(event);
+    timeShift += originalGap - compressedGap;
+    previousPreviousBrushPointer = previousBrushPointer;
+    previousBrushPointer = { ...event, t: Number(sourceEvent.t) };
+    if (event.kind === "up") {
+      activeBrushStroke = false;
+      activeTool = "";
+      previousBrushPointer = null;
+    }
+  }
+
+  return output.sort((left, right) => left.t - right.t);
 }
 
 function editorHasPaintableTextureScene(editor = null) {
@@ -797,15 +1114,20 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         .map((event) => Number(event.t || 0))
         .filter(Number.isFinite);
       if (!travelCameraTimes.length) {
-        return events;
+        return this.smoothTextureBrushMacroPlaybackEvents?.(events) || events;
       }
-      return events.filter((event) => {
+      const filteredEvents = events.filter((event) => {
         if (event?.type !== "camera" || event.reason !== "camera") {
           return true;
         }
         const eventTime = Number(event.t || 0);
         return !travelCameraTimes.some((travelTime) => Math.abs(travelTime - eventTime) <= 90);
       });
+      return this.smoothTextureBrushMacroPlaybackEvents?.(filteredEvents) || filteredEvents;
+    },
+
+    smoothTextureBrushMacroPlaybackEvents(events = []) {
+      return smoothTextureBrushMacroPlaybackEvents(events);
     },
 
     tutorialMacroScrubRatio() {
@@ -1805,6 +2127,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
 
     tutorialMacroSyntheticPointerEvent(event) {
       const point = this.tutorialMacroCanvasPoint(event);
+      const pressure = macroPointerPressure(event);
       return {
         type: event.kind === "move" ? "pointermove" : event.kind === "up" ? "pointerup" : "pointerdown",
         button: event.button || 0,
@@ -1812,11 +2135,28 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         clientX: point?.x || 0,
         clientY: point?.y || 0,
         pointerId: MACRO_POINTER_ID,
+        pointerType: pressure === null ? "mouse" : "pen",
+        ...(pressure === null ? {} : { pressure }),
+        ...(event.brush ? { tutorialMacroBrush: event.brush } : {}),
         isPrimary: true,
         target: this.canvas,
+        ...(
+          event.macroSmoothed === true || event.macroCoalesced?.length
+            ? { textureAirbrushPreSmoothedSample: true }
+            : {}
+        ),
         preventDefault() {},
         stopPropagation() {}
       };
+    },
+
+    tutorialMacroCoalescedPointerEvents(event) {
+      if (event?.kind !== "move" || !Array.isArray(event.macroCoalesced) || !event.macroCoalesced.length) {
+        return [];
+      }
+      return [...event.macroCoalesced, event]
+        .map((sample) => this.tutorialMacroSyntheticPointerEvent?.(sample))
+        .filter((sample) => Number.isFinite(sample?.clientX) && Number.isFinite(sample?.clientY));
     },
 
     tutorialMacroPointerCaptureShim() {
@@ -1868,6 +2208,7 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
       const type = event.kind === "move"
         ? "pointermove"
         : event.kind === "up" ? "pointerup" : "pointerdown";
+      const pressure = macroPointerPressure(event);
       const init = {
         bubbles: true,
         cancelable: true,
@@ -1877,10 +2218,18 @@ export function installTutorialMacroMethods(BirdWeightEditor, deps) {
         clientX: point.x,
         clientY: point.y,
         pointerId: MACRO_POINTER_ID,
-        pointerType: "mouse",
+        pointerType: pressure === null ? "mouse" : "pen",
+        ...(pressure === null ? {} : { pressure }),
         isPrimary: true
       };
       const pointerEvent = new PointerEvent(type, init);
+      const coalescedEvents = this.tutorialMacroCoalescedPointerEvents?.(event) || [];
+      if (coalescedEvents.length) {
+        Object.defineProperty(pointerEvent, "getCoalescedEvents", {
+          configurable: true,
+          value: () => coalescedEvents
+        });
+      }
       if (event.brush) {
         Object.defineProperty(pointerEvent, "tutorialMacroBrush", {
           configurable: true,

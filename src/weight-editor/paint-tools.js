@@ -812,8 +812,10 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (!this.painting) {
         return false;
       }
-      event?.preventDefault?.();
-      this.onPointerMove(event);
+      // pointermove delivers these samples together through getCoalescedEvents.
+      // Painting pointerrawupdate as well submits the same tablet path twice and
+      // forces a WebGPU flush for every hardware-rate sample.
+      this.textureAirbrushRememberNativePressureEvent?.(event);
       return true;
     },
 
@@ -1056,7 +1058,11 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         return false;
       }
       this.textureAirbrushCacheNativePressureForStroke?.(event);
-      if (!this.painting || this.texturePaintMouseFallbackActive) {
+      if (
+        !this.painting
+        || this.texturePaintMouseFallbackActive
+        || (this.texturePaintActivePointerId !== null && this.texturePaintActivePointerId !== undefined)
+      ) {
         return false;
       }
       this.onPointerMove(this.texturePaintMouseFallbackEvent?.(event, {
@@ -1091,6 +1097,14 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       const touch = texturePaintPrimaryTouch(event);
       const converted = this.texturePaintTouchFallbackEvent?.(event, touch);
       if (!converted) {
+        return false;
+      }
+      if (
+        this.painting
+        && this.texturePaintActivePointerId !== null
+        && this.texturePaintActivePointerId !== undefined
+      ) {
+        this.textureAirbrushCacheNativePressureForStroke?.(converted);
         return false;
       }
       this.texturePaintTouchFallbackActive = true;
@@ -1174,6 +1188,13 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         return true;
       }
       this.texturePaintMouseFallbackLastEvent = event;
+      if (
+        !this.texturePaintMouseFallbackActive
+        && this.texturePaintActivePointerId !== null
+        && this.texturePaintActivePointerId !== undefined
+      ) {
+        return false;
+      }
       this.onPointerMove(this.texturePaintMouseFallbackEvent?.(event, {
         button: 0,
         buttons: 1,
@@ -1582,13 +1603,21 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       ) {
         const tangentX = startPoint.clientX - previousInputPoint.clientX;
         const tangentY = startPoint.clientY - previousInputPoint.clientY;
+        const nextX = endPoint.clientX - startPoint.clientX;
+        const nextY = endPoint.clientY - startPoint.clientY;
         const tangentLength = Math.sqrt(tangentX * tangentX + tangentY * tangentY);
-        const controlDistance = Math.min(distance * 0.55, tangentLength * 0.5);
-        const scale = tangentLength > 0.000001 ? controlDistance / tangentLength : 0;
-        controlPoint = {
-          clientX: startPoint.clientX + tangentX * scale,
-          clientY: startPoint.clientY + tangentY * scale
-        };
+        const nextLength = Math.sqrt(nextX * nextX + nextY * nextY);
+        const directionDot = tangentLength > 0.000001 && nextLength > 0.000001
+          ? (tangentX * nextX + tangentY * nextY) / (tangentLength * nextLength)
+          : 1;
+        if (directionDot > 0.35) {
+          const controlDistance = Math.min(distance * 0.55, tangentLength * 0.5);
+          const scale = tangentLength > 0.000001 ? controlDistance / tangentLength : 0;
+          controlPoint = {
+            clientX: startPoint.clientX + tangentX * scale,
+            clientY: startPoint.clientY + tangentY * scale
+          };
+        }
       }
       const usesQuadraticCurve = texturePaintPointToSegmentDistanceSqValues(
         controlPoint.clientX,
@@ -1762,12 +1791,19 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             };
             const strokeStart = collapsedStrokeStart || previous || sampleCurrent;
             const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
-            queued = queueStroke?.call(this, pointEvent, {
+            const sampleQueued = queueStroke?.call(this, pointEvent, {
               strokeStart,
               reset: resetSpacing || !previous,
+              preSmoothedStrokePath: true,
               ...(pointEvent.textureAirbrushCurveSample === true ? { preserveCurveSamples: true } : {}),
               ...(collapseCoalescedWebGpuScreenStroke ? { deferResetRewarm: true } : {})
-            }) || queued;
+            }) === true;
+            queued = sampleQueued || queued;
+            if (this.textureAirbrushNeighborScreenStrokeBreakPending === true) {
+              resetSpacing = true;
+              previous = null;
+              continue;
+            }
             resetSpacing = false;
             previous = sampleCurrent;
             continue;
@@ -1789,11 +1825,24 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             };
             const strokeStart = previous || sampleCurrent;
             const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
-            queued = queueStroke?.call(this, strokeEvent, {
+            const sampleQueued = queueStroke?.call(this, strokeEvent, {
               strokeStart,
               reset: resetSpacing || !previous,
+              ...(
+                skipInterpolatedSamples
+                || strokeEvent.textureAirbrushCurveSample === true
+                || strokeEvent.textureAirbrushPreSmoothedSample === true
+                  ? { preSmoothedStrokePath: true }
+                  : {}
+              ),
               ...(strokeEvent.textureAirbrushCurveSample === true ? { preserveCurveSamples: true } : {})
-            }) || queued;
+            }) === true;
+            queued = sampleQueued || queued;
+            if (this.textureAirbrushNeighborScreenStrokeBreakPending === true) {
+              resetSpacing = true;
+              previous = null;
+              continue;
+            }
             resetSpacing = false;
             previous = sampleCurrent;
           }

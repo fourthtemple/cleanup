@@ -431,6 +431,63 @@ test("tutorial macro orbit event reenables controls after texture paint", async 
   }]);
 });
 
+test("tutorial macro dispatch keeps reconstructed Hermite spans in one pointer batch", (t) => {
+  withWindowSearch(t, "");
+  const originalPointerEvent = globalThis.PointerEvent;
+  globalThis.PointerEvent = class PointerEvent {
+    constructor(type, init = {}) {
+      this.type = type;
+      Object.assign(this, init);
+    }
+  };
+  t.after(() => {
+    globalThis.PointerEvent = originalPointerEvent;
+  });
+
+  const editor = new TestEditor();
+  let dispatched = null;
+  editor.canvas = {
+    getBoundingClientRect() {
+      return { left: 10, top: 20, width: 200, height: 100 };
+    },
+    dispatchEvent(event) {
+      dispatched = event;
+      return true;
+    },
+    setPointerCapture() {},
+    releasePointerCapture() {},
+    hasPointerCapture() {
+      return false;
+    }
+  };
+
+  assert.equal(editor.dispatchTutorialMacroPointerEvent({
+    type: "pointer",
+    kind: "move",
+    tool: "airbrush",
+    x: 0.75,
+    y: 0.8,
+    button: 0,
+    buttons: 1,
+    brush: { pressure: 0.7, pressureRadius: true },
+    macroCoalesced: [
+      { type: "pointer", kind: "move", tool: "airbrush", x: 0.25, y: 0.4, buttons: 1, brush: { pressure: 0.3, pressureRadius: true } },
+      { type: "pointer", kind: "move", tool: "airbrush", x: 0.5, y: 0.6, buttons: 1, brush: { pressure: 0.5, pressureRadius: true } }
+    ]
+  }), true);
+
+  assert.equal(dispatched.type, "pointermove");
+  assert.equal(typeof dispatched.getCoalescedEvents, "function");
+  assert.deepEqual(
+    dispatched.getCoalescedEvents().map((event) => [event.clientX, event.clientY]),
+    [[60, 60], [110, 80], [160, 100]]
+  );
+  assert.deepEqual(
+    dispatched.getCoalescedEvents().map((event) => [event.pointerType, event.pressure, event.tutorialMacroBrush?.pressure]),
+    [["pen", 0.3, 0.3], ["pen", 0.5, 0.5], ["pen", 0.7, 0.7]]
+  );
+});
+
 test("viewport repro macro mode enables demo library bootstrap", (t) => {
   withWindowSearch(t, "?reproMacro=after-orbit-paint");
   const editor = new DemoLibraryEditor();
@@ -656,6 +713,100 @@ test("packaged after-orbit repro macro keeps a Neighbor paint stroke and orbit r
     && stroke.start > neighborPaintStrokes[0].end
   )));
   assert.ok(macro.events.some((event) => event.type === "camera" && event.reason === "camera"));
+});
+
+test("airbrush overlap repro macro playback preserves bounded smoothed pointer paths", (t) => {
+  withWindowSearch(t, "?reproMacro=airbrush-zigzag-stroke");
+  const editor = new TestEditor();
+  const payload = JSON.parse(fs.readFileSync(new URL("../assets/tutorial-macros.json", import.meta.url), "utf8"));
+
+  assert.equal(editor.storeTutorialMacros(payload.macros), true);
+  const macro = editor.tutorialMacro("airbrush-zigzag-stroke");
+  const originalPointerCount = macro.events.filter((event) => event.type === "pointer").length;
+  const events = editor.tutorialMacroPlaybackEvents(macro);
+  const pointerEvents = events.filter((event) => event.type === "pointer");
+  const smoothedEvents = pointerEvents.flatMap((event) => event.macroCoalesced || []);
+  const hermiteEvents = smoothedEvents.filter((event) => event.macroHermite === true);
+  const expandedPointerEvents = pointerEvents.flatMap((event) => [
+    ...(event.macroCoalesced || []),
+    event
+  ]);
+
+  assert.equal(pointerEvents.length, originalPointerCount);
+  assert.ok(smoothedEvents.length > 0);
+  assert.ok(hermiteEvents.length > 0);
+  assert.equal(hermiteEvents.length, smoothedEvents.length);
+  assert.ok(pointerEvents.every((event) => (
+    !event.macroCoalesced || (event.kind === "move" && event.macroCoalesced.length > 0)
+  )));
+
+  let previousRecordedPointer = null;
+  for (const event of pointerEvents) {
+    if (event.tool !== "airbrush" || event.kind === "wheel") {
+      previousRecordedPointer = null;
+      continue;
+    }
+    if (event.kind === "down") {
+      previousRecordedPointer = event;
+      continue;
+    }
+    if (!previousRecordedPointer || event.kind !== "move" || !event.macroCoalesced?.length) {
+      previousRecordedPointer = event.kind === "up" ? null : event;
+      continue;
+    }
+    const chordX = event.x - previousRecordedPointer.x;
+    const chordY = event.y - previousRecordedPointer.y;
+    const chordLengthSq = chordX * chordX + chordY * chordY;
+    let previousProjection = 0;
+    for (const sample of event.macroCoalesced) {
+      const projection = chordLengthSq > 0
+        ? ((sample.x - previousRecordedPointer.x) * chordX + (sample.y - previousRecordedPointer.y) * chordY) / chordLengthSq
+        : 0;
+      assert.ok(projection >= previousProjection - 0.0001);
+      assert.ok(projection <= 1.0001);
+      previousProjection = projection;
+    }
+    previousRecordedPointer = event;
+  }
+
+  let activeStroke = null;
+  const strokes = [];
+  for (const event of expandedPointerEvents) {
+    if (event.kind === "down" && event.tool === "airbrush") {
+      activeStroke = [event];
+    } else if (activeStroke) {
+      activeStroke.push(event);
+      if (event.kind === "up") {
+        strokes.push(activeStroke);
+        activeStroke = null;
+      }
+    }
+  }
+
+  assert.equal(
+    strokes.length,
+    pointerEvents.filter((event) => event.kind === "down" && event.tool === "airbrush").length
+  );
+  let maxGap = 0;
+  let maxStep = 0;
+  for (const stroke of strokes) {
+    for (let index = 1; index < stroke.length; index += 1) {
+      const previous = stroke[index - 1];
+      const current = stroke[index];
+      maxGap = Math.max(maxGap, Number(current.t) - Number(previous.t));
+      if (current.kind === "move") {
+        maxStep = Math.max(
+          maxStep,
+          Math.hypot(Number(current.x) - Number(previous.x), Number(current.y) - Number(previous.y))
+        );
+      }
+    }
+    assert.equal(stroke.at(-1).kind, "up");
+  }
+
+  assert.ok(maxGap <= 80);
+  assert.ok(maxStep <= 0.0065);
+  assert.ok(events.at(-1).t < macro.events.at(-1).t);
 });
 
 test("closing help while repro recording keeps the macro recorder alive", (t) => {

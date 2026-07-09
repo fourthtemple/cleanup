@@ -1,7 +1,10 @@
 import { textureAirbrushRecordIdentity } from "./record-identity.js";
 
 function faceVertexIndexes(face = null) {
-  return [face?.a, face?.b, face?.c].filter((vertexIndex) => Number.isInteger(vertexIndex));
+  const vertices = Array.isArray(face?.vertices)
+    ? face.vertices
+    : [face?.a, face?.b, face?.c];
+  return vertices.filter((vertexIndex) => Number.isInteger(vertexIndex));
 }
 
 function normalizedNormal(normal = null) {
@@ -184,6 +187,8 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         this.texturePaintNeighborToggle.classList.toggle("is-active", nextEnabled);
       }
       this.textureAirbrushActiveNeighborPaintSeed = null;
+      this.textureAirbrushNeighborScreenStrokeFrontier = null;
+      this.textureAirbrushNeighborScreenStrokeBreakPending = false;
       this.textureAirbrushResetLiveProjectionFrame?.({ keepCurrent: false });
       if (options.status !== false) {
         this.setStatus?.(nextEnabled
@@ -417,10 +422,35 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       if (!event || (tool !== "airbrush" && tool !== "texture-eraser")) {
         return null;
       }
+      const options = arguments[2] || {};
+      const cacheKey = [
+        tool,
+        Math.round(Number(event.clientX) * 2) / 2,
+        Math.round(Number(event.clientY) * 2) / 2,
+        options.raycastFallbackOnScreenMiss === true ? "fallback" : "indexed"
+      ].join(":");
+      const cache = this.textureAirbrushNeighborPaintHitEventCache || null;
+      if (cache?.key === cacheKey) {
+        return cache.value || null;
+      }
+      const useRaycastFallback = options.raycastFallbackOnScreenMiss === true;
+      const value = this.texturePaintHitForEvent?.(event, tool, {
+        refreshSkinnedBounds: false,
+        allowAnimationProgressMismatch: this.painting === true,
+        raycastFallbackOnScreenMiss: useRaycastFallback
+      }) || null;
+      this.textureAirbrushNeighborPaintHitEventCache = { key: cacheKey, value };
+      return value;
+    },
+
+    textureAirbrushNeighborFastPaintHitFromEvent(event = null, tool = this.activeTool) {
+      if (!event || (tool !== "airbrush" && tool !== "texture-eraser")) {
+        return null;
+      }
       return this.texturePaintHitForEvent?.(event, tool, {
         refreshSkinnedBounds: false,
         allowAnimationProgressMismatch: this.painting === true,
-        raycastFallbackOnScreenMiss: true
+        raycastFallbackOnScreenMiss: false
       }) || null;
     },
 
@@ -444,6 +474,154 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       return this.textureAirbrushNeighborHitAllowed?.(seed, record, hit, material, materialIndex) === true;
     },
 
+    textureAirbrushBeginNeighborPaintFrontier(seed = null) {
+      if (!seed?.enabled || !seed.record) {
+        this.textureAirbrushNeighborScreenStrokeFrontier = null;
+        return null;
+      }
+      const frontier = {
+        record: seed.record,
+        vertices: new Set()
+      };
+      this.textureAirbrushNeighborScreenStrokeFrontier = frontier;
+      return frontier;
+    },
+
+    textureAirbrushNeighborPaintHitVertexSet(record = null, hit = null) {
+      const vertices = new Set();
+      if (!record || !hit?.face) {
+        return vertices;
+      }
+      for (const vertexIndex of faceVertexIndexes(hit.face)) {
+        vertices.add(vertexIndex);
+        for (const linkedIndex of this.textureAirbrushNeighborLinkedVertices?.(record, vertexIndex) || [vertexIndex]) {
+          vertices.add(linkedIndex);
+        }
+      }
+      return vertices;
+    },
+
+    textureAirbrushNeighborFrontierTouchesCandidate(record = null, vertices = null, frontier = null) {
+      const anchors = frontier?.vertices || null;
+      if (!anchors?.size) {
+        return true;
+      }
+      if (!record || frontier.record !== record || !vertices?.size) {
+        return false;
+      }
+      for (const vertexIndex of vertices) {
+        if (anchors.has(vertexIndex)) {
+          return true;
+        }
+        for (const linkedIndex of this.textureAirbrushNeighborLinkedVertices?.(record, vertexIndex) || [vertexIndex]) {
+          if (anchors.has(linkedIndex)) {
+            return true;
+          }
+        }
+        for (const neighborIndex of record.vertexNeighbors?.[vertexIndex] || []) {
+          if (anchors.has(neighborIndex)) {
+            return true;
+          }
+          for (const linkedNeighborIndex of this.textureAirbrushNeighborLinkedVertices?.(record, neighborIndex) || [neighborIndex]) {
+            if (anchors.has(linkedNeighborIndex)) {
+              return true;
+            }
+          }
+        }
+      }
+      return false;
+    },
+
+    textureAirbrushNeighborPaintHitTouchesFrontier(seed = null, paintHit = null) {
+      if (!seed?.enabled) {
+        return true;
+      }
+      const record = paintHit?.record || null;
+      const hit = paintHit?.hit || null;
+      const vertices = this.textureAirbrushNeighborPaintHitVertexSet?.(record, hit) || new Set();
+      const frontier = this.textureAirbrushNeighborScreenStrokeFrontier || null;
+      return this.textureAirbrushNeighborFrontierTouchesCandidate?.(record, vertices, frontier) === true;
+    },
+
+    textureAirbrushRecordNeighborPaintHit(seed = null, paintHit = null) {
+      if (!seed?.enabled || !paintHit?.record || !paintHit?.hit?.face) {
+        return false;
+      }
+      let frontier = this.textureAirbrushNeighborScreenStrokeFrontier || null;
+      if (!frontier || frontier.record !== seed.record) {
+        frontier = this.textureAirbrushBeginNeighborPaintFrontier?.(seed) || null;
+      }
+      if (!frontier) {
+        return false;
+      }
+      const vertices = this.textureAirbrushNeighborPaintHitVertexSet?.(paintHit.record, paintHit.hit) || new Set();
+      for (const vertexIndex of vertices) {
+        frontier.vertices.add(vertexIndex);
+      }
+      return vertices.size > 0;
+    },
+
+    textureAirbrushNeighborScreenSampleState(event = null, options = {}) {
+      const neighborPaintActive = this.texturePaintNeighborModeEnabled?.() === true
+        && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
+      if (!neighborPaintActive) {
+        this.textureAirbrushNeighborScreenStrokeBreakPending = false;
+        return { active: false, allowed: true, resetAfterBreak: false };
+      }
+      if (!Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) {
+        this.textureAirbrushNeighborScreenStrokeBreakPending = true;
+        this.textureAirbrushResetStrokeSpacing?.();
+        return { active: true, allowed: false, resetAfterBreak: false, reason: "missing-event" };
+      }
+      if (
+        typeof this.textureAirbrushNeighborPaintHitFromEvent !== "function"
+        || typeof this.textureAirbrushNeighborSeedAllowsPaintHit !== "function"
+      ) {
+        return {
+          active: true,
+          allowed: true,
+          resetAfterBreak: this.textureAirbrushNeighborScreenStrokeBreakPending === true,
+          seed: this.textureAirbrushActiveNeighborPaintSeed || null
+        };
+      }
+      const paintHit = this.textureAirbrushNeighborPaintHitFromEvent(event, this.activeTool, {
+        raycastFallbackOnScreenMiss: options.reset === true
+      }) || null;
+      let seed = this.textureAirbrushActiveNeighborPaintSeed || null;
+      if (!seed?.enabled) {
+        seed = this.textureAirbrushSyncNeighborPaintSeedForHit?.(paintHit, { reset: options.reset === true })
+          || null;
+        if (seed?.enabled && options.reset === true) {
+          this.textureAirbrushBeginNeighborPaintFrontier?.(seed);
+        }
+      }
+      if (!seed?.enabled) {
+        this.textureAirbrushNeighborScreenStrokeBreakPending = true;
+        this.textureAirbrushResetStrokeSpacing?.();
+        return { active: true, allowed: false, resetAfterBreak: false, reason: "missing-seed", paintHit, seed: null };
+      }
+      if (this.textureAirbrushNeighborSeedAllowsPaintHit(seed, paintHit) !== true) {
+        this.textureAirbrushActiveNeighborPaintSeed = seed;
+        this.textureAirbrushNeighborScreenStrokeBreakPending = true;
+        this.textureAirbrushResetStrokeSpacing?.();
+        return { active: true, allowed: false, resetAfterBreak: false, reason: "disconnected", paintHit, seed };
+      }
+      if (this.textureAirbrushNeighborPaintHitTouchesFrontier?.(seed, paintHit) === false) {
+        this.textureAirbrushActiveNeighborPaintSeed = seed;
+        this.textureAirbrushNeighborScreenStrokeBreakPending = true;
+        this.textureAirbrushResetStrokeSpacing?.();
+        return { active: true, allowed: false, resetAfterBreak: false, reason: "frontier", paintHit, seed };
+      }
+      const resetAfterBreak = this.textureAirbrushNeighborScreenStrokeBreakPending === true;
+      if (resetAfterBreak) {
+        this.textureAirbrushNeighborScreenStrokeBreakPending = false;
+        this.textureAirbrushNeighborPaintHitEventCache = null;
+        this.textureAirbrushResetStrokeSpacing?.();
+      }
+      this.textureAirbrushRecordNeighborPaintHit?.(seed, paintHit);
+      return { active: true, allowed: true, resetAfterBreak, paintHit, seed };
+    },
+
     textureAirbrushSyncNeighborPaintSeedForHit(paintHit = null, options = {}) {
       const current = this.textureAirbrushActiveNeighborPaintSeed || null;
       if (current?.enabled && options.reset !== true) {
@@ -465,16 +643,34 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       if (!this.texturePaintNeighborModeEnabled?.()) {
         return null;
       }
-      const paintHit = this.textureAirbrushNeighborPaintHitFromEvent?.(event, tool) || null;
+      const paintHit = this.textureAirbrushNeighborPaintHitFromEvent?.(event, tool, {
+        raycastFallbackOnScreenMiss: true
+      }) || null;
       return this.textureAirbrushSyncNeighborPaintSeedForHit?.(paintHit, options) || null;
     },
 
     textureAirbrushBeginNeighborPaintStroke(event = null, tool = this.activeTool) {
-      return this.textureAirbrushSyncNeighborPaintSeedForEvent?.(event, tool, { reset: true }) || null;
+      if (!this.texturePaintNeighborModeEnabled?.()) {
+        this.textureAirbrushNeighborScreenStrokeFrontier = null;
+        return null;
+      }
+      const paintHit = this.textureAirbrushNeighborPaintHitFromEvent?.(event, tool) || null;
+      const seed = this.textureAirbrushSyncNeighborPaintSeedForHit?.(paintHit, { reset: true }) || null;
+      if (seed?.enabled) {
+        this.textureAirbrushBeginNeighborPaintFrontier?.(seed);
+        this.textureAirbrushRecordNeighborPaintHit?.(seed, paintHit);
+      } else {
+        this.textureAirbrushNeighborScreenStrokeFrontier = null;
+      }
+      this.textureAirbrushNeighborPaintHitEventCache = null;
+      return seed;
     },
 
     textureAirbrushEndNeighborPaintStroke() {
       this.textureAirbrushActiveNeighborPaintSeed = null;
+      this.textureAirbrushNeighborScreenStrokeFrontier = null;
+      this.textureAirbrushNeighborScreenStrokeBreakPending = false;
+      this.textureAirbrushNeighborPaintHitEventCache = null;
     },
 
     textureAirbrushNeighborRecordMatches(seed = null, record = null) {

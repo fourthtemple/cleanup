@@ -13,6 +13,38 @@ import {
   TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE,
   TEXTURE_AIRBRUSH_SOFT_HALO_SCALE
 } from "../weight-editor/airbrush/math.js";
+import {
+  buildSurfaceUvOwnershipMask,
+  SURFACE_UV_OWNERSHIP_DISTANCE_THRESHOLD,
+  surfaceUvOwnershipKey
+} from "./surface-airbrush/uv-ownership.js";
+import {
+  ensureSurfaceProjectionAttributes,
+  matrixSurfaceKey,
+  roundedSurfaceKeyNumber,
+  surfaceProjectionRecord,
+  surfaceProjectionFrameKey,
+  vertexIndexAt
+} from "./surface-airbrush/projection-record.js";
+import {
+  barycentricForPoint,
+  clamp01,
+  clampBarycentricToTriangle,
+  expandedTrianglePoints,
+  finiteComponentId,
+  finiteNumber,
+  finitePoint,
+  finiteView,
+  interpolateNormal,
+  interpolatePoint2,
+  interpolateScreen,
+  interpolateView,
+  pointDistance,
+  textureLikeSize,
+  triangleArea2,
+  viewFromScreenPoint,
+  worldFromView
+} from "./surface-airbrush/core.js";
 
 const MAX_TSL_SURFACE_SEGMENTS = Math.min(48, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
 const MAX_TSL_SURFACE_STROKE_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
@@ -38,12 +70,10 @@ const SURFACE_LAYER_BLEND_MODE_CODES = Object.freeze({
 });
 const UV_GUTTER_PIXELS = 0;
 const UV_SEAM_BLEED_PIXELS = 8;
-const UV_OVERLAP_MASK_SIZE = 1024;
-const UV_OVERLAP_DISTANCE_THRESHOLD = 0.25;
 const PROJECTED_GUTTER_GEOMETRY_MIN_TRIANGLES = 256;
 const SOURCE_RASTER_GEOMETRY_MIN_TRIANGLES = 4096;
 const TSL_SURFACE_DILATION_PASSES = 1;
-const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1;
+const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 0;
 const TSL_SURFACE_DILATION_SAMPLE_RADII = [1, 2, 4, 8, 12];
 const TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS = 8;
 const TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD = 0.08;
@@ -74,15 +104,7 @@ const SOURCE_RASTER_CLIP_MAX_PADDING_PIXELS = 64;
 const SOURCE_RASTER_CLIP_RADIUS_PADDING_SCALE = 0.5;
 
 const _scratchUv = new THREE.Vector2();
-const _scratchWorld = new THREE.Vector3();
-const _scratchView = new THREE.Vector3();
-const _scratchClip = new THREE.Vector3();
 const _scratchClearColor = new THREE.Color();
-const _scratchNormal = new THREE.Vector3();
-const _scratchNormal4 = new THREE.Vector4();
-const _scratchNormalMatrix = new THREE.Matrix3();
-const _scratchBoneMatrix = new THREE.Matrix4();
-const _scratchSkinMatrix = new THREE.Matrix4();
 const _surfaceAirbrushUvOverlapMasks = new WeakMap();
 const _surfaceAirbrushGeometryComponentStates = new WeakMap();
 let _surfaceAirbrushWhiteMaskTexture = null;
@@ -94,271 +116,9 @@ const MIPMAP_MIN_FILTERS = new Set([
   THREE.LinearMipmapLinearFilter
 ].filter((value) => value !== undefined && value !== null));
 
-function finiteNumber(value, fallback = 0) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : fallback;
-}
-
-function finiteComponentId(value) {
-  const number = Math.floor(Number(value));
-  return Number.isFinite(number) && number >= 0 ? number : -1;
-}
-
-function clamp01(value) {
-  return Math.max(0, Math.min(1, finiteNumber(value, 0)));
-}
-
 function surfaceLayerBlendModeCode(value) {
   const key = String(value || "normal").toLowerCase();
   return SURFACE_LAYER_BLEND_MODE_CODES[key] ?? SURFACE_LAYER_BLEND_MODE_CODES.normal;
-}
-
-function finitePoint(point = null) {
-  return Number.isFinite(point?.x) && Number.isFinite(point?.y)
-    ? { x: Number(point.x), y: Number(point.y) }
-    : null;
-}
-
-function pointDistance(left = null, right = null) {
-  return Number.isFinite(left?.x) && Number.isFinite(left?.y) && Number.isFinite(right?.x) && Number.isFinite(right?.y)
-    ? Math.hypot(Number(left.x) - Number(right.x), Number(left.y) - Number(right.y))
-    : Infinity;
-}
-
-function finiteView(point = null) {
-  return Number.isFinite(point?.x) && Number.isFinite(point?.y) && Number.isFinite(point?.z)
-    ? { x: Number(point.x), y: Number(point.y), z: Number(point.z) }
-    : null;
-}
-
-function bufferAttributeComponent(attribute = null, vertexIndex = 0, component = 0, fallback = 0) {
-  if (!attribute || vertexIndex < 0 || component < 0) {
-    return fallback;
-  }
-  if (typeof attribute.getComponent === "function") {
-    return finiteNumber(attribute.getComponent(vertexIndex, component), fallback);
-  }
-  const itemSize = Math.max(1, Math.floor(Number(attribute.itemSize) || 1));
-  return finiteNumber(attribute.array?.[vertexIndex * itemSize + component], fallback);
-}
-
-function addWeightedMatrix(target = null, source = null, weight = 0) {
-  const targetElements = target?.elements || null;
-  const sourceElements = source?.elements || null;
-  if (!targetElements || !sourceElements || !Number.isFinite(weight) || weight === 0) {
-    return false;
-  }
-  for (let index = 0; index < 16; index += 1) {
-    targetElements[index] += sourceElements[index] * weight;
-  }
-  return true;
-}
-
-function skinLocalNormalForVertex(object = null, geometry = null, vertexIndex = 0, normal = null) {
-  const skinIndex = geometry?.attributes?.skinIndex || null;
-  const skinWeight = geometry?.attributes?.skinWeight || null;
-  const skeleton = object?.skeleton || null;
-  if (!normal || object?.isSkinnedMesh !== true || !skinIndex || !skinWeight || !skeleton) {
-    return normal;
-  }
-  skeleton.update?.();
-  _scratchSkinMatrix.set(
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0,
-    0, 0, 0, 0
-  );
-  let totalWeight = 0;
-  const influenceCount = Math.max(
-    Math.floor(Number(skinIndex.itemSize) || 0),
-    Math.floor(Number(skinWeight.itemSize) || 0),
-    4
-  );
-  for (let influence = 0; influence < influenceCount; influence += 1) {
-    const weight = bufferAttributeComponent(skinWeight, vertexIndex, influence, 0);
-    if (!Number.isFinite(weight) || Math.abs(weight) <= 0.000001) {
-      continue;
-    }
-    const boneIndex = Math.floor(bufferAttributeComponent(skinIndex, vertexIndex, influence, -1));
-    if (!Number.isFinite(boneIndex) || boneIndex < 0) {
-      continue;
-    }
-    if (typeof skeleton.getBoneMatrix === "function") {
-      skeleton.getBoneMatrix(boneIndex, _scratchBoneMatrix);
-    } else if (skeleton.boneMatrices?.length >= boneIndex * 16 + 16) {
-      _scratchBoneMatrix.fromArray(skeleton.boneMatrices, boneIndex * 16);
-    } else {
-      continue;
-    }
-    addWeightedMatrix(_scratchSkinMatrix, _scratchBoneMatrix, weight);
-    totalWeight += Math.abs(weight);
-  }
-  if (totalWeight <= 0.000001) {
-    return normal;
-  }
-  if (object.bindMatrix && object.bindMatrixInverse) {
-    _scratchSkinMatrix.multiplyMatrices(object.bindMatrixInverse, _scratchSkinMatrix).multiply(object.bindMatrix);
-  }
-  _scratchNormal4.set(normal.x, normal.y, normal.z, 0).applyMatrix4(_scratchSkinMatrix);
-  normal.set(_scratchNormal4.x, _scratchNormal4.y, _scratchNormal4.z);
-  return normal.lengthSq() > 0.000001 ? normal.normalize() : normal;
-}
-
-function worldFromView(editor = null, point = null) {
-  if (!editor?.camera || !finiteView(point)) {
-    return null;
-  }
-  const world = _scratchWorld.set(point.x, point.y, point.z).applyMatrix4(editor.camera.matrixWorld);
-  return Number.isFinite(world.x) && Number.isFinite(world.y) && Number.isFinite(world.z)
-    ? { x: world.x, y: world.y, z: world.z }
-    : null;
-}
-
-function viewFromScreenPoint(point = null) {
-  return Number.isFinite(point?.viewX) && Number.isFinite(point?.viewY) && Number.isFinite(point?.viewZ)
-    ? { x: Number(point.viewX), y: Number(point.viewY), z: Number(point.viewZ) }
-    : finiteView(point);
-}
-
-function triangleArea2(a, b, c) {
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
-
-function barycentricForPoint(point, a, b, c) {
-  const denom = triangleArea2(a, b, c);
-  if (!Number.isFinite(denom) || Math.abs(denom) <= 0.000001) {
-    return null;
-  }
-  const u = triangleArea2(point, b, c) / denom;
-  const v = triangleArea2(a, point, c) / denom;
-  const w = triangleArea2(a, b, point) / denom;
-  return { u, v, w };
-}
-
-function interpolateView(barycentric, a, b, c) {
-  if (!barycentric || !a || !b || !c) {
-    return null;
-  }
-  return {
-    x: a.x * barycentric.u + b.x * barycentric.v + c.x * barycentric.w,
-    y: a.y * barycentric.u + b.y * barycentric.v + c.y * barycentric.w,
-    z: a.z * barycentric.u + b.z * barycentric.v + c.z * barycentric.w
-  };
-}
-
-function interpolateScreen(barycentric, a, b, c) {
-  if (!barycentric || !a || !b || !c) {
-    return null;
-  }
-  return {
-    x: a.x * barycentric.u + b.x * barycentric.v + c.x * barycentric.w,
-    y: a.y * barycentric.u + b.y * barycentric.v + c.y * barycentric.w,
-    z: finiteNumber(a.z, 0) * barycentric.u
-      + finiteNumber(b.z, 0) * barycentric.v
-      + finiteNumber(c.z, 0) * barycentric.w
-  };
-}
-
-function clampBarycentricToTriangle(barycentric = null) {
-  if (!barycentric) {
-    return null;
-  }
-  const u = Math.max(0, finiteNumber(barycentric.u, 0));
-  const v = Math.max(0, finiteNumber(barycentric.v, 0));
-  const w = Math.max(0, finiteNumber(barycentric.w, 0));
-  const sum = u + v + w;
-  if (sum <= 0.000001) {
-    return { u: 1, v: 0, w: 0 };
-  }
-  return {
-    u: u / sum,
-    v: v / sum,
-    w: w / sum
-  };
-}
-
-function interpolatePoint2(barycentric, a, b, c) {
-  if (!barycentric || !a || !b || !c) {
-    return null;
-  }
-  return {
-    x: a.x * barycentric.u + b.x * barycentric.v + c.x * barycentric.w,
-    y: a.y * barycentric.u + b.y * barycentric.v + c.y * barycentric.w
-  };
-}
-
-function interpolateNormal(barycentric, a, b, c) {
-  if (!barycentric || !a || !b || !c) {
-    return null;
-  }
-  const x = a.x * barycentric.u + b.x * barycentric.v + c.x * barycentric.w;
-  const y = a.y * barycentric.u + b.y * barycentric.v + c.y * barycentric.w;
-  const z = a.z * barycentric.u + b.z * barycentric.v + c.z * barycentric.w;
-  const length = Math.hypot(x, y, z);
-  if (length <= 0.000001) {
-    return null;
-  }
-  return { x: x / length, y: y / length, z: z / length };
-}
-
-function rightNormal(edge) {
-  const length = Math.hypot(edge.x, edge.y);
-  if (length <= 0.000001) {
-    return { x: 0, y: 0 };
-  }
-  return { x: edge.y / length, y: -edge.x / length };
-}
-
-function outwardNormal(edge, ccw) {
-  const normal = rightNormal(edge);
-  return ccw ? normal : { x: -normal.x, y: -normal.y };
-}
-
-function expandCorner(point, center, firstNormal, secondNormal, margin) {
-  let x = firstNormal.x + secondNormal.x;
-  let y = firstNormal.y + secondNormal.y;
-  if (x * x + y * y <= 0.000001) {
-    x = point.x - center.x;
-    y = point.y - center.y;
-  }
-  const length = Math.hypot(x, y);
-  if (length <= 0.000001) {
-    return point;
-  }
-  x /= length;
-  y /= length;
-  const firstDot = Math.abs(x * firstNormal.x + y * firstNormal.y);
-  const secondDot = Math.abs(x * secondNormal.x + y * secondNormal.y);
-  const miterDenom = Math.max(0.35, firstDot, secondDot);
-  const miterLength = Math.min(margin * 4, margin / miterDenom);
-  return {
-    x: point.x + x * miterLength,
-    y: point.y + y * miterLength
-  };
-}
-
-function expandedTrianglePoints(a, b, c, margin = UV_GUTTER_PIXELS) {
-  const center = {
-    x: (a.x + b.x + c.x) / 3,
-    y: (a.y + b.y + c.y) / 3
-  };
-  const ccw = triangleArea2(a, b, c) > 0;
-  const normalAB = outwardNormal({ x: b.x - a.x, y: b.y - a.y }, ccw);
-  const normalBC = outwardNormal({ x: c.x - b.x, y: c.y - b.y }, ccw);
-  const normalCA = outwardNormal({ x: a.x - c.x, y: a.y - c.y }, ccw);
-  return [
-    expandCorner(a, center, normalCA, normalAB, margin),
-    expandCorner(b, center, normalAB, normalBC, margin),
-    expandCorner(c, center, normalBC, normalCA, margin)
-  ];
-}
-
-function textureLikeSize(texture = null) {
-  const image = texture?.image || texture?.source?.data || null;
-  return {
-    width: Math.max(1, Math.floor(Number(image?.width) || Number(texture?.width) || 1)),
-    height: Math.max(1, Math.floor(Number(image?.height) || Number(texture?.height) || 1))
-  };
 }
 
 function surfaceAirbrushDilationPasses() {
@@ -506,78 +266,6 @@ function surfaceAirbrushTransparentTexture() {
   return texture;
 }
 
-function sourceObjectUvOverlapMaskKey(sourceObject = null) {
-  const geometry = sourceObject?.geometry || null;
-  return [
-    geometry?.uuid || geometry?.id || "geometry",
-    Number(geometry?.attributes?.position?.version) || 0,
-    Number(geometry?.attributes?.uv?.version) || 0,
-    Number(geometry?.index?.version) || 0,
-    UV_OVERLAP_MASK_SIZE,
-    UV_OVERLAP_DISTANCE_THRESHOLD
-  ].join(":");
-}
-
-function uvTriangleContainsPoint(point = null, triangle = null) {
-  if (!point || !triangle?.uvs?.length) {
-    return false;
-  }
-  const [a, b, c] = triangle.uvs;
-  const area = triangleArea2(a, b, c);
-  if (!Number.isFinite(area) || Math.abs(area) <= 0.000000000001) {
-    return false;
-  }
-  const sign = Math.sign(area) || 1;
-  return (
-    triangleArea2(a, b, point) * sign >= -0.0000001
-    && triangleArea2(b, c, point) * sign >= -0.0000001
-    && triangleArea2(c, a, point) * sign >= -0.0000001
-  );
-}
-
-function centroidDistance(left = null, right = null) {
-  if (!left || !right) {
-    return 0;
-  }
-  return Math.hypot(
-    finiteNumber(left.x, 0) - finiteNumber(right.x, 0),
-    finiteNumber(left.y, 0) - finiteNumber(right.y, 0),
-    finiteNumber(left.z, 0) - finiteNumber(right.z, 0)
-  );
-}
-
-function overlapMaskPositionKey(point = null, scale = 10000) {
-  return [
-    roundedSurfaceKeyNumber(point?.x, scale),
-    roundedSurfaceKeyNumber(point?.y, scale),
-    roundedSurfaceKeyNumber(point?.z, scale)
-  ].join(",");
-}
-
-function triangleSharesSurfaceEdge(left = null, right = null) {
-  if (!left || !right) {
-    return false;
-  }
-  const leftIndices = new Set(left.vertexIndices || []);
-  const sharedIndices = (right.vertexIndices || []).filter((index) => leftIndices.has(index)).length;
-  if (sharedIndices >= 2) {
-    return true;
-  }
-  const leftPositions = new Set(left.positionKeys || []);
-  const sharedPositions = (right.positionKeys || []).filter((key) => leftPositions.has(key)).length;
-  return sharedPositions >= 2;
-}
-
-function trianglesHaveAmbiguousUvOverlap(left = null, right = null) {
-  if (!left || !right || left === right) {
-    return false;
-  }
-  if (triangleSharesSurfaceEdge(left, right)) {
-    return false;
-  }
-  return true;
-}
-
 function sourceObjectUvOverlapMaskTexture(sourceObject = null) {
   if (!surfaceAirbrushUvOverlapMaskEnabled()) {
     return surfaceAirbrushWhiteMaskTexture();
@@ -588,106 +276,12 @@ function sourceObjectUvOverlapMaskTexture(sourceObject = null) {
   if (!geometry || !position || !uvAttribute || typeof THREE.DataTexture !== "function") {
     return surfaceAirbrushWhiteMaskTexture();
   }
-  const key = sourceObjectUvOverlapMaskKey(sourceObject);
+  const key = surfaceUvOwnershipKey(geometry);
   const cached = _surfaceAirbrushUvOverlapMasks.get(geometry);
   if (cached?.key === key && cached.texture) {
     return cached.texture;
   }
-  const elementCount = geometry.index?.count || position.count || 0;
-  const triangles = [];
-  for (let elementStart = 0; elementStart + 2 < elementCount; elementStart += 3) {
-    const ia = vertexIndexAt(geometry, elementStart);
-    const ib = vertexIndexAt(geometry, elementStart + 1);
-    const ic = vertexIndexAt(geometry, elementStart + 2);
-    const uvs = [ia, ib, ic].map((index) => ({
-      x: finiteNumber(uvAttribute.getX(index), 0),
-      y: finiteNumber(uvAttribute.getY(index), 0)
-    }));
-    if (Math.abs(triangleArea2(uvs[0], uvs[1], uvs[2])) <= 0.000000000001) {
-      continue;
-    }
-    const points = [ia, ib, ic].map((index) => ({
-      x: finiteNumber(position.getX(index), 0),
-      y: finiteNumber(position.getY(index), 0),
-      z: finiteNumber(position.getZ(index), 0)
-    }));
-    triangles.push({
-      vertexIndices: [ia, ib, ic],
-      positionKeys: points.map((point) => overlapMaskPositionKey(point)),
-      uvs,
-      centroid: {
-        x: (points[0].x + points[1].x + points[2].x) / 3,
-        y: (points[0].y + points[1].y + points[2].y) / 3,
-        z: (points[0].z + points[1].z + points[2].z) / 3
-      },
-      minU: Math.min(uvs[0].x, uvs[1].x, uvs[2].x),
-      maxU: Math.max(uvs[0].x, uvs[1].x, uvs[2].x),
-      minV: Math.min(uvs[0].y, uvs[1].y, uvs[2].y),
-      maxV: Math.max(uvs[0].y, uvs[1].y, uvs[2].y)
-    });
-  }
-  const size = UV_OVERLAP_MASK_SIZE;
-  const owner = new Int32Array(size * size);
-  owner.fill(-1);
-  const ambiguous = new Uint8Array(size * size);
-  for (let triangleIndex = 0; triangleIndex < triangles.length; triangleIndex += 1) {
-    const triangle = triangles[triangleIndex];
-    const minX = Math.max(0, Math.floor(triangle.minU * size));
-    const maxX = Math.min(size - 1, Math.floor(triangle.maxU * size));
-    const minY = Math.max(0, Math.floor(triangle.minV * size));
-    const maxY = Math.min(size - 1, Math.floor(triangle.maxV * size));
-    for (let y = minY; y <= maxY; y += 1) {
-      for (let x = minX; x <= maxX; x += 1) {
-        const point = {
-          x: (x + 0.5) / size,
-          y: (y + 0.5) / size
-        };
-        if (!uvTriangleContainsPoint(point, triangle)) {
-          continue;
-        }
-        const offset = y * size + x;
-        const previous = owner[offset];
-        if (previous < 0) {
-          owner[offset] = triangleIndex;
-          continue;
-        }
-        if (previous !== triangleIndex && trianglesHaveAmbiguousUvOverlap(triangles[previous], triangle)) {
-          ambiguous[offset] = 1;
-        }
-      }
-    }
-  }
-  const expandedAmbiguous = new Uint8Array(ambiguous);
-  for (let y = 0; y < size; y += 1) {
-    for (let x = 0; x < size; x += 1) {
-      const offset = y * size + x;
-      if (!ambiguous[offset]) {
-        continue;
-      }
-      for (let dy = -1; dy <= 1; dy += 1) {
-        for (let dx = -1; dx <= 1; dx += 1) {
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
-            expandedAmbiguous[ny * size + nx] = 1;
-          }
-        }
-      }
-    }
-  }
-  let ambiguousTexels = 0;
-  const data = new Uint8Array(size * size * 4);
-  for (let index = 0; index < expandedAmbiguous.length; index += 1) {
-    const value = expandedAmbiguous[index] ? 0 : 255;
-    if (!value) {
-      ambiguousTexels += 1;
-    }
-    const offset = index * 4;
-    data[offset] = value;
-    data[offset + 1] = value;
-    data[offset + 2] = value;
-    data[offset + 3] = 255;
-  }
+  const { data, size, ambiguousTexels } = buildSurfaceUvOwnershipMask(geometry);
   const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
   texture.name = "texture-paint-tsl-surface-airbrush-uv-overlap-mask";
   texture.colorSpace = THREE.NoColorSpace || texture.colorSpace;
@@ -701,7 +295,7 @@ function sourceObjectUvOverlapMaskTexture(sourceObject = null) {
   texture.userData.texturePaintTslSurfaceOverlapMask = {
     ambiguousTexels,
     size,
-    threshold: UV_OVERLAP_DISTANCE_THRESHOLD
+    threshold: SURFACE_UV_OWNERSHIP_DISTANCE_THRESHOLD
   };
   cached?.texture?.dispose?.();
   _surfaceAirbrushUvOverlapMasks.set(geometry, { key, texture, ambiguousTexels });
@@ -1745,113 +1339,6 @@ function geometryTriangleMaterialIndex(geometry = null, elementStart = 0) {
   return 0;
 }
 
-function vertexIndexAt(geometry = null, elementIndex = 0) {
-  const index = geometry?.index || null;
-  if (index && typeof index.getX === "function") {
-    return Math.max(0, Math.floor(Number(index.getX(elementIndex)) || 0));
-  }
-  return Math.max(0, Math.floor(Number(elementIndex) || 0));
-}
-
-function worldPositionForVertex(object = null, geometry = null, vertexIndex = 0) {
-  const position = geometry?.attributes?.position || null;
-  if (!object || !position) {
-    return null;
-  }
-  const point = _scratchWorld;
-  if (typeof object.applyBoneTransform === "function") {
-    point.fromBufferAttribute(position, vertexIndex);
-    object.applyBoneTransform(vertexIndex, point);
-  } else if (typeof object.boneTransform === "function") {
-    point.fromBufferAttribute(position, vertexIndex);
-    object.boneTransform(vertexIndex, point);
-  } else {
-    point.fromBufferAttribute(position, vertexIndex);
-  }
-  if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) {
-    return null;
-  }
-  object.localToWorld?.(point);
-  return {
-    x: point.x,
-    y: point.y,
-    z: point.z
-  };
-}
-
-function viewNormalForVertex(object = null, geometry = null, vertexIndex = 0, editor = null) {
-  const normal = geometry?.attributes?.normal || null;
-  const camera = editor?.camera || null;
-  if (!object || !normal || !camera) {
-    return null;
-  }
-  _scratchNormal.fromBufferAttribute(normal, vertexIndex);
-  if (!_scratchNormal.lengthSq()) {
-    return null;
-  }
-  skinLocalNormalForVertex(object, geometry, vertexIndex, _scratchNormal);
-  _scratchNormalMatrix.getNormalMatrix(object.matrixWorld);
-  _scratchNormal.applyMatrix3(_scratchNormalMatrix).normalize();
-  _scratchNormal.transformDirection(camera.matrixWorldInverse);
-  if (!Number.isFinite(_scratchNormal.x) || !Number.isFinite(_scratchNormal.y) || !Number.isFinite(_scratchNormal.z)) {
-    return null;
-  }
-  return {
-    x: _scratchNormal.x,
-    y: _scratchNormal.y,
-    z: _scratchNormal.z
-  };
-}
-
-function screenPointForWorld(editor = null, world = null) {
-  const camera = editor?.camera || null;
-  const rect = editor?.canvas?.getBoundingClientRect?.() || null;
-  if (!camera || !rect || !Number.isFinite(world?.x) || !Number.isFinite(world?.y) || !Number.isFinite(world?.z)) {
-    return null;
-  }
-  const view = _scratchView.set(world.x, world.y, world.z).applyMatrix4(camera.matrixWorldInverse);
-  const viewX = view.x;
-  const viewY = view.y;
-  const viewZ = view.z;
-  const clip = _scratchClip.set(viewX, viewY, viewZ).applyMatrix4(camera.projectionMatrix);
-  if (!Number.isFinite(clip.x) || !Number.isFinite(clip.y) || !Number.isFinite(viewZ)) {
-    return null;
-  }
-  return {
-    x: (clip.x * 0.5 + 0.5) * rect.width,
-    y: (-clip.y * 0.5 + 0.5) * rect.height,
-    z: Number.isFinite(clip.z) ? clip.z : 0,
-    viewX,
-    viewY,
-    viewZ,
-    clipW: camera.isPerspectiveCamera ? Math.abs(viewZ) : 1
-  };
-}
-
-function roundedSurfaceKeyNumber(value = null, scale = 1000000) {
-  const number = Number(value);
-  return Number.isFinite(number) ? Math.round(number * scale) : "n";
-}
-
-function matrixSurfaceKey(matrix = null, scale = 1000000) {
-  const elements = matrix?.elements || matrix || null;
-  if (!elements?.length) {
-    return "";
-  }
-  return Array.from(elements)
-    .map((value) => roundedSurfaceKeyNumber(value, scale))
-    .join(",");
-}
-
-function arraySurfaceKey(values = null, scale = 100000) {
-  if (!values?.length) {
-    return "";
-  }
-  return Array.from(values)
-    .map((value) => roundedSurfaceKeyNumber(value, scale))
-    .join(",");
-}
-
 function surfaceDebugKeyHash(value = "") {
   const text = String(value || "");
   let hash = 2166136261;
@@ -1869,21 +1356,6 @@ function surfaceTextureDebugName(texture = null) {
   return String(texture.name || texture.uuid || texture.id || texture.constructor?.name || "texture");
 }
 
-function sourceObjectSurfaceProjectionKey(sourceObject = null) {
-  const geometry = sourceObject?.geometry || null;
-  return [
-    sourceObject?.uuid || sourceObject?.id || sourceObject?.name || "object",
-    geometry?.uuid || geometry?.id || "geometry",
-    Number(geometry?.attributes?.position?.version) || 0,
-    Number(geometry?.attributes?.normal?.version) || 0,
-    Number(geometry?.attributes?.uv?.version) || 0,
-    Number(geometry?.index?.version) || 0,
-    matrixSurfaceKey(sourceObject?.matrixWorld),
-    arraySurfaceKey(sourceObject?.skeleton?.boneMatrices, 10000),
-    arraySurfaceKey(sourceObject?.morphTargetInfluences, 100000)
-  ].join("|");
-}
-
 function sourceObjectUvCoverageKey(sourceObject = null) {
   const geometry = sourceObject?.geometry || null;
   return [
@@ -1894,25 +1366,6 @@ function sourceObjectUvCoverageKey(sourceObject = null) {
     Number(geometry?.index?.version) || 0,
     maxGeometryGroupMaterialIndex(geometry)
   ].join("|");
-}
-
-function surfaceProjectionFrameKey(editor = null, sourceObjects = []) {
-  const rect = editor?.canvas?.getBoundingClientRect?.() || null;
-  const camera = editor?.camera || null;
-  camera?.updateMatrixWorld?.(true);
-  const objectKeys = [];
-  for (const sourceObject of Array.isArray(sourceObjects) ? sourceObjects : []) {
-    sourceObject?.updateMatrixWorld?.(true);
-    objectKeys.push(sourceObjectSurfaceProjectionKey(sourceObject));
-  }
-  return [
-    rect?.width || editor?.canvas?.clientWidth || editor?.canvas?.width || 0,
-    rect?.height || editor?.canvas?.clientHeight || editor?.canvas?.height || 0,
-    Number(editor?.textureAirbrushCameraPrewarmSerial) || 0,
-    matrixSurfaceKey(camera?.matrixWorldInverse),
-    matrixSurfaceKey(camera?.projectionMatrix),
-    objectKeys.join(";")
-  ].join(":");
 }
 
 function texturePixelForUv(uvAttribute = null, vertexIndex = 0, texture = null, width = 1, height = 1) {
@@ -1979,8 +1432,7 @@ function meshUvProjectedTriangles(editor = null, candidate = null, width = 1, he
     Math.floor(Number(uvAttribute.count) || 0)
   );
   const uvPixels = new Array(vertexCount);
-  const screenPoints = new Array(vertexCount);
-  const viewNormals = new Array(vertexCount);
+  const projectionRecords = new Array(vertexCount);
   const getUvPixel = (vertexIndex = 0) => {
     if (vertexIndex < 0 || vertexIndex >= vertexCount) {
       return null;
@@ -1990,26 +1442,23 @@ function meshUvProjectedTriangles(editor = null, candidate = null, width = 1, he
     }
     return uvPixels[vertexIndex];
   };
-  const getScreenPoint = (vertexIndex = 0) => {
+  const getProjectionRecord = (vertexIndex = 0) => {
     if (vertexIndex < 0 || vertexIndex >= vertexCount) {
       return null;
     }
-    if (screenPoints[vertexIndex] === undefined) {
-      screenPoints[vertexIndex] = screenPointForWorld(
+    if (projectionRecords[vertexIndex] === undefined) {
+      projectionRecords[vertexIndex] = surfaceProjectionRecord(
         editor,
-        worldPositionForVertex(object, geometry, vertexIndex)
-      ) || null;
+        object,
+        geometry,
+        vertexIndex
+      );
     }
-    return screenPoints[vertexIndex];
+    return projectionRecords[vertexIndex];
   };
+  const getScreenPoint = (vertexIndex = 0) => getProjectionRecord(vertexIndex)?.screenPoint || null;
   const getViewNormal = (vertexIndex = 0, fallback = null) => {
-    if (vertexIndex < 0 || vertexIndex >= vertexCount) {
-      return fallback;
-    }
-    if (viewNormals[vertexIndex] === undefined) {
-      viewNormals[vertexIndex] = viewNormalForVertex(object, geometry, vertexIndex, editor) || null;
-    }
-    return viewNormals[vertexIndex] || fallback;
+    return getProjectionRecord(vertexIndex)?.normal || fallback;
   };
   const triangles = [];
   for (let elementStart = 0; elementStart + 2 < elementCount; elementStart += 3) {
@@ -4430,6 +3879,19 @@ function sourceUvRasterTriangles(
   editor.camera.updateMatrixWorld?.(true);
   const componentState = sourceObjectComponentState(editor, sourceObject);
   const elementCount = geometry.index?.count || position.count || 0;
+  const projectionRecords = new Array(Math.max(0, Math.floor(Number(position.count) || 0)));
+  const projectionRecordAt = (vertexIndex = 0) => {
+    if (projectionRecords[vertexIndex] === undefined) {
+      projectionRecords[vertexIndex] = surfaceProjectionRecord(
+        editor,
+        sourceObject,
+        geometry,
+        vertexIndex,
+        componentState?.componentIds?.[vertexIndex]
+      );
+    }
+    return projectionRecords[vertexIndex];
+  };
   const triangles = [];
   for (let elementStart = 0; elementStart + 2 < elementCount; elementStart += 3) {
     const materialIndex = geometryTriangleMaterialIndex(geometry, elementStart);
@@ -4448,15 +3910,15 @@ function sourceUvRasterTriangles(
     if (!a || !b || !c || Math.abs(triangleArea2(a, b, c)) <= 0.000001) {
       continue;
     }
-    const worldA = worldPositionForVertex(sourceObject, geometry, ia);
-    const worldB = worldPositionForVertex(sourceObject, geometry, ib);
-    const worldC = worldPositionForVertex(sourceObject, geometry, ic);
-    const screenA = screenPointForWorld(editor, worldA);
-    const screenB = screenPointForWorld(editor, worldB);
-    const screenC = screenPointForWorld(editor, worldC);
-    const normalA = viewNormalForVertex(sourceObject, geometry, ia, editor) || { x: 0, y: 0, z: 1 };
-    const normalB = viewNormalForVertex(sourceObject, geometry, ib, editor) || normalA;
-    const normalC = viewNormalForVertex(sourceObject, geometry, ic, editor) || normalB;
+    const projectionA = projectionRecordAt(ia);
+    const projectionB = projectionRecordAt(ib);
+    const projectionC = projectionRecordAt(ic);
+    const screenA = projectionA?.screenPoint || null;
+    const screenB = projectionB?.screenPoint || null;
+    const screenC = projectionC?.screenPoint || null;
+    const normalA = projectionA?.normal || { x: 0, y: 0, z: 1 };
+    const normalB = projectionB?.normal || normalA;
+    const normalC = projectionC?.normal || normalB;
     const componentId = componentIdForTriangleVertices(componentState, ia, ib, ic);
     if (!sourceRasterTriangleAllowsComponent(componentId, options)) {
       continue;
@@ -6090,84 +5552,6 @@ function ensureUvOccupancyMask(
   return cache.uvOccupancyTarget.texture;
 }
 
-function ensureSurfaceProjectionAttributes(entry = null, editor = null) {
-  const sourceObject = entry?.sourceObject || null;
-  const sourceGeometry = sourceObject?.geometry || entry?.geometry || null;
-  const rasterGeometry = entry?.mesh?.geometry || null;
-  const position = sourceGeometry?.attributes?.position || null;
-  if (!sourceObject || !sourceGeometry || !rasterGeometry || !position || !editor?.camera) {
-    return false;
-  }
-  sourceObject.updateMatrixWorld?.(true);
-  editor.camera.updateMatrixWorld?.(true);
-  const vertexCount = Math.max(0, Math.floor(Number(position.count) || 0));
-  let viewAttribute = rasterGeometry.getAttribute?.("paintView") || null;
-  let screenAttribute = rasterGeometry.getAttribute?.("paintScreen") || null;
-  let normalAttribute = rasterGeometry.getAttribute?.("paintNormal") || null;
-  if (!viewAttribute || viewAttribute.count !== vertexCount) {
-    viewAttribute = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
-    rasterGeometry.setAttribute("paintView", viewAttribute);
-  }
-  if (!screenAttribute || screenAttribute.count !== vertexCount) {
-    screenAttribute = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
-    rasterGeometry.setAttribute("paintScreen", screenAttribute);
-  }
-  if (!normalAttribute || normalAttribute.count !== vertexCount) {
-    normalAttribute = new THREE.BufferAttribute(new Float32Array(vertexCount * 3), 3);
-    rasterGeometry.setAttribute("paintNormal", normalAttribute);
-  }
-  const componentState = sourceObjectComponentState(editor, sourceObject);
-  const frameProjectionKey = surfaceProjectionFrameKey(editor, [sourceObject]);
-  const projectionKey = frameProjectionKey
-    ? [frameProjectionKey, sourceObjectComponentKey(editor, sourceObject)].join("|")
-    : "";
-  if (
-    projectionKey
-    && entry.texturePaintTslSurfaceProjectionKey === projectionKey
-    && viewAttribute.count === vertexCount
-    && screenAttribute.count === vertexCount
-    && normalAttribute.count === vertexCount
-  ) {
-    return true;
-  }
-  const viewArray = viewAttribute.array;
-  const screenArray = screenAttribute.array;
-  const normalArray = normalAttribute.array;
-  for (let index = 0; index < vertexCount; index += 1) {
-    const world = worldPositionForVertex(sourceObject, sourceGeometry, index);
-    const screen = screenPointForWorld(editor, world);
-    const normal = viewNormalForVertex(sourceObject, sourceGeometry, index, editor);
-    const componentId = finiteComponentId(componentState?.componentIds?.[index]);
-    const offset = index * 3;
-    if (screen) {
-      viewArray[offset] = finiteNumber(screen.viewX, 0);
-      viewArray[offset + 1] = finiteNumber(screen.viewY, 0);
-      viewArray[offset + 2] = finiteNumber(screen.viewZ, 0);
-      screenArray[offset] = finiteNumber(screen.x, -1000000);
-      screenArray[offset + 1] = finiteNumber(screen.y, -1000000);
-      screenArray[offset + 2] = componentId >= 0 ? componentId + 1 : 0;
-      normalArray[offset] = finiteNumber(normal?.x, 0);
-      normalArray[offset + 1] = finiteNumber(normal?.y, 0);
-      normalArray[offset + 2] = finiteNumber(normal?.z, 1);
-    } else {
-      viewArray[offset] = 0;
-      viewArray[offset + 1] = 0;
-      viewArray[offset + 2] = 1000000;
-      screenArray[offset] = -1000000;
-      screenArray[offset + 1] = -1000000;
-      screenArray[offset + 2] = componentId >= 0 ? componentId + 1 : 0;
-      normalArray[offset] = 0;
-      normalArray[offset + 1] = 0;
-      normalArray[offset + 2] = -1;
-    }
-  }
-  viewAttribute.needsUpdate = true;
-  screenAttribute.needsUpdate = true;
-  normalAttribute.needsUpdate = true;
-  entry.texturePaintTslSurfaceProjectionKey = projectionKey;
-  return true;
-}
-
 function ensureUvRasterMesh(cache = null, sourceObject = null, material = null) {
   if (!cache || !sourceObject || !material) {
     return null;
@@ -6349,7 +5733,10 @@ function ensureUvRasterMeshes(
     }
     if (useOriginalMeshUvRaster) {
       syncUvRasterMeshFromSource(entry.mesh, sourceObject);
-      ensureSurfaceProjectionAttributes(entry, cache.editor || null);
+      ensureSurfaceProjectionAttributes(entry, cache.editor || null, {
+        componentState: sourceObjectComponentState(cache.editor || null, sourceObject),
+        componentKey: sourceObjectComponentKey(cache.editor || null, sourceObject)
+      });
     } else if (!ensureSourceUvRasterGeometry(
       entry,
       cache.editor || null,
@@ -7737,8 +7124,9 @@ function createSurfaceMaterial(
           .mul(normalGate)
           .mul(segmentLocalityGate)
           .toVar();
+        const uvOwnershipGate = overlapCanWrite.select(float(1), float(0)).toVar();
         const sourceCoverage = originalMeshUvRaster
-          ? gatedCoverage
+          ? gatedCoverage.mul(uvOwnershipGate).toVar()
           : gatedCoverage.mul(gutterCanWrite.select(float(1), float(0))).toVar();
         const sampleCoverage = sourceCoverage.toVar();
         coverage.assign(max(coverage, sampleCoverage));
@@ -8316,19 +7704,8 @@ function surfaceStrokeStyleKey(candidate = null, options = {}) {
     || options.largeLiveNeighborPaint === true
     || candidate?.options?.largeLiveNeighborPaint === true
   );
-  const styleRadiusPixels = finiteNumber(
-    options.screenRadiusPixels,
-    finiteNumber(
-      candidate?.screenRadiusPixels,
-      finiteNumber(
-        candidate?.options?.screenRadiusPixels,
-        finiteNumber(options.radiusPixels, candidate?.radiusPixels ?? 0)
-      )
-    )
-  );
   return [
     colorKey,
-    Math.round(styleRadiusPixels * 100),
     Math.round(finiteNumber(options.opacity, candidate?.opacity ?? 1) * 10000),
     Math.round(finiteNumber(options.hardness, candidate?.hardness ?? 0) * 10000),
     Math.round(finiteNumber(options.scatter, candidate?.scatter ?? 0) * 10000),
@@ -8368,6 +7745,15 @@ function surfaceStrokeSegmentsAreContinuous(previousSegment = null, firstSegment
   if (screenGap <= 0.001 || screenGap > radius * 2.25) {
     return false;
   }
+  const previousComponentEnd = finiteComponentId(previousSegment?.componentEnd ?? previousSegment?.componentStart);
+  const firstComponentStart = finiteComponentId(firstSegment?.componentStart ?? firstSegment?.componentEnd);
+  if (
+    previousComponentEnd >= 0
+    && firstComponentStart >= 0
+    && previousComponentEnd !== firstComponentStart
+  ) {
+    return false;
+  }
   const previousViewEnd = finiteView(previousSegment?.viewEnd);
   const firstViewStart = finiteView(firstSegment?.viewStart);
   const viewRadius = Math.max(
@@ -8385,7 +7771,7 @@ function surfaceStrokeSegmentsAreContinuous(previousSegment = null, firstSegment
       )
     : 0;
   if (!previousViewEnd || !firstViewStart) {
-    return false;
+    return true;
   }
   const maxViewGap = Math.max(viewRadius * 2.25, 0.001);
   if (viewGap > maxViewGap) {
@@ -8398,10 +7784,86 @@ function surfaceStrokeSegmentsAreContinuous(previousSegment = null, firstSegment
   return normalDot === null || normalDot >= -0.05;
 }
 
+function surfaceStrokeForwardTangent(start = null, end = null, chord = null, maxLength = 0) {
+  const a = finitePoint(start);
+  const b = finitePoint(end);
+  const chordPoint = finitePoint(chord);
+  if (!a || !b || !chordPoint) {
+    return { x: 0, y: 0 };
+  }
+  const x = b.x - a.x;
+  const y = b.y - a.y;
+  const length = Math.hypot(x, y);
+  const chordLength = Math.hypot(chordPoint.x, chordPoint.y);
+  if (!length || !chordLength || x * chordPoint.x + y * chordPoint.y <= 0) {
+    return { x: 0, y: 0 };
+  }
+  const scale = Math.min(length, Math.max(0, maxLength)) / length;
+  return { x: x * scale, y: y * scale };
+}
+
+function surfaceStrokeHermitePoint(start = null, end = null, startTangent = null, endTangent = null, t = 0) {
+  const amount = Math.max(0, Math.min(1, finiteNumber(t, 0)));
+  const amountSq = amount * amount;
+  const amountCube = amountSq * amount;
+  const startScale = 2 * amountCube - 3 * amountSq + 1;
+  const startTangentScale = amountCube - 2 * amountSq + amount;
+  const endScale = -2 * amountCube + 3 * amountSq;
+  const endTangentScale = amountCube - amountSq;
+  return {
+    x: startScale * start.x + startTangentScale * startTangent.x
+      + endScale * end.x + endTangentScale * endTangent.x,
+    y: startScale * start.y + startTangentScale * startTangent.y
+      + endScale * end.y + endTangentScale * endTangent.y
+  };
+}
+
+function surfaceStrokeHermiteBridgeSegments(previousSegment = null, firstSegment = null) {
+  const start = finitePoint(previousSegment?.end);
+  const end = finitePoint(firstSegment?.start);
+  if (!start || !end) {
+    return [];
+  }
+  const gap = Math.hypot(end.x - start.x, end.y - start.y);
+  if (gap <= 0.001) {
+    return [];
+  }
+  const startRadius = Math.max(1, finiteNumber(previousSegment?.radius, finiteNumber(previousSegment?.radiusPixels, 1)));
+  const endRadius = Math.max(1, finiteNumber(firstSegment?.radius, finiteNumber(firstSegment?.radiusPixels, 1)));
+  const chord = { x: end.x - start.x, y: end.y - start.y };
+  const tangentLimit = gap * 0.5;
+  const startTangent = surfaceStrokeForwardTangent(previousSegment?.start, previousSegment?.end, chord, tangentLimit);
+  const endTangent = surfaceStrokeForwardTangent(firstSegment?.start, firstSegment?.end, chord, tangentLimit);
+  const pieceLength = Math.max(1.5, Math.min(startRadius, endRadius) * 0.5);
+  const pieces = Math.max(1, Math.min(8, Math.ceil(gap / pieceLength)));
+  const previousComponentEnd = finiteComponentId(previousSegment?.componentEnd ?? previousSegment?.componentStart);
+  const firstComponentStart = finiteComponentId(firstSegment?.componentStart ?? firstSegment?.componentEnd);
+  const output = [];
+  let previousPoint = start;
+  for (let index = 1; index <= pieces; index += 1) {
+    const t = index / pieces;
+    const point = surfaceStrokeHermitePoint(start, end, startTangent, endTangent, t);
+    const radiusT = (index - 0.5) / pieces;
+    output.push({
+      start: previousPoint,
+      end: point,
+      radius: startRadius + (endRadius - startRadius) * radiusT,
+      ...(previousComponentEnd >= 0 ? { componentStart: previousComponentEnd } : {}),
+      ...(firstComponentStart >= 0 ? { componentEnd: firstComponentStart } : {})
+    });
+    previousPoint = point;
+  }
+  return output;
+}
+
 function surfaceStrokePointDistance(left = null, right = null) {
   const a = finitePoint(left);
   const b = finitePoint(right);
   return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : Infinity;
+}
+
+function surfaceStrokeSegmentIsPoint(segment = null) {
+  return surfaceStrokePointDistance(segment?.start, segment?.end) <= 0.001;
 }
 
 function surfaceStrokeSegmentAlreadyCovered(existing = [], segment = null) {
@@ -8483,7 +7945,14 @@ function appendSurfaceStrokeSegments(cache = null, segments = [], owner = null, 
     return segments;
   }
   const startsNewStroke = surfaceStrokeStartsNewStroke(cache, owner, candidate, options, segments, styleKey);
-  if (!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered(cache, segments)) {
+  const appendableSegments = startsNewStroke
+    ? segments
+    : segments.filter((segment) => !surfaceStrokeSegmentIsPoint(segment));
+  if (!appendableSegments.length) {
+    cache.lastSurfaceStrokeAppendSegments = [];
+    return Array.isArray(cache.surfaceStrokeSegments) ? cache.surfaceStrokeSegments : [];
+  }
+  if (!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered(cache, appendableSegments)) {
     cache.lastSurfaceStrokeAppendSegments = [];
     return cache.surfaceStrokeSegments;
   }
@@ -8507,8 +7976,8 @@ function appendSurfaceStrokeSegments(cache = null, segments = [], owner = null, 
       ? [...cache.surfaceStrokeSegments]
       : [];
   const segmentsToAppend = startsNewStroke || ownerChanged
-    ? segments
-    : surfaceStrokeUncoveredSegments(outputSegments, segments);
+    ? appendableSegments
+    : surfaceStrokeUncoveredSegments(outputSegments, appendableSegments);
   if (!segmentsToAppend.length) {
     cache.surfaceStrokeSegments = outputSegments;
     cache.lastSurfaceStrokeAppendSegments = [];
@@ -8538,13 +8007,13 @@ function appendSurfaceStrokeSegments(cache = null, segments = [], owner = null, 
       finiteNumber(firstSegment?.worldRadius, 0),
       0
     );
-    const bridgeSegment = {
-      start: previousEnd,
-      end: firstStart,
-      radius,
-      ...(previousComponentEnd >= 0 ? { componentStart: previousComponentEnd } : {}),
-      ...(firstComponentStart >= 0 ? { componentEnd: firstComponentStart } : {}),
-      ...(previousViewEnd && firstViewStart ? {
+    const bridgeSegments = previousViewEnd && firstViewStart
+      ? [{
+        start: previousEnd,
+        end: firstStart,
+        radius,
+        ...(previousComponentEnd >= 0 ? { componentStart: previousComponentEnd } : {}),
+        ...(firstComponentStart >= 0 ? { componentEnd: firstComponentStart } : {}),
         viewStart: previousViewEnd,
         viewEnd: firstViewStart,
         viewRadius,
@@ -8557,10 +8026,10 @@ function appendSurfaceStrokeSegments(cache = null, segments = [], owner = null, 
         worldStart: previousSegment.worldEnd || null,
         worldEnd: firstSegment.worldStart || null,
         worldRadius: viewRadius
-      } : {})
-    };
-    outputSegments.push(bridgeSegment);
-    appendedSegments.push(bridgeSegment);
+      }]
+      : surfaceStrokeHermiteBridgeSegments(previousSegment, firstSegment);
+    outputSegments.push(...bridgeSegments);
+    appendedSegments.push(...bridgeSegments);
   }
   outputSegments.push(...segmentsToAppend);
   appendedSegments.push(...segmentsToAppend);
@@ -8683,8 +8152,7 @@ function exposeSurfaceRunDebug(stats = null) {
     dispatchMs: stats.timings?.dispatchMs ?? null,
     prepareBreakdown: stats.timings?.prepareBreakdown || null,
     totalMs: stats.timings?.totalMs ?? null,
-    firstSurfaceSegment: stats.tslSurfaceFirstSegment || null
-    ,
+    firstSurfaceSegment: stats.tslSurfaceFirstSegment || null,
     surfaceSegmentSamples: stats.tslSurfaceSegmentSamples || null
   };
   if (stats.tslSurfaceSkippedDuplicateSegments === true) {
@@ -9368,7 +8836,11 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       hasCurrentTexture: Boolean(cache.currentTexture)
     });
   }
-  const duplicateCoveredSegments = duplicateCoveredSegmentsBeforeReset
+  const pointOnlyContinuation = !startsNewSurfaceStroke
+    && segments.length > 0
+    && segments.every((segment) => surfaceStrokeSegmentIsPoint(segment));
+  const duplicateCoveredSegments = pointOnlyContinuation
+    || duplicateCoveredSegmentsBeforeReset
     || (
       !surfaceStrokeOwnerChanged(cache, strokeSourceOwner)
       && surfaceStrokeSegmentsAlreadyCovered(cache, segments)
@@ -9619,7 +9091,6 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
   const useStrokeMaskComposite = !useProjectedPrimary
     && debugParams?.has("debugAirbrushDirectSurfaceComposite") !== true;
   const newlyAppendedPaintSegments = Array.isArray(cache.lastSurfaceStrokeAppendSegments)
-    && cache.lastSurfaceStrokeAppendSegments.length
     ? cache.lastSurfaceStrokeAppendSegments
     : startsNewSurfaceStroke
       ? paintSegments

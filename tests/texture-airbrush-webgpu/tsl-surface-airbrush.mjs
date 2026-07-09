@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import * as THREE from "../../node_modules/three/build/three.webgpu.js";
 import {
   TEXTURE_AIRBRUSH_CORE_HARDNESS_POWER,
   TEXTURE_AIRBRUSH_CORE_HARDNESS_SCALE,
@@ -12,8 +13,17 @@ import {
   TEXTURE_AIRBRUSH_SCATTER_HALO_SCALE,
   TEXTURE_AIRBRUSH_SOFT_HALO_SCALE
 } from "../../src/weight-editor/airbrush/math.js";
+import {
+  buildSurfaceUvOwnershipMask,
+  SURFACE_UV_OWNERSHIP_DISTANCE_THRESHOLD,
+  SURFACE_UV_OWNERSHIP_MASK_SIZE
+} from "../../src/texture-paint/surface-airbrush/uv-ownership.js";
+import { surfaceProjectionRecord } from "../../src/texture-paint/surface-airbrush/projection-record.js";
 
 const source = readFileSync(new URL("../../src/texture-paint/surface-airbrush-tsl.js", import.meta.url), "utf8");
+const coreSource = readFileSync(new URL("../../src/texture-paint/surface-airbrush/core.js", import.meta.url), "utf8");
+const uvOwnershipSource = readFileSync(new URL("../../src/texture-paint/surface-airbrush/uv-ownership.js", import.meta.url), "utf8");
+const projectionRecordSource = readFileSync(new URL("../../src/texture-paint/surface-airbrush/projection-record.js", import.meta.url), "utf8");
 const strokeSource = readFileSync(new URL("../../src/weight-editor/airbrush/webgpu-stroke.js", import.meta.url), "utf8");
 const liveSource = readFileSync(new URL("../../src/weight-editor/airbrush/webgpu-live.js", import.meta.url), "utf8");
 const projectionSource = readFileSync(new URL("../../src/weight-editor/airbrush/webgpu-projection.js", import.meta.url), "utf8");
@@ -21,11 +31,18 @@ const neighborSource = readFileSync(new URL("../../src/weight-editor/airbrush/ne
 const clonePaintSource = readFileSync(new URL("../../src/weight-editor/clone-paint.js", import.meta.url), "utf8");
 const paintToolsSource = readFileSync(new URL("../../src/weight-editor/paint-tools.js", import.meta.url), "utf8");
 
-function functionSource(name) {
-  const start = source.indexOf(`function ${name}`);
+function sourceFunction(sourceText, name) {
+  const start = sourceText.indexOf(`function ${name}`);
   assert.notEqual(start, -1, `${name} should exist`);
-  const next = source.indexOf("\nfunction ", start + 1);
-  return source.slice(start, next === -1 ? undefined : next);
+  const next = sourceText.indexOf("\nfunction ", start + 1);
+  return sourceText.slice(start, next === -1 ? undefined : next);
+}
+
+function functionSource(name) {
+  const sourceText = [source, coreSource, uvOwnershipSource, projectionRecordSource]
+    .find((candidate) => candidate.includes(`function ${name}`));
+  assert.ok(sourceText, `${name} should exist in the surface airbrush modules`);
+  return sourceFunction(sourceText, name);
 }
 
 function objectMethodSource(sourceText, name) {
@@ -153,14 +170,57 @@ test("TSL surface airbrush accepts screen-only live drag segments", () => {
 });
 
 test("TSL source-raster normals are skinned before normal gating", () => {
-  const normalBody = functionSource("viewNormalForVertex");
-  const skinBody = functionSource("skinLocalNormalForVertex");
-  assert.match(normalBody, /skinLocalNormalForVertex\(object, geometry, vertexIndex, _scratchNormal\)/);
+  const normalBody = sourceFunction(projectionRecordSource, "viewNormalForVertex");
+  const skinBody = sourceFunction(projectionRecordSource, "skinLocalNormalForVertex");
+  assert.match(normalBody, /skinLocalNormalForVertex\(object, geometry, vertexIndex, _normal\)/);
   assert.match(skinBody, /geometry\?\.attributes\?\.skinIndex/);
   assert.match(skinBody, /geometry\?\.attributes\?\.skinWeight/);
-  assert.match(skinBody, /skeleton\.getBoneMatrix\(boneIndex, _scratchBoneMatrix\)/);
-  assert.match(skinBody, /_scratchSkinMatrix\.multiplyMatrices\(object\.bindMatrixInverse, _scratchSkinMatrix\)\.multiply\(object\.bindMatrix\)/);
-  assert.match(skinBody, /_scratchNormal4\.set\(normal\.x, normal\.y, normal\.z, 0\)\.applyMatrix4\(_scratchSkinMatrix\)/);
+  assert.match(skinBody, /skeleton\.getBoneMatrix\(boneIndex, _boneMatrix\)/);
+  assert.match(skinBody, /_skinMatrix\.multiplyMatrices\(object\.bindMatrixInverse, _skinMatrix\)\.multiply\(object\.bindMatrix\)/);
+  assert.match(skinBody, /_normal4\.set\(normal\.x, normal\.y, normal\.z, 0\)\.applyMatrix4\(_skinMatrix\)/);
+});
+
+test("surface projection records keep UV and screen coordinates in one contract", () => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute([0, 0, 0], 3));
+  geometry.setAttribute("normal", new THREE.Float32BufferAttribute([0, 0, 1], 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute([0.25, 0.75], 2));
+  const object = new THREE.Mesh(geometry);
+  object.updateMatrixWorld(true);
+  const camera = {
+    isPerspectiveCamera: false,
+    matrixWorldInverse: new THREE.Matrix4(),
+    projectionMatrix: new THREE.Matrix4(),
+    updateMatrixWorld() {}
+  };
+  const editor = {
+    camera,
+    canvas: {
+      getBoundingClientRect() {
+        return { width: 200, height: 100 };
+      }
+    }
+  };
+
+  const record = surfaceProjectionRecord(editor, object, geometry, 0, 2);
+
+  assert.equal(record.valid, true);
+  assert.deepEqual(record.uv, { x: 0.25, y: 0.75 });
+  assert.deepEqual(record.screen, { x: 100, y: 50, z: 0 });
+  assert.deepEqual(record.view, { x: 0, y: 0, z: 0 });
+  assert.equal(record.componentId, 2);
+  assert.equal(record.componentAttribute, 3);
+});
+
+test("both UV raster paths share the surface projection record", () => {
+  const sourceRasterBody = functionSource("sourceUvRasterTriangles");
+  const projectedRasterBody = functionSource("meshUvProjectedTriangles");
+
+  for (const body of [sourceRasterBody, projectedRasterBody]) {
+    assert.match(body, /const projectionRecords = new Array/);
+    assert.match(body, /surfaceProjectionRecord\(/);
+    assert.match(body, /return projectionRecords\[vertexIndex\]/);
+  }
 });
 
 test("TSL live projected field preserves hit normals for same-side surface gating", () => {
@@ -397,8 +457,8 @@ test("TSL surface airbrush evaluates coverage from fragment-projected surface po
   assert.match(projectedBody, /const projectedNdc = projectedClip\.xyz\.div\(projectedW\)\.toVar\(\)/);
   assert.match(body, /const surfaceScreen = vec3\([\s\S]*?editorViewportSize\.x[\s\S]*?editorViewportSize\.y[\s\S]*?paintScreen\.z[\s\S]*?\)\.toVar\(\)/);
   assert.match(projectedBody, /const surfaceScreen = vec3\([\s\S]*?editorViewportSize\.x[\s\S]*?editorViewportSize\.y[\s\S]*?paintScreen\.z[\s\S]*?\)\.toVar\(\)/);
-  assert.match(source, /function ensureSurfaceProjectionAttributes/);
-  assert.match(source, /screenPointForWorld\(editor, world\)/);
+  assert.match(projectionRecordSource, /function ensureSurfaceProjectionAttributes/);
+  assert.match(projectionRecordSource, /screenPointForWorld\(editor, world\)/);
   assert.match(source, /function textureNodeAppliesFlipY/);
   assert.match(sourceVertexBody, /textureNodeAppliesFlipY\(referenceTexture\) \? 1 - sampleV : sampleV/);
   assert.ok(
@@ -602,15 +662,16 @@ test("TSL surface airbrush uses the shared airbrush falloff constants", () => {
 });
 
 test("TSL surface airbrush can gate ambiguous UV overlap texels", () => {
-  assert.match(source, /const UV_OVERLAP_MASK_SIZE = 1024/);
+  assert.equal(SURFACE_UV_OWNERSHIP_MASK_SIZE, 1024);
+  assert.equal(SURFACE_UV_OWNERSHIP_DISTANCE_THRESHOLD, 0.25);
   assert.match(source, /function surfaceAirbrushUvOverlapMaskEnabled/);
   assert.match(source, /debugAirbrushNoUvOverlapMask/);
   assert.match(source, /function sourceObjectUvOverlapMaskTexture/);
-  assert.match(source, /function triangleSharesSurfaceEdge/);
-  assert.match(source, /function trianglesHaveAmbiguousUvOverlap/);
-  assert.match(source, /positionKeys: points\.map\(\(point\) => overlapMaskPositionKey\(point\)\)/);
-  assert.match(source, /trianglesHaveAmbiguousUvOverlap\(triangles\[previous\], triangle\)/);
-  assert.match(source, /UV_OVERLAP_DISTANCE_THRESHOLD/);
+  assert.match(source, /buildSurfaceUvOwnershipMask\(geometry\)/);
+  assert.match(uvOwnershipSource, /function trianglesShareSurfaceEdge/);
+  assert.match(uvOwnershipSource, /function trianglesHaveAmbiguousUvOverlap/);
+  assert.match(uvOwnershipSource, /positionKeys: points\.map\(\(point\) => positionKey\(point\)\)/);
+  assert.match(uvOwnershipSource, /trianglesHaveAmbiguousUvOverlap\(triangles\[previous\], triangle\)/);
   assert.match(source, /new THREE\.DataTexture/);
   const body = functionSource("createSurfaceMaterial");
   assert.match(body, /const overlapMaskTexture = sourceObjectUvOverlapMaskTexture\(sourceObject\)/);
@@ -618,9 +679,39 @@ test("TSL surface airbrush can gate ambiguous UV overlap texels", () => {
   assert.match(body, /const overlapSample = overlapMaskTextureNode\.toVar\(\)/);
   assert.match(body, /const overlapCanWrite = overlapSample\.r\.greaterThan\(0\.5\)\.toVar\(\)/);
   assert.match(body, /\.or\(occupancySample\.r\.lessThan\(0\.5\)\)[\s\S]*?\.and\(overlapCanWrite\)/);
-  assert.match(body, /const sourceCoverage = originalMeshUvRaster[\s\S]*?\? gatedCoverage[\s\S]*?: gatedCoverage\.mul\(gutterCanWrite\.select\(float\(1\), float\(0\)\)\)\.toVar\(\)/);
-  assert.doesNotMatch(body, /originalMeshUvRaster[\s\S]*?\? gatedCoverage\.mul\(overlapCanWrite\.select\(float\(1\), float\(0\)\)\)/);
+  assert.match(body, /const uvOwnershipGate = overlapCanWrite\.select\(float\(1\), float\(0\)\)\.toVar\(\)/);
+  assert.match(body, /const sourceCoverage = originalMeshUvRaster[\s\S]*?\? gatedCoverage\.mul\(uvOwnershipGate\)\.toVar\(\)[\s\S]*?: gatedCoverage\.mul\(gutterCanWrite\.select\(float\(1\), float\(0\)\)\)\.toVar\(\)/);
   assert.match(source, /tslSurfaceOverlapMaskAmbiguousTexels/);
+});
+
+test("UV ownership rejects disconnected triangles that share texture coordinates", () => {
+  const attribute = (values, itemSize) => ({
+    count: values.length / itemSize,
+    getX(index) { return values[index * itemSize]; },
+    getY(index) { return values[index * itemSize + 1]; },
+    getZ(index) { return values[index * itemSize + 2] || 0; }
+  });
+  const geometry = {
+    uuid: "overlapping-uv-test",
+    attributes: {
+      position: attribute([
+        0, 0, 0, 1, 0, 0, 0, 1, 0,
+        10, 0, 0, 11, 0, 0, 10, 1, 0
+      ], 3),
+      uv: attribute([
+        0, 0, 1, 0, 0, 1,
+        0, 0, 1, 0, 0, 1
+      ], 2)
+    }
+  };
+
+  const mask = buildSurfaceUvOwnershipMask(geometry, { size: 32 });
+
+  assert.equal(mask.triangleCount, 2);
+  assert.ok(mask.ambiguousTexels > 0);
+  const center = (8 * mask.size + 8) * 4;
+  assert.equal(mask.data[center], 0, "shared UV texels must not be writable");
+  assert.equal(mask.data[center + 3], 255);
 });
 
 test("TSL surface airbrush raster scopes paint by source material index", () => {
@@ -889,7 +980,7 @@ test("TSL surface airbrush keeps scoped projected triangles opt-in instead of th
   assert.match(body, /sourceRasterClipHardness: options\.hardness/);
   assert.match(source, /function simplifiedSourceRasterClipSegments/);
   assert.match(source, /const TSL_SURFACE_DILATION_PASSES = 1/);
-  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 0/);
 });
 
 test("TSL source raster dispatch constrains components without changing brush field shape", () => {
@@ -952,7 +1043,7 @@ test("TSL surface airbrush skips duplicate live batches before projected geometr
   assert.doesNotMatch(duplicateBlock, /editor\.textureAirbrushLastWebGpuPaintStats = stats/);
 });
 
-test("TSL surface airbrush keeps GPU dilation live without CPU fallback", () => {
+test("TSL surface airbrush keeps GPU seam dilation without path-blind stroke-mask dilation", () => {
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
   const dilationBody = functionSource("runSurfaceDilation");
   const dilationSeedBody = functionSource("createDilationSeedMaterial");
@@ -975,7 +1066,7 @@ test("TSL surface airbrush keeps GPU dilation live without CPU fallback", () => 
   assert.match(dilationBody, /const passes = Math\.max\(0, Math\.floor\(finiteNumber\(passCount/);
   assert.match(functionSource("surfaceAirbrushStrokeMaskDilationPasses"), /debugAirbrushStrokeMaskDilation/);
   assert.match(functionSource("surfaceAirbrushStrokeMaskDilationPasses"), /return TSL_SURFACE_STROKE_MASK_DILATION_PASSES/);
-  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 0/);
   assert.match(dilationSeedBody, /options = \{\}/);
   assert.match(dilationSeedBody, /const preserveSourceAlpha = options\.preserveSourceAlpha === true/);
   assert.match(dilationSeedBody, /return vec4\(color\.rgb, preserveSourceAlpha \? color\.a : mask\.r\)/);
@@ -1140,7 +1231,7 @@ test("TSL source-mesh raster caches are stable across ping-pong texture identiti
   const rasterKeyBody = functionSource("sourceUvRasterGeometryKey");
   const occupancyKeyBody = functionSource("sourceUvOccupancyKey");
   const occupancyObjectKeyBody = functionSource("sourceObjectUvCoverageKey");
-  const projectionFrameKeyBody = functionSource("surfaceProjectionFrameKey");
+  const projectionFrameKeyBody = sourceFunction(projectionRecordSource, "surfaceProjectionFrameKey");
   assert.doesNotMatch(rasterKeyBody, /texture\?\.uuid \|\| texture\?\.id/);
   assert.doesNotMatch(occupancyKeyBody, /texture\?\.uuid \|\| texture\?\.id/);
   assert.match(rasterKeyBody, /writeTexture\?\.flipY === true \? "writeFlipY" : "writeNoFlipY"/);
@@ -1518,7 +1609,7 @@ test("TSL surface airbrush visible-depth prepass uses all visible source objects
 test("TSL original-mesh UV raster evaluates normals in the editor camera view", () => {
   const body = functionSource("createSurfaceMaterial");
   const updateBody = functionSource("updateSurfaceMaterial");
-  const projectionBody = functionSource("ensureSurfaceProjectionAttributes");
+  const projectionBody = sourceFunction(projectionRecordSource, "ensureSurfaceProjectionAttributes");
   const meshBody = functionSource("ensureUvRasterMeshes");
   const originalMeshBranch = body.slice(body.indexOf("if (originalMeshUvRaster)"));
   const originalMeshOnlyBranch = originalMeshBranch.slice(
@@ -1532,9 +1623,9 @@ test("TSL original-mesh UV raster evaluates normals in the editor camera view", 
   assert.match(projectionBody, /rasterGeometry\.setAttribute\("paintScreen", screenAttribute\)/);
   assert.match(projectionBody, /rasterGeometry\.setAttribute\("paintNormal", normalAttribute\)/);
   assert.doesNotMatch(projectionBody, /rasterGeometry\.setAttribute\("paintComponent"/);
-  assert.match(projectionBody, /sourceObjectComponentKey\(editor, sourceObject\)/);
-  assert.match(projectionBody, /screenArray\[offset \+ 2\] = componentId >= 0 \? componentId \+ 1 : 0/);
-  assert.match(meshBody, /ensureSurfaceProjectionAttributes\(entry, cache\.editor \|\| null\)/);
+  assert.match(projectionBody, /String\(options\.componentKey \|\| ""\)/);
+  assert.match(projectionBody, /screenArray\[offset \+ 2\] = record\.componentAttribute/);
+  assert.match(meshBody, /ensureSurfaceProjectionAttributes\(entry, cache\.editor \|\| null, \{/);
   assert.match(originalMeshOnlyBranch, /paintView\.assign\(attribute\("paintView", "vec3"\)\)/);
   assert.match(originalMeshOnlyBranch, /paintScreen\.assign\(attribute\("paintScreen", "vec3"\)\)/);
   assert.match(originalMeshOnlyBranch, /paintNormal\.assign\(attribute\("paintNormal", "vec3"\)\)/);
@@ -1616,16 +1707,19 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   );
   assert.doesNotMatch(newStrokeBody, /return false;\s*$/);
   assert.match(appendBody, /const startsNewStroke = surfaceStrokeStartsNewStroke\(cache, owner, candidate, options, segments, styleKey\)/);
-  assert.match(appendBody, /if \(!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered\(cache, segments\)\) \{/);
+  assert.match(appendBody, /const appendableSegments = startsNewStroke[\s\S]*?segments\.filter\(\(segment\) => !surfaceStrokeSegmentIsPoint\(segment\)\)/);
+  assert.match(appendBody, /if \(!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered\(cache, appendableSegments\)\) \{/);
   assert.ok(
     appendBody.indexOf("const startsNewStroke = surfaceStrokeStartsNewStroke(cache, owner, candidate, options, segments, styleKey)")
-      < appendBody.indexOf("if (!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered(cache, segments))"),
+      < appendBody.indexOf("if (!startsNewStroke && surfaceStrokeSegmentsAlreadyCovered(cache, appendableSegments))"),
     "append path must honor stroke reset before duplicate skipping"
   );
   assert.match(appendBody, /cache\.strokeStyleKey = styleKey/);
   assert.match(body, /const strokeStyleKey = surfaceStrokeStyleKey\(candidate, options\)/);
   assert.match(body, /const strokeStyleChangedAtRunStart = surfaceStrokeStyleChanged\(cache, strokeStyleKey\)/);
   assert.match(body, /const duplicateCoveredSegmentsBeforeReset = !surfaceStrokeOwnerChanged\(cache, strokeSourceOwner\)\s*\n\s*&& !startsNewSurfaceStroke\s*\n\s*&& surfaceStrokeSegmentsAlreadyCovered\(cache, segments\)/);
+  assert.match(body, /const pointOnlyContinuation = !startsNewSurfaceStroke[\s\S]*?segments\.every\(\(segment\) => surfaceStrokeSegmentIsPoint\(segment\)\)/);
+  assert.match(body, /const duplicateCoveredSegments = pointOnlyContinuation[\s\S]*?\|\| duplicateCoveredSegmentsBeforeReset/);
   assert.match(body, /const strokeOwnerChangedAtRunStart = surfaceStrokeOwnerChanged\(cache, strokeSourceOwner\)/);
   assert.match(body, /const strokeResetRequestedAtRunStart = surfaceStrokeResetRequested\(candidate, options\)/);
   assert.match(body, /let strokeMaskCleared = false/);
@@ -1649,7 +1743,7 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.doesNotMatch(body, /direct-paint-target/);
 });
 
-test("TSL surface airbrush stroke style key includes Neighbor eligibility state", () => {
+test("TSL surface airbrush stroke style key includes Neighbor eligibility state without pressure radius", () => {
   const body = functionSource("surfaceStrokeStyleKey");
   assert.match(body, /const neighborSeed = options\.neighborPaintSeed \|\| candidate\?\.options\?\.neighborPaintSeed \|\| null/);
   assert.match(body, /const neighborKey = String\(/);
@@ -1664,9 +1758,8 @@ test("TSL surface airbrush stroke style key includes Neighbor eligibility state"
   assert.match(body, /neighborKey/);
   assert.match(body, /"large-neighbor"/);
   assert.match(body, /"component-gate"/);
-  assert.match(body, /const styleRadiusPixels = finiteNumber\(\s*options\.screenRadiusPixels/);
-  assert.match(body, /candidate\?\.options\?\.screenRadiusPixels/);
-  assert.match(body, /Math\.round\(styleRadiusPixels \* 100\)/);
+  assert.doesNotMatch(body, /screenRadiusPixels/);
+  assert.doesNotMatch(body, /radiusPixels/);
 });
 
 test("TSL surface airbrush renders live segments instead of retaining a stale target", () => {
@@ -1722,8 +1815,38 @@ test("TSL surface airbrush keeps live drag segments until the next stroke reset"
   assert.match(body, /\[\.\.\.cache\.surfaceStrokeSegments\]/);
   assert.match(body, /startsNewStroke \|\| ownerChanged\s*\?\s*\[\]/);
   assert.match(body, /const segmentsToAppend = startsNewStroke \|\| ownerChanged/);
-  assert.match(body, /surfaceStrokeUncoveredSegments\(outputSegments, segments\)/);
+  assert.match(body, /surfaceStrokeUncoveredSegments\(outputSegments, appendableSegments\)/);
   assert.match(body, /const firstSegment = segmentsToAppend\[0\] \|\| null/);
   assert.match(body, /outputSegments\.push\(\.\.\.segmentsToAppend\)/);
   assert.doesNotMatch(body, /outputSegments\.push\(\.\.\.segments\)/);
+});
+
+test("TSL surface airbrush Hermite-bridges short screen-only batch gaps", () => {
+  const continuityBody = functionSource("surfaceStrokeSegmentsAreContinuous");
+  const bridgeBody = functionSource("surfaceStrokeHermiteBridgeSegments");
+  const appendBody = functionSource("appendSurfaceStrokeSegments");
+  assert.match(continuityBody, /screenGap > radius \* 2\.25/);
+  assert.match(continuityBody, /previousComponentEnd !== firstComponentStart/);
+  assert.match(continuityBody, /if \(!previousViewEnd \|\| !firstViewStart\) \{\s*return true;/);
+  assert.match(bridgeBody, /surfaceStrokeForwardTangent\(previousSegment\?\.start, previousSegment\?\.end, chord, tangentLimit\)/);
+  assert.match(bridgeBody, /surfaceStrokeForwardTangent\(firstSegment\?\.start, firstSegment\?\.end, chord, tangentLimit\)/);
+  assert.match(bridgeBody, /surfaceStrokeHermitePoint\(start, end, startTangent, endTangent, t\)/);
+  assert.match(bridgeBody, /Math\.min\(8, Math\.ceil\(gap \/ pieceLength\)\)/);
+  assert.match(appendBody, /surfaceStrokeHermiteBridgeSegments\(previousSegment, firstSegment\)/);
+});
+
+test("TSL surface airbrush does not render detached point stamps during a live continuation", () => {
+  const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
+  const appendBody = functionSource("appendSurfaceStrokeSegments");
+  assert.match(source, /function surfaceStrokeSegmentIsPoint\(segment = null\)/);
+  assert.match(source, /surfaceStrokePointDistance\(segment\?\.start, segment\?\.end\) <= 0\.001/);
+  assert.match(appendBody, /const appendableSegments = startsNewStroke\s*\? segments\s*:\s*segments\.filter\(\(segment\) => !surfaceStrokeSegmentIsPoint\(segment\)\)/);
+  assert.match(appendBody, /if \(!appendableSegments\.length\) \{[\s\S]*?cache\.lastSurfaceStrokeAppendSegments = \[\]/);
+  assert.match(runBody, /const pointOnlyContinuation = !startsNewSurfaceStroke/);
+  assert.ok(
+    runBody.indexOf("const pointOnlyContinuation = !startsNewSurfaceStroke")
+      < runBody.indexOf("if (duplicateCoveredSegments && cache.currentTexture"),
+    "point-only continuations must enter the no-composite skip path"
+  );
+  assert.match(runBody, /const newlyAppendedPaintSegments = Array\.isArray\(cache\.lastSurfaceStrokeAppendSegments\)\s*\? cache\.lastSurfaceStrokeAppendSegments/);
 });

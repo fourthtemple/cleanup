@@ -4,6 +4,7 @@ import { installAssetExportMethods } from "../../src/weight-editor/asset-export.
 import { installPaintToolMethods } from "../../src/weight-editor/paint-tools.js";
 import { installTextureAirbrushMethods } from "../../src/weight-editor/airbrush/install.js";
 import { installTextureAirbrushPointerMethods } from "../../src/weight-editor/airbrush/pointer.js";
+import { installTextureAirbrushNeighborPaintMethods } from "../../src/weight-editor/airbrush/neighbor.js";
 import { installTextureAirbrushScreenStrokeMethods } from "../../src/weight-editor/airbrush/screen-strokes.js";
 import { installTextureAirbrushWebGpuMethods } from "../../src/weight-editor/airbrush/webgpu.js";
 import { TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS } from "../../src/weight-editor/airbrush/constants.js";
@@ -204,6 +205,121 @@ test("continuous WebGPU screen strokes merge full paths without backtracking to 
       [p2, p3]
     ]
   );
+});
+
+test("continuous WebGPU screen strokes submit only the new suffix across live flushes", () => {
+  class ScreenEditor {}
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  installEditorDefaults(editor);
+  const paintCalls = [];
+  editor.textureAirbrushWebGpuDevice = () => ({ label: "native-webgpu-device" });
+  editor.textureAirbrushResolveBackend = () => ({ backend: "webgpu", webGpuStatus: "ready" });
+  editor.textureAirbrushWebGpuPaintFromEvent = (event, options = {}) => {
+    paintCalls.push({ event, options });
+    return 1;
+  };
+  const p0 = { clientX: 10, clientY: 20 };
+  const p1 = { clientX: 20, clientY: 20 };
+  const p2 = { clientX: 30, clientY: 20 };
+  const p3 = { clientX: 40, clientY: 24 };
+  const p4 = { clientX: 50, clientY: 30 };
+  const first = strokePayload({
+    clientX: p2.clientX,
+    clientY: p2.clientY,
+    strokeStart: p0,
+    strokeReset: true,
+    continuousStrokePoints: [p0, p1, p2]
+  });
+  assert.equal(editor.textureAirbrushAttachContinuousScreenStrokePath(first), true);
+  editor.textureAirbrushScreenStrokeQueue = [first];
+
+  assert.equal(editor.flushTextureAirbrushScreenStroke({ live: true }), 1);
+
+  const second = strokePayload({
+    clientX: p4.clientX,
+    clientY: p4.clientY,
+    strokeStart: p2,
+    continuousStrokePoints: [p0, p1, p2, p3, p4]
+  });
+  assert.equal(editor.textureAirbrushAttachContinuousScreenStrokePath(second), true);
+  editor.textureAirbrushScreenStrokeQueue = [second];
+
+  assert.equal(editor.flushTextureAirbrushScreenStroke({ live: true }), 1);
+  assert.equal(paintCalls.length, 2);
+  assert.deepEqual(
+    paintCalls[0].options.strokeSegments.map((segment) => [segment.start, segment.end]),
+    [[p0, p1], [p1, p2]]
+  );
+  const continuationSegments = paintCalls[1].options.strokeSegments;
+  assert.deepEqual(continuationSegments[0].start, p2);
+  assert.deepEqual(continuationSegments.at(-1).end, p4);
+  assert.ok(continuationSegments.every((segment) => (
+    segment.start.clientX >= p2.clientX
+    && segment.end.clientX >= segment.start.clientX
+  )));
+});
+
+test("continuous WebGPU screen paths stop at reset boundaries", () => {
+  class ScreenEditor {}
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  installEditorDefaults(editor);
+  editor.textureAirbrushWebGpuDevice = () => ({ label: "native-webgpu-device" });
+  editor.textureAirbrushWebGpuPaintFromEvent = () => 1;
+  const p0 = { clientX: 10, clientY: 20 };
+  const p1 = { clientX: 20, clientY: 20 };
+  const p2 = { clientX: 80, clientY: 60 };
+  const p3 = { clientX: 90, clientY: 60 };
+  const first = strokePayload({
+    clientX: p1.clientX,
+    clientY: p1.clientY,
+    strokeStart: p0
+  });
+  const second = strokePayload({
+    clientX: p3.clientX,
+    clientY: p3.clientY,
+    strokeStart: p2
+  });
+
+  assert.equal(editor.textureAirbrushAttachContinuousScreenStrokePath(first), true);
+  assert.deepEqual(first.continuousStrokePoints, [p0, p1]);
+
+  editor.textureAirbrushResetStrokeSpacing();
+
+  assert.equal(editor.textureAirbrushAttachContinuousScreenStrokePath(second), true);
+  assert.deepEqual(second.continuousStrokePoints, [p2, p3]);
+});
+
+test("continuous WebGPU screen paths do not attach across Neighbor identities", () => {
+  class ScreenEditor {}
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  installEditorDefaults(editor);
+  editor.textureAirbrushWebGpuDevice = () => ({ label: "native-webgpu-device" });
+  editor.textureAirbrushWebGpuPaintFromEvent = () => 1;
+  const p0 = { clientX: 10, clientY: 20 };
+  const p1 = { clientX: 20, clientY: 20 };
+  const p2 = { clientX: 30, clientY: 20 };
+  const p3 = { clientX: 40, clientY: 20 };
+  const first = strokePayload({
+    clientX: p1.clientX,
+    clientY: p1.clientY,
+    strokeStart: p0,
+    styleKey: "shared-style",
+    neighborPaintKey: "torso"
+  });
+  const second = strokePayload({
+    clientX: p3.clientX,
+    clientY: p3.clientY,
+    strokeStart: p2,
+    styleKey: "shared-style",
+    neighborPaintKey: "arm"
+  });
+
+  assert.equal(editor.textureAirbrushAttachContinuousScreenStrokePath(first), true);
+  assert.equal(editor.textureAirbrushAttachContinuousScreenStrokePath(second), true);
+  assert.deepEqual(second.continuousStrokePoints, [p2, p3]);
 });
 
 test("default airbrush install does not add legacy WebGL backend methods", () => {
@@ -605,6 +721,100 @@ test("airbrush direct paint entrypoint refuses the old direct projected fallback
   assert.match(editor.lastStatus, /WebGPU airbrush/);
 });
 
+test("tablet raw updates retain pressure without painting the path twice", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const event = {
+    clientX: 120,
+    clientY: 90,
+    pointerId: 7,
+    pointerType: "pen",
+    pressure: 0.64,
+    preventDefault() {
+      throw new Error("raw updates must not suppress the coalesced pointermove");
+    }
+  };
+  let remembered = null;
+  let paintedMoves = 0;
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.textureAirbrushRememberNativePressureEvent = (received) => {
+    remembered = received;
+    return true;
+  };
+  editor.onPointerMove = () => {
+    paintedMoves += 1;
+  };
+
+  assert.equal(editor.onCanvasPointerRawUpdate(event), true);
+  assert.equal(remembered, event);
+  assert.equal(paintedMoves, 0);
+});
+
+test("tablet compatibility pressure moves do not duplicate an active pointer stroke", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  let cachedPressure = 0;
+  let paintedMoves = 0;
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 7;
+  editor.textureAirbrushCacheNativePressureForStroke = () => {
+    cachedPressure += 1;
+    return true;
+  };
+  editor.onPointerMove = () => {
+    paintedMoves += 1;
+  };
+
+  assert.equal(editor.onCanvasPressureMouseMoveFallback({
+    clientX: 120,
+    clientY: 90,
+    pointerType: "pen",
+    pressure: 0.64,
+    buttons: 1
+  }), false);
+  assert.equal(editor.onCanvasWebKitMouseForceChanged({
+    clientX: 120,
+    clientY: 90,
+    webkitForce: 0.64,
+    buttons: 1
+  }), false);
+
+  assert.equal(cachedPressure, 2);
+  assert.equal(paintedMoves, 0);
+});
+
+test("airbrush curve sampling does not overshoot sharp zig-zag turns", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  editor.textureAirbrushShouldInterpolateContinuousStroke = () => true;
+  editor.textureAirbrushCurveSampleStepPixels = () => 4;
+  editor.textureAirbrushInputEventAtPoint = (sourceEvent, point) => ({
+    ...sourceEvent,
+    clientX: point.clientX,
+    clientY: point.clientY
+  });
+  editor.textureAirbrushStrokeCurveState = {
+    previousInputPoint: { clientX: 10, clientY: 10 },
+    lastInputPoint: { clientX: 20, clientY: 20 }
+  };
+
+  const samples = editor.textureAirbrushInterpolatedStrokeEvents(
+    { clientX: 10, clientY: 30, pointerType: "pen" },
+    { clientX: 20, clientY: 20 },
+    { clientX: 10, clientY: 30 }
+  );
+
+  assert.ok(samples.length > 1);
+  assert.ok(samples.every((sample) => sample.clientX >= 10 && sample.clientX <= 20));
+  assert.ok(samples.every((sample) => sample.clientY >= 20 && sample.clientY <= 30));
+  assert.ok(samples.every((sample) => sample.textureAirbrushCurveSample !== true));
+});
+
 test("brush setting invalidation prewarms the active TSL surface brush profile", () => {
   class PaintEditor {}
   installPaintToolMethods(PaintEditor, {});
@@ -908,6 +1118,162 @@ test("large WebGPU Neighbor fast queue skips dense pointer noise before candidat
 
   assert.ok(payloadsBuilt < 10);
   assert.ok(editor.textureAirbrushScreenStrokeQueue.length < 10);
+});
+
+function installNeighborScreenEditor(editor, seed, hits) {
+  installEditorDefaults(editor);
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.textureAirbrushCanUseScreenStroke = () => true;
+  editor.texturePaintNeighborModeEnabled = () => true;
+  editor.textureAirbrushActiveNeighborPaintSeed = seed;
+  editor.textureAirbrushNeighborPaintHitFromEvent = (event) => hits[event.hitId] || null;
+  editor.textureAirbrushNeighborSeedAllowsPaintHit = (candidateSeed, hit) => (
+    candidateSeed === seed && Boolean(hit)
+  );
+  editor.textureAirbrushNeighborSeedKey = () => "torso-seed";
+  editor.textureAirbrushScreenStrokeBaseOptions = () => ({ radiusPixels: 32, spacing: 1 });
+  editor.textureAirbrushScreenStrokePayload = (event, strokeStart) => strokePayload({
+    clientX: event.clientX,
+    clientY: event.clientY,
+    strokeStart,
+    radiusPixels: 32,
+    styleRadiusPixels: 32,
+    neighborPaintSeed: editor.textureAirbrushActiveNeighborPaintSeed,
+    neighborPaintKey: "torso-seed"
+  });
+  editor.textureAirbrushBeginNeighborPaintStroke = () => {
+    editor.textureAirbrushActiveNeighborPaintSeed = seed;
+    editor.textureAirbrushBeginNeighborPaintFrontier(seed);
+    return seed;
+  };
+  editor.scheduleTextureAirbrushScreenStrokeFlush = () => {
+    editor.textureAirbrushScreenFlushScheduled = true;
+    return true;
+  };
+}
+
+test("Neighbor spaced strokes avoid per-sample hit probes", () => {
+  class ScreenEditor {}
+  installTextureAirbrushNeighborPaintMethods(ScreenEditor);
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  const record = {
+    vertexNeighbors: {
+      0: [1],
+      1: [0, 2],
+      2: [1, 3],
+      3: [2, 4],
+      4: [3],
+      10: [11],
+      11: [10, 12],
+      12: [11]
+    },
+    deleted: new Set()
+  };
+  const seed = {
+    enabled: true,
+    record,
+    component: new Set([0, 1, 2, 3, 4, 10, 11, 12]),
+    key: "torso-seed"
+  };
+  installNeighborScreenEditor(editor, seed, {});
+  let hitProbeCount = 0;
+  editor.textureAirbrushNeighborPaintHitFromEvent = () => {
+    hitProbeCount += 1;
+    return null;
+  };
+  const queuedPayloads = [];
+  editor.textureAirbrushQueueScreenStrokePayload = (payload) => {
+    queuedPayloads.push(payload);
+    return true;
+  };
+
+  assert.equal(editor.textureAirbrushQueueSpacedScreenStroke({
+    clientX: 20,
+    clientY: 10,
+    button: 0,
+    buttons: 1,
+    hitId: "torso"
+  }, { reset: true, strokeStart: { clientX: 20, clientY: 10 } }), true);
+
+  assert.equal(editor.textureAirbrushQueueSpacedScreenStroke({
+    clientX: 70,
+    clientY: 10,
+    button: 0,
+    buttons: 1,
+    hitId: "arm"
+  }, { reset: false, strokeStart: { clientX: 20, clientY: 10 } }), true);
+
+  assert.equal(editor.textureAirbrushQueueSpacedScreenStroke({
+    clientX: 38,
+    clientY: 10,
+    button: 0,
+    buttons: 1,
+    hitId: "torso2"
+  }, { reset: false, strokeStart: { clientX: 70, clientY: 10 } }), true);
+
+  assert.equal(hitProbeCount, 0);
+  assert.equal(queuedPayloads.length, 3);
+  assert.equal(queuedPayloads[0].clientX, 20);
+  assert.equal(queuedPayloads[1].clientX, 70);
+  assert.equal(queuedPayloads[2].clientX, 38);
+  assert.equal(queuedPayloads[0].strokeReset, true);
+  assert.equal(queuedPayloads[1].strokeReset, false);
+  assert.equal(queuedPayloads[2].strokeReset, false);
+});
+
+test("large WebGPU Neighbor fast queue avoids per-sample hit probes", () => {
+  class ScreenEditor {}
+  installTextureAirbrushNeighborPaintMethods(ScreenEditor);
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  const record = {
+    vertexNeighbors: {
+      0: [1],
+      1: [0, 2],
+      2: [1, 3],
+      3: [2, 4],
+      4: [3],
+      10: [11],
+      11: [10, 12],
+      12: [11]
+    },
+    deleted: new Set()
+  };
+  const seed = {
+    enabled: true,
+    record,
+    component: new Set([0, 1, 2, 3, 4, 10, 11, 12]),
+    key: "torso-seed"
+  };
+  installNeighborScreenEditor(editor, seed, {});
+  let hitProbeCount = 0;
+  editor.textureAirbrushNeighborPaintHitFromEvent = () => {
+    hitProbeCount += 1;
+    return null;
+  };
+  editor.textureAirbrushWebGpuPaintFromEvent = () => 1;
+  editor.textureAirbrushWebGpuDevice = () => ({ label: "native-webgpu-device" });
+  editor.textureBrushRadiusScreenPixels = () => 80;
+  editor.textureAirbrushCachedStrokeRadiusPixels = () => 80;
+
+  assert.equal(editor.textureAirbrushQueueLargeWebGpuNeighborStrokeEvents([
+    { clientX: 20, clientY: 10, hitId: "torso" },
+    { clientX: 100, clientY: 10, hitId: "arm" },
+    { clientX: 180, clientY: 10, hitId: "arm" },
+    { clientX: 38, clientY: 10, hitId: "torso2" }
+  ], { reset: true }), true);
+
+  assert.equal(hitProbeCount, 0);
+  assert.equal(editor.textureAirbrushScreenStrokeQueue.length, 2);
+  assert.deepEqual(
+    editor.textureAirbrushScreenStrokeQueue.map((payload) => [payload.clientX, payload.strokeStart.clientX, payload.strokeReset]),
+    [
+      [180, 20, true],
+      [38, 180, false]
+    ]
+  );
 });
 
 test("large direct WebGPU reset footprint coalesces into first move", () => {

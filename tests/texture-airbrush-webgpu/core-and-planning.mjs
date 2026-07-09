@@ -3718,7 +3718,7 @@ test("airbrush WebGPU neighbor visibility stays inside the active component", ()
   });
 });
 
-test("airbrush WebGPU TSL Neighbor surface field does not gate front coverage by seed component", () => {
+test("airbrush WebGPU TSL Neighbor surface field gates front coverage by seed component", () => {
   class Vector3 {
     constructor(x = 0, y = 0, z = 0) {
       this.x = x;
@@ -3854,15 +3854,17 @@ test("airbrush WebGPU TSL Neighbor surface field does not gate front coverage by
       }]
     });
 
-    assert.notEqual(candidate.options.hardTextureAirbrushComponentGate, true);
+    assert.equal(candidate.options.hardTextureAirbrushComponentGate, true);
     assert.notEqual(candidate.options.relaxComponentGateOnFrontmost, true);
+    assert.deepEqual(candidate.options.sourceRasterAllowedComponentIds, [0]);
     assert.equal(candidate.options.fullProjectedSurfaceRenderTriangles, true);
     assert.ok(candidate.options.screenProjectedStrokeSegments.length > 0);
     const segmentComponents = candidate.options.screenProjectedStrokeSegments.map((segment) => [
       segment.componentStart,
       segment.componentEnd
     ]);
-    assert.ok(segmentComponents.some(([start, end]) => start !== 0 || end !== 0));
+    assert.ok(segmentComponents.length > 0);
+    assert.ok(segmentComponents.every(([start, end]) => start === 0 && end === 0));
   } finally {
     globalThis.THREE = previousThree;
   }
