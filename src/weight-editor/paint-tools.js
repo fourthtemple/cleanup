@@ -1895,6 +1895,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
               if (bridgeEvent && typeof bridgeEvent === "object") {
                 bridgeEvent.textureAirbrushPreSmoothedSample = true;
                 bridgeEvent.textureAirbrushNeighborBridgeSample = true;
+                if (point.textureAirbrushNeighborBridgeReset === true) {
+                  bridgeEvent.textureAirbrushNeighborBridgeReset = true;
+                }
               }
               return bridgeEvent;
             })
@@ -1903,11 +1906,25 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
               && Number.isFinite(bridgeEvent?.clientY)
             ));
           for (const pathEvent of [...bridgeEvents, acceptedEvent]) {
-            const forceNeighborStrokeReset = neighborSampleState?.resetAfterBreak === true
-              && pathEvent === acceptedEvent;
+            const forceSurfaceGapReset = pathEvent.textureAirbrushNeighborBridgeReset === true
+              || (
+                neighborSampleState?.resetBeforeAccepted === true
+                && pathEvent === acceptedEvent
+              );
+            if (forceSurfaceGapReset) {
+              resetSpacing = true;
+              previous = null;
+            }
+            const forceNeighborStrokeReset = forceSurfaceGapReset
+              || (
+                neighborSampleState?.resetAfterBreak === true
+                && pathEvent === acceptedEvent
+              );
             if (skipInterpolatedSamples && !sampleHighRatePath) {
               const sampleCurrent = texturePaintFiniteClientPoint(pathEvent);
-              const strokeStart = collapsedStrokeStart || previous || sampleCurrent;
+              const strokeStart = forceNeighborStrokeReset
+                ? sampleCurrent
+                : collapsedStrokeStart || previous || sampleCurrent;
               const queueStroke = this.textureAirbrushQueueSpacedScreenStroke || this.textureAirbrushQueueScreenStroke;
               const sampleQueued = queueStroke?.call(this, pathEvent, {
                 strokeStart,

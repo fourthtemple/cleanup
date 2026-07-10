@@ -806,7 +806,26 @@ test("airbrush overlap repro macro playback preserves bounded smoothed pointer p
 
   assert.ok(maxGap <= 80);
   assert.ok(maxStep <= 0.0065);
-  assert.ok(events.at(-1).t < macro.events.at(-1).t);
+  let maxRecordedStrokeGap = 0;
+  let previousRecordedStrokeEvent = null;
+  for (const event of [...macro.events].sort((left, right) => left.t - right.t)) {
+    if (event.type !== "pointer" || event.tool !== "airbrush" || event.kind === "wheel") {
+      continue;
+    }
+    if (event.kind === "down") {
+      previousRecordedStrokeEvent = event;
+      continue;
+    }
+    if (!previousRecordedStrokeEvent) {
+      continue;
+    }
+    maxRecordedStrokeGap = Math.max(
+      maxRecordedStrokeGap,
+      Number(event.t) - Number(previousRecordedStrokeEvent.t)
+    );
+    previousRecordedStrokeEvent = event.kind === "up" ? null : event;
+  }
+  assert.ok(maxGap < maxRecordedStrokeGap);
 });
 
 test("closing help while repro recording keeps the macro recorder alive", (t) => {

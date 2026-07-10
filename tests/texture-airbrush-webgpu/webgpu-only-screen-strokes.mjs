@@ -1293,6 +1293,7 @@ function installNeighborInputQueueEditor(editor, seed, hits) {
   editor.textureAirbrushBeginNeighborPaintFrontier(seed);
   editor.textureAirbrushRecordNeighborPaintHit(seed, hits.torso);
   editor.textureAirbrushNeighborScreenStrokeLastAcceptedPoint = { clientX: 20, clientY: 10 };
+  editor.textureAirbrushNeighborScreenStrokeLastAcceptedPaintHit = hits.torso;
   editor.texturePaintStrokePoint = { clientX: 20, clientY: 10 };
 }
 
@@ -1391,6 +1392,13 @@ test("Neighbor input preflights reconstructed batches before their samples can c
     torso2: { record, hit: { face: { vertices: [1, 2] } } }
   };
   installNeighborInputQueueEditor(editor, seed, hits);
+  editor.textureAirbrushNeighborPaintHitFromEvent = (event) => new Map([
+    [20, hits.torso],
+    [30, hits.step1],
+    [40, hits.step2],
+    [50, hits.arm],
+    [60, hits.torso2]
+  ]).get(event.clientX) || null;
   const reconstructed = [
     { clientX: 30, clientY: 10, pointerType: "pen", hitId: "step1", textureAirbrushPreSmoothedSample: true },
     { clientX: 40, clientY: 10, pointerType: "pen", hitId: "step2", textureAirbrushPreSmoothedSample: true },
@@ -1453,6 +1461,12 @@ test("Neighbor input replays short disconnected samples as a curved path bridge"
     torso2: { record, hit: { face: { vertices: [2, 3, 4] } } }
   };
   installNeighborInputQueueEditor(editor, seed, hits);
+  editor.textureAirbrushNeighborPaintHitFromEvent = (event) => new Map([
+    [20, hits.torso],
+    [26, hits.overlay1],
+    [32, hits.overlay2],
+    [38, hits.torso2]
+  ]).get(event.clientX) || null;
   const queued = [];
   editor.textureAirbrushQueueSpacedScreenStroke = (event, options) => {
     queued.push({ event, options });
@@ -1581,6 +1595,165 @@ test("Neighbor input interpolates surface anchors across a short occlusion", () 
   assert.deepEqual(queued[0].options.strokeStart.textureAirbrushSurfaceAnchor, startAnchor);
   assert.deepEqual(queued[1].event.textureAirbrushSurfaceAnchor, endAnchor);
   assert.deepEqual(queued[1].options.strokeStart.textureAirbrushSurfaceAnchor, bridgeAnchor);
+});
+
+test("Neighbor bridge recovers local surface anchors around a missed edge span", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, { THREE: {} });
+  installTextureAirbrushNeighborPaintMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const record = {
+    vertexNeighbors: {
+      0: [1],
+      1: [0, 2, 4],
+      2: [1],
+      4: [1, 5],
+      5: [4],
+      10: [11],
+      11: [10]
+    },
+    deleted: new Set()
+  };
+  const seed = {
+    enabled: true,
+    record,
+    component: new Set([0, 1, 2, 4, 5, 10, 11]),
+    key: "torso-seed"
+  };
+  const hits = {
+    torso: { record, hit: { face: { vertices: [0, 1] } } },
+    localStart: { record, hit: { face: { vertices: [1, 2] } } },
+    remote: { record, hit: { face: { vertices: [10, 11] } } },
+    localEnd: { record, hit: { face: { vertices: [4, 5] } } },
+    torso2: { record, hit: { face: { vertices: [1, 4] } } }
+  };
+  installNeighborInputQueueEditor(editor, seed, hits);
+  const anchorForHit = new Map([
+    [hits.torso, { view: { x: 0, y: 0, z: -2 }, component: 0 }],
+    [hits.localStart, { view: { x: 1, y: 0, z: -2 }, component: 0 }],
+    [hits.remote, { view: { x: 10, y: 0, z: -1 }, component: 0 }],
+    [hits.localEnd, { view: { x: 2, y: 0, z: -2 }, component: 0 }],
+    [hits.torso2, { view: { x: 3, y: 0, z: -2 }, component: 0 }]
+  ]);
+  editor.textureAirbrushNeighborScreenStrokeLastAcceptedPoint = {
+    clientX: 20,
+    clientY: 10,
+    textureAirbrushSurfaceAnchor: anchorForHit.get(hits.torso)
+  };
+  editor.texturePaintStrokePoint = editor.textureAirbrushNeighborScreenStrokeLastAcceptedPoint;
+  editor.textureAirbrushNeighborPaintHitFromEvent = (event) => new Map([
+    [30, hits.localStart],
+    [40, hits.remote],
+    [50, hits.localEnd],
+    [60, hits.torso2]
+  ]).get(event.clientX) || null;
+  editor.textureAirbrushSurfaceAnchorForPaintHit = (paintHit) => anchorForHit.get(paintHit) || null;
+  editor.textureAirbrushSurfaceAnchorAtClientPoint = (point, anchor) => anchor;
+  const queued = [];
+  editor.textureAirbrushQueueSpacedScreenStroke = (event, options) => {
+    queued.push({ event, options });
+    return true;
+  };
+
+  assert.equal(editor.textureAirbrushHoldPreSmoothedNeighborBatch([
+    { clientX: 30, clientY: 10 },
+    { clientX: 40, clientY: 10 },
+    { clientX: 50, clientY: 10 }
+  ]), true);
+  assert.equal(editor.queueAirbrushTextureStrokeEvent({
+    clientX: 60,
+    clientY: 10,
+    pointerType: "pen",
+    buttons: 1
+  }), true);
+
+  assert.deepEqual(
+    queued.map(({ event }) => event.textureAirbrushSurfaceAnchor?.view?.x),
+    [1, 1.5, 2, 3]
+  );
+  assert.equal(editor.textureAirbrushNeighborScreenStrokeFrontier.vertices.has(10), false);
+  assert.equal(editor.textureAirbrushNeighborScreenStrokeFrontier.vertices.has(11), false);
+});
+
+test("Neighbor bridge clips a long empty-background excursion at the surface edge", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, { THREE: {} });
+  installTextureAirbrushNeighborPaintMethods(PaintEditor);
+  const editor = new PaintEditor();
+  const record = {
+    vertexNeighbors: {
+      0: [1],
+      1: [0]
+    },
+    deleted: new Set()
+  };
+  const seed = {
+    enabled: true,
+    record,
+    component: new Set([0, 1]),
+    key: "torso-seed"
+  };
+  const hits = {
+    torso: { record, hit: { face: { vertices: [0, 1] } } },
+    edge: { record, hit: { face: { vertices: [0, 1] } } },
+    torso2: { record, hit: { face: { vertices: [0, 1] } } }
+  };
+  installNeighborInputQueueEditor(editor, seed, hits);
+  const startAnchor = { view: { x: 20, y: 0, z: -2 }, component: 0 };
+  editor.textureAirbrushNeighborScreenStrokeLastAcceptedPoint = {
+    clientX: 20,
+    clientY: 10,
+    textureAirbrushSurfaceAnchor: startAnchor
+  };
+  editor.texturePaintStrokePoint = editor.textureAirbrushNeighborScreenStrokeLastAcceptedPoint;
+  const probedClientXs = [];
+  editor.textureAirbrushNeighborPaintHitFromEvent = (event) => {
+    probedClientXs.push(event.clientX);
+    if (event.clientX >= 21 && event.clientX <= 23) {
+      return hits.edge;
+    }
+    return event.clientX === 60 ? hits.torso2 : null;
+  };
+  editor.textureAirbrushSurfaceAnchorForPaintHit = (paintHit, point) => ({
+    view: { x: point.clientX, y: 0, z: -2 },
+    component: 0
+  });
+  editor.textureAirbrushSurfaceAnchorAtClientPoint = (point, anchor) => anchor;
+  const queued = [];
+  editor.textureAirbrushQueueSpacedScreenStroke = (event, options) => {
+    queued.push({ event, options });
+    return true;
+  };
+  const pending = Array.from({ length: 30 }, (_, index) => ({
+    clientX: 21 + index,
+    clientY: 10
+  }));
+
+  assert.equal(editor.textureAirbrushHoldPreSmoothedNeighborBatch(pending), true);
+  assert.equal(editor.queueAirbrushTextureStrokeEvent({
+    clientX: 60,
+    clientY: 10,
+    pointerType: "pen",
+    buttons: 1
+  }), true);
+
+  assert.deepEqual(
+    queued.map(({ event, options }) => [
+      event.clientX,
+      options.strokeStart.clientX,
+      options.reset,
+      options.forceStrokeReset === true
+    ]),
+    [
+      [21, 20, false, false],
+      [22, 21, false, false],
+      [23, 22, false, false],
+      [60, 60, true, true]
+    ]
+  );
+  assert.ok(probedClientXs.includes(23));
+  assert.equal(probedClientXs.includes(33), false);
+  assert.ok(probedClientXs.length <= 25);
 });
 
 test("large WebGPU Neighbor fast queue avoids per-sample hit probes", () => {
