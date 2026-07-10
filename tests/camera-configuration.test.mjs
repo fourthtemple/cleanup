@@ -178,6 +178,31 @@ test("applyCameraGizmoVisibility syncs checkbox state and hides the on-canvas gi
   assert.equal(gizmoAttrs.get("aria-hidden"), "false");
 });
 
+test("background tint updates the ground circle with a desaturated HSV color", () => {
+  const editor = new TestEditor();
+  const floorMaterial = new THREE.MeshBasicMaterial({ color: "#172026" });
+  editor.cameraBackgroundColor = input("#11171c");
+  editor.renderer = {
+    setClearColor() {}
+  };
+  editor.scene = {
+    fog: {
+      color: new THREE.Color("#11171c")
+    }
+  };
+  editor.groundFloor = {
+    material: floorMaterial
+  };
+
+  assert.equal(editor.groundReferenceFloorTint("#11171c"), "#1e2226");
+  assert.equal(editor.groundReferenceFloorTint("#6a2048"), "#6c4359");
+  editor.applyBackgroundColor("#6a2048");
+
+  assert.equal(editor.backgroundColor, "#6a2048");
+  assert.equal(editor.cameraBackgroundColor.value, "#6a2048");
+  assert.equal(floorMaterial.color.getHexString(THREE.SRGBColorSpace), "6c4359");
+});
+
 test("camera configuration includes and restores gizmo visibility", () => {
   const { editor } = editorWithCameraControls();
   editor.backgroundColor = "#010203";

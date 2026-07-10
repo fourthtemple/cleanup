@@ -39,6 +39,47 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
   const PEN_ORBIT_BUTTON_ZOOM_SENSITIVITY = 0.012;
   const TIMELINE_DRAWER_HEIGHT_STORAGE_KEY = "fourth-temple-model-cleanup:timeline-drawer-height:v1";
 
+  const groundFloorTintFromBackground = (value = "#11171c") => {
+    const normalized = /^#[0-9a-f]{6}$/i.test(String(value || "")) ? String(value) : "#11171c";
+    const packed = Number.parseInt(normalized.slice(1), 16);
+    const r = ((packed >> 16) & 255) / 255;
+    const g = ((packed >> 8) & 255) / 255;
+    const b = (packed & 255) / 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const delta = max - min;
+    let hue = 0;
+    if (delta > 0) {
+      if (max === r) {
+        hue = ((g - b) / delta) % 6;
+      } else if (max === g) {
+        hue = (b - r) / delta + 2;
+      } else {
+        hue = (r - g) / delta + 4;
+      }
+      hue = ((hue / 6) % 1 + 1) % 1;
+    }
+    const saturation = max > 0 ? delta / max : 0;
+    const mutedSaturation = Math.min(0.42, saturation * 0.55);
+    const balancedValue = max + (0.5 - max) * 0.1;
+    const sector = Math.floor(hue * 6);
+    const fraction = hue * 6 - sector;
+    const low = balancedValue * (1 - mutedSaturation);
+    const falling = balancedValue * (1 - fraction * mutedSaturation);
+    const rising = balancedValue * (1 - (1 - fraction) * mutedSaturation);
+    const channels = [
+      [balancedValue, rising, low],
+      [falling, balancedValue, low],
+      [low, balancedValue, rising],
+      [low, falling, balancedValue],
+      [rising, low, balancedValue],
+      [balancedValue, low, falling]
+    ][sector % 6];
+    return `#${channels
+      .map((channel) => Math.round(Math.max(0, Math.min(1, channel)) * 255).toString(16).padStart(2, "0"))
+      .join("")}`;
+  };
+
   const meshWireEdgePairs = (geometry = null) => {
     const position = geometry?.attributes?.position || null;
     const vertexCount = Math.max(0, Math.floor(Number(position?.count) || 0));
@@ -355,7 +396,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       const floor = new THREE.Mesh(
         new THREE.CircleGeometry(4, 72),
         new THREE.MeshBasicMaterial({
-          color: 0x172026,
+          color: groundFloorTintFromBackground(this.backgroundColor),
           transparent: true,
           opacity: 0.72,
           depthWrite: false
@@ -3392,6 +3433,26 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
       if (this.scene?.fog) {
         this.scene.fog.color.set(color);
       }
+      this.applyGroundReferenceBackgroundTint?.(color);
+    },
+
+    groundReferenceFloorTint(value = this.backgroundColor) {
+      return groundFloorTintFromBackground(value);
+    },
+
+    applyGroundReferenceBackgroundTint(value = this.backgroundColor) {
+      const material = this.groundFloor?.material || null;
+      const materials = Array.isArray(material) ? material : material ? [material] : [];
+      const tint = groundFloorTintFromBackground(value);
+      let updated = false;
+      for (const item of materials) {
+        if (!item?.color) {
+          continue;
+        }
+        item.color.set(tint);
+        updated = true;
+      }
+      return updated;
     },
 
     applyMeshColor(value) {

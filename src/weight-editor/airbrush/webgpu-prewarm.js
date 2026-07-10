@@ -152,6 +152,18 @@ function webGpuBackendReady(editor = null) {
   return resolved?.backend === "webgpu";
 }
 
+function textureAirbrushStrokeUsesTslSurfaceTarget(stroke = null) {
+  return (stroke?.before || []).some((entry) => {
+    if (entry?.type !== "gpu") {
+      return false;
+    }
+    const targetData = entry.targetEntry?.target?.texture?.userData || null;
+    const displayData = entry.targetEntry?.displayTarget?.texture?.userData || null;
+    return targetData?.texturePaintTslSurfaceAirbrushTargetTexture === true
+      || displayData?.texturePaintTslSurfaceAirbrushDisplayTexture === true;
+  });
+}
+
 function scheduledPrewarmOptions(options = {}, force = false) {
   const scheduled = {
     force: force || options.force === true
@@ -690,11 +702,20 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
       if (
         this.textureAirbrushPostStrokePrewarmPending
         || !webGpuStrokePrewarmActive
+        || textureAirbrushStrokeUsesTslSurfaceTarget(stroke)
       ) {
         return false;
       }
       this.textureAirbrushPostStrokePrewarmPending = true;
+      const scheduleSerial = Math.max(
+        0,
+        Math.floor(Number(this.textureAirbrushPostStrokePrewarmSerial) || 0)
+      ) + 1;
+      this.textureAirbrushPostStrokePrewarmSerial = scheduleSerial;
       schedulePrewarmCallback(() => {
+        if (scheduleSerial !== this.textureAirbrushPostStrokePrewarmSerial) {
+          return;
+        }
         this.textureAirbrushPostStrokePrewarmPending = false;
         if (
           this.painting === true
@@ -708,6 +729,15 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
           label: "texture-airbrush-post-stroke-prewarm"
         });
       }, { delay: 32 });
+      return true;
+    },
+
+    cancelTextureAirbrushPostStrokePrewarm() {
+      this.textureAirbrushPostStrokePrewarmSerial = Math.max(
+        0,
+        Math.floor(Number(this.textureAirbrushPostStrokePrewarmSerial) || 0)
+      ) + 1;
+      this.textureAirbrushPostStrokePrewarmPending = false;
       return true;
     },
 

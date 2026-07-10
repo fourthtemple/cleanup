@@ -1429,15 +1429,18 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       const preserveWebGpuDisplay = options.preserveWebGpuDisplay === true
         && webGpuExternalMap
         && material.map === webGpuExternalMap;
+      const preserveCurrentDisplay = options.preserveCurrentDisplay === true
+        && Boolean(material.map);
+      const preserveDisplay = preserveWebGpuDisplay || preserveCurrentDisplay;
       if (userData.clonePaintTexture) {
         userData.clonePaintTexture.needsUpdate = true;
-        if (!preserveWebGpuDisplay) {
+        if (!preserveDisplay) {
           this.textureAirbrushInvalidateWebGpuCache?.(userData.clonePaintTexture);
         }
       }
-      if (preserveWebGpuDisplay) {
+      if (preserveDisplay) {
         // The CPU canvas has caught up for undo/export; keep the accumulated
-        // WebGPU texture bound so consecutive live strokes do not disappear.
+        // GPU texture bound until its replacement display is complete.
       } else if (options.preferCpuDisplay === true && userData.clonePaintTexture) {
         material.map = userData.clonePaintTexture;
       } else if (
@@ -1448,7 +1451,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       } else if (userData.clonePaintTexture) {
         material.map = userData.clonePaintTexture;
       }
-      if (!preserveWebGpuDisplay) {
+      if (!preserveDisplay) {
         material.needsUpdate = true;
       }
       this.updateClonePaintPreviews?.();

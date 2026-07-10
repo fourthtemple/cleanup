@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { installPaintToolMethods } from "../src/weight-editor/paint-tools.js";
 import { installSceneAndControlMethods } from "../src/weight-editor/scene-and-controls.js";
+import { installTextureAirbrushWebGpuPrewarmMethods } from "../src/weight-editor/airbrush/webgpu-prewarm.js";
 
 test("GPU undo can clear an empty layer target back to transparent", () => {
   class Color {}
@@ -141,6 +142,54 @@ test("undo waits for pending texture paint before popping history", async () => 
   assert.equal(editor.historyRestoreBusy, false);
   assert.deepEqual(editor.undoStack, [previousLayerState]);
   assert.deepEqual(editor.redoStack, [paintState]);
+});
+
+test("history restore cancels pending post-stroke prewarm work", async () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  installTextureAirbrushWebGpuPrewarmMethods(PaintEditor);
+  const editor = new PaintEditor();
+  let warmed = 0;
+  editor.textureAirbrushResolveBackend = () => ({ backend: "webgpu" });
+  editor.textureAirbrushPrewarmWebGpuStrokeSourcesForStroke = () => {
+    warmed += 1;
+    return 1;
+  };
+
+  assert.equal(editor.scheduleTextureAirbrushPostStrokePrewarm({ before: [] }), true);
+  assert.equal(editor.textureAirbrushPostStrokePrewarmPending, true);
+  assert.equal(editor.prepareTexturePaintHistoryRestore(), true);
+  assert.equal(editor.textureAirbrushPostStrokePrewarmPending, false);
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(warmed, 0);
+});
+
+test("TSL surface strokes skip the legacy post-stroke source prewarm", () => {
+  class PaintEditor {}
+  installTextureAirbrushWebGpuPrewarmMethods(PaintEditor);
+  const editor = new PaintEditor();
+  editor.textureAirbrushResolveBackend = () => ({ backend: "webgpu" });
+  editor.textureAirbrushPrewarmWebGpuStrokeSourcesForStroke = () => {
+    throw new Error("TSL surface target is already warm");
+  };
+  const stroke = {
+    before: [{
+      type: "gpu",
+      targetEntry: {
+        target: {
+          texture: {
+            userData: {
+              texturePaintTslSurfaceAirbrushTargetTexture: true
+            }
+          }
+        }
+      }
+    }]
+  };
+
+  assert.equal(editor.scheduleTextureAirbrushPostStrokePrewarm(stroke), false);
+  assert.notEqual(editor.textureAirbrushPostStrokePrewarmPending, true);
 });
 
 test("pending undo places finalized texture paint above later non-paint states", () => {
@@ -634,11 +683,14 @@ test("layer GPU history restore keeps its target attached after canvas restorati
   const copyCalls = [];
   const displayCalls = [];
   let disposedLayerGpuState = 0;
+  let postRestorePrewarms = 0;
   editor.copyTextureToRenderTarget = (source, target) => {
     copyCalls.push({ source, target });
     return true;
   };
-  editor.restoreTexturePaintCanvasWebGpuDisplay = () => true;
+  editor.restoreTexturePaintCanvasWebGpuDisplay = () => {
+    throw new Error("GPU layer restore must not expose an intermediate canvas display");
+  };
   editor.texturePaintUpdateLayerEmptyState = () => true;
   editor.disposeTexturePaintLayerGpuState = () => {
     disposedLayerGpuState += 1;
@@ -650,11 +702,14 @@ test("layer GPU history restore keeps its target attached after canvas restorati
   editor.textureAirbrushResetLiveProjectionFrame = () => true;
   editor.flushTexturePaintLayerGpuTargetsToCanvases = () => 1;
   editor.texturePaintCompositeMaterialLayerDisplay = (material, options) => {
+    assert.equal(material.map, currentDisplay);
     displayCalls.push({ material, options });
     return true;
   };
   editor.renderTexturePaintLayerPanel = () => {};
-  editor.scheduleTextureAirbrushPostStrokePrewarm = () => {};
+  editor.scheduleTextureAirbrushPostStrokePrewarm = () => {
+    postRestorePrewarms += 1;
+  };
   editor.updateClonePaintPreviews = () => {};
   editor.syncPatchJson = () => {};
   editor.updateUndoButton = () => {};
@@ -664,7 +719,8 @@ test("layer GPU history restore keeps its target attached after canvas restorati
     isEmpty: true,
     canvas: { width: 2, height: 2 }
   };
-  const material = { userData: {}, needsUpdate: false };
+  const currentDisplay = { name: "current-layer-display" };
+  const material = { map: currentDisplay, userData: {}, needsUpdate: false };
   const target = { texture: {} };
   const targetEntry = {
     target,
@@ -704,6 +760,7 @@ test("layer GPU history restore keeps its target attached after canvas restorati
   assert.equal(displayCalls.length, 1);
   assert.equal(displayCalls[0].material, material);
   assert.equal(displayCalls[0].options.changedLayer, layer);
+  assert.equal(postRestorePrewarms, 0);
 });
 
 test("repeated layer GPU undo rebuilds the cleared CPU composite after redo", () => {
@@ -773,7 +830,7 @@ test("repeated layer GPU undo rebuilds the cleared CPU composite after redo", ()
   assert.deepEqual(cpuComposites[0], [
     "cpu-composite",
     material,
-    { skipGpuFlush: true, preferCpuDisplay: true }
+    { skipGpuFlush: true, preserveCurrentDisplay: true }
   ]);
   assert.equal(calls.filter((call) => call === "clear-target").length, 2);
   assert.equal(calls.filter((call) => call === "clear-layer-canvas").length, 2);

@@ -4190,8 +4190,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             )
           : Infinity;
         const startedAt = liveFlush ? currentTimeMs() : 0;
-        const anyCpuOnlyLayerBatch = batches.some((batch) => batch.layerMode === true && batch.erase === true);
-        anyLayerGpuPaintBatch = batches.some((batch) => batch.layerMode === true && batch.erase !== true);
+        anyLayerGpuPaintBatch = batches.some((batch) => batch.layerMode === true);
         shouldRefreshLayerPaintDisplay = anyLayerGpuPaintBatch;
         layerPaintDisplayRefresh = anyLayerGpuPaintBatch
           ? (() => {
@@ -4206,15 +4205,12 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           : null;
         const webGpuVisibleMaskReady = typeof this.textureAirbrushWebGpuPaintFromEvent === "function"
           && Boolean(this.textureAirbrushWebGpuDevice?.());
-        const shouldUseSharedBackend = !anyCpuOnlyLayerBatch;
-        const backend = shouldUseSharedBackend
-          ? this.textureAirbrushResolveBackend?.({
-              gpu: true,
-              liveProjectedPaint: true,
-              visibleSurfaceMaskRequired: true,
-              visibleSurfaceMaskReady: webGpuVisibleMaskReady
-            })
-          : null;
+        const backend = this.textureAirbrushResolveBackend?.({
+          gpu: true,
+          liveProjectedPaint: true,
+          visibleSurfaceMaskRequired: true,
+          visibleSurfaceMaskReady: webGpuVisibleMaskReady
+        });
         if (debugRoot?.dataset && new URLSearchParams(window.location?.search || "").has("debugAirbrush")) {
           debugRoot.dataset.textureAirbrushDebugScreenFlushWebGpuReady = String(webGpuVisibleMaskReady);
           debugRoot.dataset.textureAirbrushDebugScreenFlushBackend = String(backend?.backend || "");
@@ -4277,7 +4273,6 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           };
           const layerGpuBatch = false;
           const layerWebGpuBatch = layerMode
-            && batch.erase !== true
             && webGpuVisibleMaskReady
             && backend?.backend === "webgpu";
           const renderAllCachedLayerPasses = layerGpuBatch

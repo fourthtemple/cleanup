@@ -259,6 +259,14 @@ test("TSL layer paint caps overlap coverage while preserving source-over color m
   assert.match(body, /layerOutRgb\.mul\(layerOutAlpha\)/);
 });
 
+test("TSL layer erase removes premultiplied color and alpha from the stroke-start layer", () => {
+  const body = functionSource("surfaceLayerEraseColor");
+  assert.match(body, /const remaining = float\(1\)\.sub\(alpha\)\.toVar\(\)/);
+  assert.match(body, /options\.basePremultiplied === true[\s\S]*?baseColor\.rgb[\s\S]*?: baseColor\.rgb\.mul\(baseColor\.a\)/);
+  assert.match(body, /const erasedLayerAlpha = baseColor\.a\.mul\(remaining\)\.toVar\(\)/);
+  assert.match(body, /const erasedLayerPremul = baseLayerPremul\.mul\(remaining\)\.toVar\(\)/);
+});
+
 test("both UV raster paths share the surface projection record", () => {
   const sourceRasterBody = functionSource("sourceUvRasterTriangles");
   const projectedRasterBody = functionSource("meshUvProjectedTriangles");
@@ -622,6 +630,21 @@ test("TSL surface airbrush feathers normal cutoff for soft strokes and hard-cuts
   assert.match(updateBody, /state\.hardVisibleEdge\.value = visibleEdgeMode === "hard" \? 1 : 0/);
   assert.match(updateBody, /debugAirbrushNoNormalGate/);
   assert.match(updateBody, /state\.visibleNormalEdge\.value = debugParams\?\.has\("debugAirbrushNoNormalGate"\) === true[\s\S]*?\? 0[\s\S]*?: visibleEdgeMode === "hard" \|\| visibleEdgeMode === "soft" \? 1 : 0/);
+});
+
+test("Neighbor surface paint clips the brush footprint to the raycast-visible hemisphere", () => {
+  const gateBody = functionSource("surfaceSegmentVisibleHemisphereGate");
+  const body = functionSource("createSurfaceMaterial");
+  const projectedBody = functionSource("createProjectedSurfaceMaterial");
+  assert.match(gateBody, /const segmentFacingSign = opposedNormal\.z\.greaterThanEqual\(0\.0\)[\s\S]*?\.select\(float\(1\), float\(-1\)\)[\s\S]*?\.toVar\(\)/);
+  assert.match(gateBody, /const segmentFacingNormalZ = editorNormalLength\.greaterThan\(0\.0002\)[\s\S]*?editorNormal\.z\.mul\(segmentFacingSign\)[\s\S]*?float\(1\)[\s\S]*?\.toVar\(\)/);
+  assert.match(gateBody, /const segmentSoftFacingRamp = clamp\([\s\S]*?segmentFacingNormalZ\.div\(SOFT_FACING_NORMAL_FRONT_FEATHER\)[\s\S]*?0\.0[\s\S]*?1\.0[\s\S]*?\)\.toVar\(\)/);
+  assert.match(gateBody, /const segmentFacingCoverage = mix\([\s\S]*?segmentSoftFacingCoverage[\s\S]*?segmentHardFacingCoverage[\s\S]*?hardVisibleEdge[\s\S]*?\)\.toVar\(\)/);
+  assert.match(gateBody, /return componentGateEnabled[\s\S]*?\.greaterThan\(0\.5\)[\s\S]*?\.and\(opposedNormalAvailable\)[\s\S]*?\.select\(segmentFacingCoverage, float\(1\)\)[\s\S]*?\.toVar\(\)/);
+  for (const materialBody of [body, projectedBody]) {
+    assert.match(materialBody, /const segmentVisibleHemisphereGate = surfaceSegmentVisibleHemisphereGate\(tsl, \{[\s\S]*?componentGateEnabled[\s\S]*?opposedNormalAvailable[\s\S]*?\}\)/);
+    assert.match(materialBody, /\.mul\(segmentVisibleHemisphereGate\)/);
+  }
 });
 
 test("TSL visible-surface depth and normal buffer uses unblended texels", () => {
@@ -1341,7 +1364,9 @@ test("TSL projected surface airbrush preserves opacity while filling projected g
   assert.match(body, /const gutterColor = vec4\(mix\(baseColor\.rgb, brushColor\.rgb, alpha\), 1\)/);
   assert.match(body, /const primaryColor = vec4\(mix\(baseColor\.rgb, brushColor\.rgb, alpha\), 1\)/);
   assert.match(body, /const emptyLayer = emptyLayerSource\.greaterThan\(0\.5\)\.toVar\(\)/);
-  assert.match(body, /if \(layerOnly\) \{[\s\S]*?return surfaceLayerPaintColor\(baseColor, brushColor, alpha, emptyLayer,[\s\S]*?basePremultiplied: false/);
+  assert.match(body, /if \(layerOnly\) \{[\s\S]*?const paintColor = surfaceLayerPaintColor\(baseColor, brushColor, alpha, emptyLayer,[\s\S]*?basePremultiplied: false/);
+  assert.match(body, /const eraseColor = surfaceLayerEraseColor\(baseColor, alpha,[\s\S]*?basePremultiplied: false/);
+  assert.match(body, /return erasePaint\.greaterThan\(0\.5\)\.select\(eraseColor, paintColor\)/);
   assert.match(body, /return gutterOnly\.select\(gutterColor, primaryColor\)/);
   assert.match(body, /blendOnly,/);
   assert.match(body, /emptyLayerSource,/);
@@ -1358,7 +1383,9 @@ test("TSL source-mesh airbrush only writes covered base-plus-brush texels", () =
   assert.match(body, /alpha\.lessThanEqual\(TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD\)/);
   assert.match(body, /noCoverage\.discard\(\)/);
   assert.match(body, /const emptyLayer = emptyLayerSource\.greaterThan\(0\.5\)\.toVar\(\)/);
-  assert.match(body, /if \(layerOnly\) \{[\s\S]*?return surfaceLayerPaintColor\(baseColor, brushColor, alpha, emptyLayer,[\s\S]*?basePremultiplied: false/);
+  assert.match(body, /if \(layerOnly\) \{[\s\S]*?const paintColor = surfaceLayerPaintColor\(baseColor, brushColor, alpha, emptyLayer,[\s\S]*?basePremultiplied: false/);
+  assert.match(body, /const eraseColor = surfaceLayerEraseColor\(baseColor, alpha,[\s\S]*?basePremultiplied: false/);
+  assert.match(body, /return erasePaint\.greaterThan\(0\.5\)\.select\(eraseColor, paintColor\)/);
   assert.match(body, /return vec4\(mix\(baseColor\.rgb, brushColor\.rgb, alpha\), 1\)/);
   assert.match(body, /transparent: maskOnly === true \|\| layerOnly/);
   assert.match(body, /blending: maskOnly \? THREE\.CustomBlending : THREE\.NoBlending/);
@@ -1417,7 +1444,9 @@ test("TSL live strokes use a max-blended stroke mask to cap opacity", () => {
   assert.match(compositeBody, /const mask = maskTextureNode\.sample\(maskUv\)\.toVar\(\)/);
   assert.match(compositeBody, /const alpha = clamp\(mask\.a, 0\.0, 1\.0\)/);
   assert.match(compositeBody, /emptyLayer\.and\(alpha\.lessThanEqual\(TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD\)\)\.discard\(\)/);
-  assert.match(compositeBody, /if \(layerOnly\) \{[\s\S]*?return surfaceLayerPaintColor\(baseColor, brushColor, alpha, emptyLayer,[\s\S]*?basePremultiplied: true/);
+  assert.match(compositeBody, /if \(layerOnly\) \{[\s\S]*?const paintColor = surfaceLayerPaintColor\(baseColor, brushColor, alpha, emptyLayer,[\s\S]*?basePremultiplied: true/);
+  assert.match(compositeBody, /const eraseColor = surfaceLayerEraseColor\(baseColor, alpha,[\s\S]*?basePremultiplied: true/);
+  assert.match(compositeBody, /return erasePaint\.greaterThan\(0\.5\)\.select\(eraseColor, paintColor\)/);
   assert.doesNotMatch(compositeBody, /const alpha = clamp\(max\(max\(mask\.r, mask\.g\), mask\.a\), 0\.0, 1\.0\)/);
   assert.match(compositeBody, /transparent: true/);
   assert.match(compositeBody, /blending: layerOnly \? THREE\.NoBlending : THREE\.CustomBlending/);
@@ -1431,6 +1460,7 @@ test("TSL live strokes use a max-blended stroke mask to cap opacity", () => {
   assert.match(materialBody, /const shaderVisibleTexture = visibleTexture \|\| shaderSourceTexture/);
   assert.match(materialBody, /state\.sourceTextureNode\.value = shaderSourceTexture/);
   assert.match(materialBody, /state\.blendOnly\.value = wantsBlendOnly \? 1 : 0/);
+  assert.match(materialBody, /state\.erasePaint\.value = options\.erase === true \? 1 : 0/);
   assert.match(materialBody, /state\.emptyLayerSource\.value = options\.emptyLayerSource === true \? 1 : 0/);
   assert.match(materialBody, /state\.maskOnly === true[\s\S]*?material\.blending !== THREE\.CustomBlending/);
 });

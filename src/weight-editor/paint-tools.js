@@ -923,14 +923,10 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       return this.textureAirbrushEventWithRetainedNativePressure?.(converted, sourceEvent) || converted;
     },
 
-    shouldIgnoreMouseFallbackForRecentPointer(event = null) {
+    shouldIgnoreMouseFallbackForRecentPointer() {
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
       const lastPointer = Number(this.texturePaintLastPointerEventAt);
-      if (!Number.isFinite(lastPointer) || now - lastPointer > 160) {
-        return false;
-      }
-      const force = Number(event?.webkitForce ?? event?.force);
-      return !Number.isFinite(force) || force <= 0;
+      return Number.isFinite(lastPointer) && now - lastPointer <= 160;
     },
 
     texturePaintMouseFallbackToolActive() {
@@ -1036,6 +1032,17 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
 
     onCanvasMouseDownFallback(event, options = {}) {
       const hasButton = event?.button !== undefined && event?.button !== null;
+      if (this.painting || this.texturePaintMouseFallbackActive) {
+        this.textureAirbrushCacheNativePressureForStroke?.(event);
+        exposeTexturePaintInputDebug(this, "mousedown-fallback-ignored", event, {
+          reason: "active-pointer",
+          hasButton,
+          allowMissingButton: options.allowMissingButton === true,
+          activePointerId: this.texturePaintActivePointerId ?? null,
+          mouseFallbackActive: this.texturePaintMouseFallbackActive === true
+        });
+        return false;
+      }
       if (
         !this.texturePaintMouseFallbackToolActive?.()
         || (hasButton ? event.button !== 0 : options.allowMissingButton !== true)
@@ -3214,6 +3221,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       this.clearTextureAirbrushScreenLayer?.();
       this.resolveTextureAirbrushScreenStrokeFlushWaiters?.();
       this.cancelTextureAirbrushDeferredBroadLayerPrewarm?.();
+      this.cancelTextureAirbrushPostStrokePrewarm?.();
       this.textureAirbrushResetLiveProjectionFrame?.();
       return true;
     },
@@ -3653,6 +3661,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           const regions = Array.isArray(entry.regions) && entry.regions.length
             ? entry.regions
             : null;
+          const gpuLayerRestore = Boolean(entry.layer && gpuRestoredLayers.has(entry.layer));
           if (!entry.context || !entry.canvas) {
             continue;
           }
@@ -3697,34 +3706,34 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             entry.material.needsUpdate = true;
           }
           if (entry.layer) {
-            this.restoreTexturePaintCanvasWebGpuDisplay?.(entry);
             this.texturePaintUpdateLayerEmptyState?.(entry.layer);
-            // A canvas history restore makes the layer canvas authoritative.
-            // Reusing the old live WebGPU target can re-show the stroke that was
-            // just undone, even when the restored canvas pixels are transparent.
-            if (!gpuRestoredLayers.has(entry.layer)) {
+            if (!gpuLayerRestore) {
+              this.restoreTexturePaintCanvasWebGpuDisplay?.(entry);
+              // A canvas-only history restore makes the layer canvas authoritative.
+              // Reusing the old live WebGPU target can re-show the stroke that was
+              // just undone, even when the restored canvas pixels are transparent.
               this.disposeTexturePaintLayerGpuState?.(entry.layer);
+              this.texturePaintCompositeMaterialLayers?.(entry.material, {
+                skipGpuFlush: true,
+                preferCpuDisplay: true
+              });
+              this.rebuildTexturePaintCompositeCanvasTexture?.(entry.material, {
+                referenceTexture: entry.texture || entry.material?.userData?.clonePaintTexture || null
+              });
+              texturePaintSetDebugData("textureAirbrushDebugUndoRestoreCurrentCanvas", {
+                layer: true,
+                layerRegions: debugCanvasRegionStats(entry.context, (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)),
+                baseRegions: debugCanvasRegionStats(
+                  entry.layerStack?.baseContext || entry.material?.userData?.texturePaintLayerStack?.baseContext || null,
+                  (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)
+                ),
+                compositeRegions: debugCanvasRegionStats(
+                  entry.material?.userData?.clonePaintContext || null,
+                  (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)
+                )
+              });
+              rememberRestoredGpuLayerMaterial(entry.material, entry.layer);
             }
-            this.texturePaintCompositeMaterialLayers?.(entry.material, {
-              skipGpuFlush: true,
-              preferCpuDisplay: true
-            });
-            this.rebuildTexturePaintCompositeCanvasTexture?.(entry.material, {
-              referenceTexture: entry.texture || entry.material?.userData?.clonePaintTexture || null
-            });
-            texturePaintSetDebugData("textureAirbrushDebugUndoRestoreCurrentCanvas", {
-              layer: true,
-              layerRegions: debugCanvasRegionStats(entry.context, (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)),
-              baseRegions: debugCanvasRegionStats(
-                entry.layerStack?.baseContext || entry.material?.userData?.texturePaintLayerStack?.baseContext || null,
-                (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)
-              ),
-              compositeRegions: debugCanvasRegionStats(
-                entry.material?.userData?.clonePaintContext || null,
-                (regions || [{ bounds: entry.bounds || null }]).map((region) => region.bounds || region)
-              )
-            });
-            rememberRestoredGpuLayerMaterial(entry.material, entry.layer);
             restoredLayerPanel = true;
           } else if (entry.material?.userData?.texturePaintLayerStack) {
             this.restoreTexturePaintCanvasWebGpuDisplay?.(entry);
@@ -3743,7 +3752,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             rememberRestoredGpuLayerMaterial(entry.material, null);
             restoredLayerPanel = true;
           }
-          this.restoreTexturePaintCanvasWebGpuDisplay?.(entry);
+          if (!gpuLayerRestore) {
+            this.restoreTexturePaintCanvasWebGpuDisplay?.(entry);
+          }
           this.refreshCloneSpotlightTextures?.(entry.record);
           continue;
         }
@@ -3828,26 +3839,24 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
             this.refreshCloneSpotlightTextures?.(entry.record);
             continue;
           }
-          this.restoreTexturePaintCanvasWebGpuDisplay?.({
-            type: "gpu",
-            record: entry.record,
-            material: entry.material,
-            texture: entry.targetEntry?.layerMode === true
-              ? entry.targetEntry?.layer?.gpuLayerTexture || entry.material?.userData?.clonePaintTexture || null
-              : entry.material?.userData?.clonePaintTexture || entry.material?.map || null,
-            canvas: entry.targetEntry?.layerMode === true
-              ? entry.targetEntry?.layer?.canvas || null
-              : entry.material?.userData?.clonePaintCanvas || null,
-            layer: entry.targetEntry?.layer || null,
-            layerStack: entry.targetEntry?.layerStack || entry.material?.userData?.texturePaintLayerStack || null
-          });
+          if (entry.targetEntry.layerMode !== true) {
+            this.restoreTexturePaintCanvasWebGpuDisplay?.({
+              type: "gpu",
+              record: entry.record,
+              material: entry.material,
+              texture: entry.material?.userData?.clonePaintTexture || entry.material?.map || null,
+              canvas: entry.material?.userData?.clonePaintCanvas || null,
+              layer: null,
+              layerStack: entry.material?.userData?.texturePaintLayerStack || null
+            });
+          }
         }
       }
       if (restoredLayerPanel) {
         this.cancelTextureAirbrushDeferredBroadLayerPrewarm?.();
         if (restoredGpuLayerMaterials.size) {
           for (const material of restoredGpuLayerMaterials.keys()) {
-            this.resetTexturePaintLayerDisplayCaches?.(material);
+            this.texturePaintTslSurfaceAirbrushInvalidate?.(material);
           }
         }
         this.bumpTexturePaintLayerMutationSerial?.();
@@ -3862,19 +3871,30 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           if (state.needsCpuComposite) {
             this.texturePaintCompositeMaterialLayers?.(material, {
               skipGpuFlush: true,
-              preferCpuDisplay: true
+              preserveCurrentDisplay: true
             });
           }
-          const displayed = this.texturePaintCompositeMaterialLayerDisplay?.(material, {
+          const previousComposite = material?.userData?.texturePaintCompositeGpuTarget || null;
+          const displayedByTsl = this.texturePaintRefreshTslSurfaceLayerDisplay?.(material, {
+            changedLayer: state.changedLayer || null,
+            reason: "history-restore"
+          }) === true;
+          const displayed = displayedByTsl || this.texturePaintCompositeMaterialLayerDisplay?.(material, {
             changedLayer: state.changedLayer || null,
             live: false
           }) === true;
           if (!displayed) {
             this.texturePaintCompositeMaterialLayerGpuTargets?.(material);
           }
+          if (
+            previousComposite
+            && material?.userData?.texturePaintCompositeGpuTarget === previousComposite
+            && material.map !== previousComposite.target?.texture
+          ) {
+            this.discardTexturePaintMaterialGpuComposite?.(material);
+          }
         }
         this.renderTexturePaintLayerPanel?.();
-        this.scheduleTextureAirbrushPostStrokePrewarm?.();
       }
       this.updateClonePaintPreviews?.();
       this.syncPatchJson?.();
@@ -4666,7 +4686,6 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           : null;
         const layerMode = texturePaintActiveLayerMode(this, textureHitMaterial);
         const layerGpuPaint = layerMode
-          && this.activeTool === "airbrush"
           && typeof this.textureAirbrushGpuLayerTargetForMaterial === "function";
         const neighborPaintActive = this.activeTool === "airbrush"
           && this.texturePaintNeighborModeEnabled?.() === true;

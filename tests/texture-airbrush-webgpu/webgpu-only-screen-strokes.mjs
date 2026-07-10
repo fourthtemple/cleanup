@@ -72,6 +72,33 @@ test("WebGPU screen stroke flush reports unavailable backend instead of using le
   assert.deepEqual(reports, [{ backend: "none", webGpuStatus: "backend-uninitialized" }]);
 });
 
+test("layer eraser batches use the live WebGPU surface path", () => {
+  class ScreenEditor {}
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  installEditorDefaults(editor);
+  const paintCalls = [];
+  editor.textureAirbrushWebGpuDevice = () => ({ label: "native-webgpu-device" });
+  editor.textureAirbrushResolveBackend = () => ({ backend: "webgpu", webGpuStatus: "ready" });
+  editor.textureAirbrushWebGpuPaintFromEvent = (event, options = {}) => {
+    paintCalls.push({ event, options });
+    return 1;
+  };
+  editor.textureAirbrushScreenStrokeQueue = [strokePayload({
+    erase: true,
+    layerMode: true,
+    layerMutationSerial: 0,
+    styleKey: "8:32:220:80:500:350:350:1000:erase:soft:layer:0:all"
+  })];
+
+  assert.equal(editor.flushTextureAirbrushScreenStroke({ live: true }), 1);
+  assert.equal(paintCalls.length, 1);
+  assert.equal(paintCalls[0].options.erase, true);
+  assert.equal(paintCalls[0].options.layerMode, true);
+  assert.equal(paintCalls[0].options.gpu, true);
+  assert.equal(paintCalls[0].options.resolvedBackend?.backend, "webgpu");
+});
+
 test("texture-mode WebGPU pressure-radius strokes keep per-segment radii", () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);
@@ -835,6 +862,62 @@ test("tablet compatibility pressure moves do not duplicate an active pointer str
 
   assert.equal(cachedPressure, 2);
   assert.equal(paintedMoves, 0);
+});
+
+test("tablet compatibility pressure down does not replace an active pointer stroke", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  let cachedPressure = 0;
+  let pointerDowns = 0;
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 7;
+  editor.texturePaintMouseFallbackActive = false;
+  editor.textureAirbrushCacheNativePressureForStroke = () => {
+    cachedPressure += 1;
+    return true;
+  };
+  editor.onPointerDown = () => {
+    pointerDowns += 1;
+  };
+
+  assert.equal(editor.onCanvasMouseDownFallback({
+    button: 0,
+    buttons: 1,
+    clientX: 120,
+    clientY: 90,
+    webkitForce: 0.64
+  }), false);
+
+  assert.equal(cachedPressure, 1);
+  assert.equal(pointerDowns, 0);
+  assert.equal(editor.texturePaintMouseFallbackActive, false);
+  assert.equal(editor.texturePaintActivePointerId, 7);
+});
+
+test("late tablet compatibility pressure down does not start a ghost stroke", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  let pointerDowns = 0;
+  editor.activeTool = "airbrush";
+  editor.painting = false;
+  editor.texturePaintLastPointerEventAt = performance.now();
+  editor.onPointerDown = () => {
+    pointerDowns += 1;
+  };
+
+  assert.equal(editor.onCanvasMouseDownFallback({
+    button: 0,
+    buttons: 1,
+    clientX: 120,
+    clientY: 90,
+    webkitForce: 0.64
+  }), false);
+
+  assert.equal(pointerDowns, 0);
+  assert.notEqual(editor.texturePaintMouseFallbackActive, true);
 });
 
 test("airbrush curve sampling does not overshoot sharp zig-zag turns", () => {

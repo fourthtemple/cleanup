@@ -4299,6 +4299,27 @@ function surfaceLayerPaintColor(
   return vec4(storedLayerRgb.x, storedLayerRgb.y, storedLayerRgb.z, layerOutAlpha).toVar();
 }
 
+function surfaceLayerEraseColor(baseColor, alpha, options = {}) {
+  const {
+    float,
+    vec4
+  } = options;
+  const remaining = float(1).sub(alpha).toVar();
+  const baseLayerPremul = (
+    options.basePremultiplied === true
+      ? baseColor.rgb
+      : baseColor.rgb.mul(baseColor.a)
+  ).toVar();
+  const erasedLayerAlpha = baseColor.a.mul(remaining).toVar();
+  const erasedLayerPremul = baseLayerPremul.mul(remaining).toVar();
+  return vec4(
+    erasedLayerPremul.x,
+    erasedLayerPremul.y,
+    erasedLayerPremul.z,
+    erasedLayerAlpha
+  ).toVar();
+}
+
 function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, options = {}) {
   const tsl = THREE.TSL || null;
   if (!tsl || typeof THREE.MeshBasicNodeMaterial !== "function") {
@@ -4323,6 +4344,7 @@ function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, o
   const maskTextureNode = texture(maskTexture);
   const brushColor = uniform(new THREE.Vector4(0, 1, 0.4, 1), "vec4");
   const blendOnly = uniform(0, "float");
+  const erasePaint = uniform(0, "float");
   const emptyLayerSource = uniform(0, "float");
   const baseFlipY = uniform(0, "float");
   const maskFlipY = uniform(0, "float");
@@ -4343,7 +4365,7 @@ function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, o
     const emptyLayer = emptyLayerSource.greaterThan(0.5).toVar();
     emptyLayer.and(alpha.lessThanEqual(TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD)).discard();
     if (layerOnly) {
-      return surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
+      const paintColor = surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
         basePremultiplied: true,
         clamp,
         float,
@@ -4351,6 +4373,12 @@ function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, o
         vec3,
         vec4
       });
+      const eraseColor = surfaceLayerEraseColor(baseColor, alpha, {
+        basePremultiplied: true,
+        float,
+        vec4
+      });
+      return erasePaint.greaterThan(0.5).select(eraseColor, paintColor);
     }
     return vec4(mix(baseColor.rgb, brushColor.rgb, alpha), 1);
   })();
@@ -4381,6 +4409,7 @@ function createStrokeCompositeMaterial(baseTexture = null, maskTexture = null, o
     maskTextureNode,
     brushColor,
     blendOnly,
+    erasePaint,
     emptyLayerSource,
     baseFlipY,
     maskFlipY,
@@ -4414,6 +4443,7 @@ function updateStrokeCompositeMaterial(
     { r: 255, g: 255, b: 255 }
   );
   state.blendOnly.value = options.blendOnly === true ? 1 : 0;
+  state.erasePaint.value = options.erase === true ? 1 : 0;
   state.emptyLayerSource.value = options.emptyLayerSource === true ? 1 : 0;
   state.baseFlipY.value = (
     (baseTexture?.flipY === true && !surfaceAirbrushTextureIsLiveTarget(baseTexture))
@@ -6119,6 +6149,46 @@ function surfaceTargetIndexForBaseTexture(cache = null, baseTexture = null) {
   return cache?.targetIndex === 0 && targets[1] ? 1 : 0;
 }
 
+function surfaceSegmentVisibleHemisphereGate(tsl, options = {}) {
+  const { clamp, float, mix } = tsl;
+  const {
+    componentGateEnabled,
+    editorNormal,
+    editorNormalLength,
+    hardVisibleEdge,
+    opposedNormal,
+    opposedNormalAvailable
+  } = options;
+  const segmentFacingSign = opposedNormal.z.greaterThanEqual(0.0)
+    .select(float(1), float(-1))
+    .toVar();
+  const segmentFacingNormalZ = editorNormalLength.greaterThan(0.0002)
+    .select(editorNormal.z.mul(segmentFacingSign), float(1))
+    .toVar();
+  const segmentSoftFacingRamp = clamp(
+    segmentFacingNormalZ.div(SOFT_FACING_NORMAL_FRONT_FEATHER),
+    0.0,
+    1.0
+  ).toVar();
+  const segmentSoftFacingCoverage = segmentSoftFacingRamp
+    .mul(segmentSoftFacingRamp)
+    .mul(float(3).sub(segmentSoftFacingRamp.mul(2)))
+    .toVar();
+  const segmentHardFacingCoverage = segmentFacingNormalZ.greaterThanEqual(0.0)
+    .select(float(1), float(0))
+    .toVar();
+  const segmentFacingCoverage = mix(
+    segmentSoftFacingCoverage,
+    segmentHardFacingCoverage,
+    hardVisibleEdge
+  ).toVar();
+  return componentGateEnabled
+    .greaterThan(0.5)
+    .and(opposedNormalAvailable)
+    .select(segmentFacingCoverage, float(1))
+    .toVar();
+}
+
 function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = null, options = {}) {
   const tsl = THREE.TSL || null;
   if (!tsl || typeof THREE.MeshBasicNodeMaterial !== "function") {
@@ -6168,6 +6238,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
   const hardVisibleEdge = uniform(0, "float");
   const visibleNormalEdge = uniform(1, "float");
   const blendOnly = uniform(0, "float");
+  const erasePaint = uniform(0, "float");
   const emptyLayerSource = uniform(0, "float");
   const visibleSurfaceEnabled = uniform(0, "float");
   const componentGateEnabled = uniform(0, "float");
@@ -6442,6 +6513,14 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const opposedNormalGate = opposedNormalAvailable
           .select(opposedNormalFeathered, float(1))
           .toVar();
+        const segmentVisibleHemisphereGate = surfaceSegmentVisibleHemisphereGate(tsl, {
+          componentGateEnabled,
+          editorNormal,
+          editorNormalLength,
+          hardVisibleEdge,
+          opposedNormal,
+          opposedNormalAvailable
+        });
         const segmentViewStart = segmentViewStarts.element(i);
         const segmentViewEnd = segmentViewEnds.element(i);
         const segmentHasView = segmentViewStart.w.greaterThan(0.0001)
@@ -6565,6 +6644,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const sampleCoverage = baseSampleCoverage
           .mul(depthGate)
           .mul(normalGate)
+          .mul(segmentVisibleHemisphereGate)
           .mul(segmentLocalityGate)
           .toVar();
         coverage.assign(max(coverage, sampleCoverage));
@@ -6586,7 +6666,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
     const primaryColor = vec4(mix(baseColor.rgb, brushColor.rgb, alpha), 1).toVar();
     const emptyLayer = emptyLayerSource.greaterThan(0.5).toVar();
     if (layerOnly) {
-      return surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
+      const paintColor = surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
         basePremultiplied: false,
         clamp,
         float,
@@ -6594,6 +6674,12 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         vec3,
         vec4
       });
+      const eraseColor = surfaceLayerEraseColor(baseColor, alpha, {
+        basePremultiplied: false,
+        float,
+        vec4
+      });
+      return erasePaint.greaterThan(0.5).select(eraseColor, paintColor);
     }
     return gutterOnly.select(gutterColor, primaryColor);
   })();
@@ -6628,6 +6714,7 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
     hardVisibleEdge,
     visibleNormalEdge,
     blendOnly,
+    erasePaint,
     emptyLayerSource,
     projectedPaintGutterOnly,
     segmentCount,
@@ -6710,6 +6797,7 @@ function createSurfaceMaterial(
   const hardVisibleEdge = uniform(0, "float");
   const visibleNormalEdge = uniform(1, "float");
   const blendOnly = uniform(0, "float");
+  const erasePaint = uniform(0, "float");
   const emptyLayerSource = uniform(0, "float");
   const visibleSurfaceEnabled = uniform(0, "float");
   const componentGateEnabled = uniform(0, "float");
@@ -7016,6 +7104,14 @@ function createSurfaceMaterial(
         const opposedNormalGate = opposedNormalAvailable
           .select(opposedNormalFeathered, float(1))
           .toVar();
+        const segmentVisibleHemisphereGate = surfaceSegmentVisibleHemisphereGate(tsl, {
+          componentGateEnabled,
+          editorNormal,
+          editorNormalLength,
+          hardVisibleEdge,
+          opposedNormal,
+          opposedNormalAvailable
+        });
         const segmentViewStart = segmentViewStarts.element(i);
         const segmentViewEnd = segmentViewEnds.element(i);
         const segmentHasView = segmentViewStart.w.greaterThan(0.0001)
@@ -7129,6 +7225,7 @@ function createSurfaceMaterial(
           .mul(componentGate)
           .mul(depthGate)
           .mul(normalGate)
+          .mul(segmentVisibleHemisphereGate)
           .mul(segmentLocalityGate)
           .toVar();
         const uvOwnershipGate = overlapCanWrite.select(float(1), float(0)).toVar();
@@ -7148,7 +7245,7 @@ function createSurfaceMaterial(
     const baseColor = sourceTextureNode.toVar();
     const emptyLayer = emptyLayerSource.greaterThan(0.5).toVar();
     if (layerOnly) {
-      return surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
+      const paintColor = surfaceLayerPaintColor(baseColor, brushColor, alpha, emptyLayer, {
         basePremultiplied: false,
         clamp,
         float,
@@ -7156,6 +7253,12 @@ function createSurfaceMaterial(
         vec3,
         vec4
       });
+      const eraseColor = surfaceLayerEraseColor(baseColor, alpha, {
+        basePremultiplied: false,
+        float,
+        vec4
+      });
+      return erasePaint.greaterThan(0.5).select(eraseColor, paintColor);
     }
     return vec4(mix(baseColor.rgb, brushColor.rgb, alpha), 1);
   })();
@@ -7198,6 +7301,7 @@ function createSurfaceMaterial(
     hardVisibleEdge,
     visibleNormalEdge,
     blendOnly,
+    erasePaint,
     emptyLayerSource,
     sourceSampleFlipY,
     segmentCount,
@@ -7406,6 +7510,9 @@ function updateSurfaceMaterial(
       material.blending = THREE.NoBlending;
       material.needsUpdate = true;
     }
+  }
+  if (state.erasePaint) {
+    state.erasePaint.value = options.erase === true ? 1 : 0;
   }
   if (state.emptyLayerSource) {
     state.emptyLayerSource.value = options.emptyLayerSource === true ? 1 : 0;
