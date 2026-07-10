@@ -1,4 +1,60 @@
 import { textureAirbrushRecordIdentity } from "./record-identity.js";
+import {
+  textureAirbrushInterpolateSurfaceAnchors,
+  textureAirbrushPointWithSurfaceAnchor,
+  textureAirbrushSurfaceAnchorFromPoint
+} from "./surface-path.js";
+
+function compactNeighborBridgePoints(points = [], limit = 96) {
+  if (!Array.isArray(points) || points.length <= limit || limit < 2) {
+    return points;
+  }
+  const compacted = [points[0]];
+  const lastIndex = points.length - 1;
+  for (let index = 1; index < limit - 1; index += 1) {
+    compacted.push(points[Math.round(index * lastIndex / (limit - 1))]);
+  }
+  compacted.push(points[lastIndex]);
+  points.splice(0, points.length, ...compacted);
+  return points;
+}
+
+function neighborBridgePointsWithSurfaceAnchors(
+  startPoint = null,
+  pendingPoints = [],
+  endPoint = null,
+  endAnchor = null,
+  anchorAtPoint = null
+) {
+  const points = [
+    textureAirbrushPointWithSurfaceAnchor(startPoint, textureAirbrushSurfaceAnchorFromPoint(startPoint)),
+    ...(Array.isArray(pendingPoints) ? pendingPoints : []).map((point) => (
+      textureAirbrushPointWithSurfaceAnchor(point, textureAirbrushSurfaceAnchorFromPoint(point))
+    )),
+    textureAirbrushPointWithSurfaceAnchor(endPoint, endAnchor)
+  ].filter(Boolean);
+  if (points.length < 3) {
+    return points.slice(1, -1);
+  }
+  const startAnchor = textureAirbrushSurfaceAnchorFromPoint(points[0]);
+  const resolvedEndAnchor = textureAirbrushSurfaceAnchorFromPoint(points.at(-1));
+  const cumulative = [0];
+  for (let index = 1; index < points.length; index += 1) {
+    cumulative.push(cumulative[index - 1] + Math.hypot(
+      points[index].clientX - points[index - 1].clientX,
+      points[index].clientY - points[index - 1].clientY
+    ));
+  }
+  const total = cumulative.at(-1) || 0;
+  return points.slice(1, -1).map((point, index) => {
+    const ratio = total > 0.000001 ? cumulative[index + 1] / total : (index + 1) / (points.length - 1);
+    const interpolatedAnchor = textureAirbrushInterpolateSurfaceAnchors(startAnchor, resolvedEndAnchor, ratio);
+    const anchor = typeof anchorAtPoint === "function"
+      ? anchorAtPoint(point, interpolatedAnchor, ratio) || interpolatedAnchor
+      : interpolatedAnchor;
+    return textureAirbrushPointWithSurfaceAnchor(point, anchor) || point;
+  });
+}
 
 function faceVertexIndexes(face = null) {
   const vertices = Array.isArray(face?.vertices)
@@ -189,6 +245,10 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       this.textureAirbrushActiveNeighborPaintSeed = null;
       this.textureAirbrushNeighborScreenStrokeFrontier = null;
       this.textureAirbrushNeighborScreenStrokeBreakPending = false;
+      this.textureAirbrushNeighborScreenStrokeLastAcceptedPoint = null;
+      this.textureAirbrushNeighborScreenStrokeMissPending = null;
+      this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+      this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
       this.textureAirbrushResetLiveProjectionFrame?.({ keepCurrent: false });
       if (options.status !== false) {
         this.setStatus?.(nextEnabled
@@ -437,7 +497,8 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       const value = this.texturePaintHitForEvent?.(event, tool, {
         refreshSkinnedBounds: false,
         allowAnimationProgressMismatch: this.painting === true,
-        raycastFallbackOnScreenMiss: useRaycastFallback
+        raycastFallbackOnScreenMiss: useRaycastFallback,
+        skipTransparentTextureHits: false
       }) || null;
       this.textureAirbrushNeighborPaintHitEventCache = { key: cacheKey, value };
       return value;
@@ -450,7 +511,8 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       return this.texturePaintHitForEvent?.(event, tool, {
         refreshSkinnedBounds: false,
         allowAnimationProgressMismatch: this.painting === true,
-        raycastFallbackOnScreenMiss: false
+        raycastFallbackOnScreenMiss: false,
+        skipTransparentTextureHits: false
       }) || null;
     },
 
@@ -509,25 +571,38 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       if (!record || frontier.record !== record || !vertices?.size) {
         return false;
       }
-      for (const vertexIndex of vertices) {
-        if (anchors.has(vertexIndex)) {
-          return true;
-        }
-        for (const linkedIndex of this.textureAirbrushNeighborLinkedVertices?.(record, vertexIndex) || [vertexIndex]) {
-          if (anchors.has(linkedIndex)) {
+      const visited = new Set();
+      let wave = [...vertices];
+      const maxHops = 3;
+      const maxVisited = 256;
+      for (let hop = 0; hop <= maxHops && wave.length && visited.size < maxVisited; hop += 1) {
+        const nextWave = [];
+        for (const vertexIndex of wave) {
+          if (!Number.isInteger(vertexIndex) || visited.has(vertexIndex)) {
+            continue;
+          }
+          visited.add(vertexIndex);
+          if (anchors.has(vertexIndex)) {
             return true;
           }
-        }
-        for (const neighborIndex of record.vertexNeighbors?.[vertexIndex] || []) {
-          if (anchors.has(neighborIndex)) {
-            return true;
-          }
-          for (const linkedNeighborIndex of this.textureAirbrushNeighborLinkedVertices?.(record, neighborIndex) || [neighborIndex]) {
-            if (anchors.has(linkedNeighborIndex)) {
+          for (const linkedIndex of this.textureAirbrushNeighborLinkedVertices?.(record, vertexIndex) || [vertexIndex]) {
+            if (anchors.has(linkedIndex)) {
               return true;
+            }
+            if (hop < maxHops && !visited.has(linkedIndex)) {
+              nextWave.push(linkedIndex);
+            }
+          }
+          if (hop >= maxHops) {
+            continue;
+          }
+          for (const neighborIndex of record.vertexNeighbors?.[vertexIndex] || []) {
+            if (!visited.has(neighborIndex)) {
+              nextWave.push(neighborIndex);
             }
           }
         }
+        wave = nextWave;
       }
       return false;
     },
@@ -541,6 +616,66 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       const vertices = this.textureAirbrushNeighborPaintHitVertexSet?.(record, hit) || new Set();
       const frontier = this.textureAirbrushNeighborScreenStrokeFrontier || null;
       return this.textureAirbrushNeighborFrontierTouchesCandidate?.(record, vertices, frontier) === true;
+    },
+
+    textureAirbrushNeighborPreSmoothedBatchEndpointState(event = null, tool = this.activeTool) {
+      const active = this.texturePaintNeighborModeEnabled?.() === true
+        && (tool === "airbrush" || tool === "texture-eraser");
+      const seed = this.textureAirbrushActiveNeighborPaintSeed || null;
+      if (!active || !seed?.enabled || !event) {
+        return { active, decisive: false, allowed: true, seed };
+      }
+      const paintHit = this.textureAirbrushNeighborPaintHitFromEvent?.(event, tool, {
+        raycastFallbackOnScreenMiss: false
+      }) || null;
+      if (!paintHit?.record || !paintHit?.hit?.face) {
+        return { active: true, decisive: true, allowed: false, reason: "missing-hit", paintHit, seed };
+      }
+      if (this.textureAirbrushNeighborSeedAllowsPaintHit?.(seed, paintHit) !== true) {
+        return { active: true, decisive: true, allowed: false, reason: "disconnected", paintHit, seed };
+      }
+      if (this.textureAirbrushNeighborPaintHitTouchesFrontier?.(seed, paintHit) === false) {
+        return { active: true, decisive: true, allowed: false, reason: "frontier", paintHit, seed };
+      }
+      return { active: true, decisive: true, allowed: true, paintHit, seed };
+    },
+
+    textureAirbrushHoldPreSmoothedNeighborBatch(events = []) {
+      const lastAccepted = this.textureAirbrushNeighborScreenStrokeLastAcceptedPoint || null;
+      if (!Number.isFinite(lastAccepted?.clientX) || !Number.isFinite(lastAccepted?.clientY)) {
+        return false;
+      }
+      const pendingPoints = this.textureAirbrushNeighborScreenStrokePendingPoints ||= [];
+      let added = false;
+      for (const event of Array.isArray(events) ? events : []) {
+        if (!Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) {
+          continue;
+        }
+        const previous = pendingPoints.at(-1) || lastAccepted;
+        if (Math.hypot(event.clientX - previous.clientX, event.clientY - previous.clientY) <= 0.01) {
+          continue;
+        }
+        pendingPoints.push({ clientX: event.clientX, clientY: event.clientY });
+        added = true;
+      }
+      if (!added) {
+        return false;
+      }
+      if (pendingPoints.length > 96) {
+        compactNeighborBridgePoints(pendingPoints);
+      }
+      const endpoint = pendingPoints.at(-1);
+      this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = true;
+      this.textureAirbrushNeighborScreenStrokeMissPending = {
+        clientX: endpoint.clientX,
+        clientY: endpoint.clientY,
+        distanceFromAccepted: Math.hypot(
+          endpoint.clientX - lastAccepted.clientX,
+          endpoint.clientY - lastAccepted.clientY
+        ),
+        reason: "pre-smoothed"
+      };
+      return true;
     },
 
     textureAirbrushRecordNeighborPaintHit(seed = null, paintHit = null) {
@@ -566,10 +701,16 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
       if (!neighborPaintActive) {
         this.textureAirbrushNeighborScreenStrokeBreakPending = false;
-        return { active: false, allowed: true, resetAfterBreak: false };
+        this.textureAirbrushNeighborScreenStrokeLastAcceptedPoint = null;
+        this.textureAirbrushNeighborScreenStrokeMissPending = null;
+        this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+        this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
+        return { active: false, allowed: true, resetAfterBreak: false, reason: "inactive" };
       }
       if (!Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) {
         this.textureAirbrushNeighborScreenStrokeBreakPending = true;
+        this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+        this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
         this.textureAirbrushResetStrokeSpacing?.();
         return { active: true, allowed: false, resetAfterBreak: false, reason: "missing-event" };
       }
@@ -581,7 +722,8 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
           active: true,
           allowed: true,
           resetAfterBreak: this.textureAirbrushNeighborScreenStrokeBreakPending === true,
-          seed: this.textureAirbrushActiveNeighborPaintSeed || null
+          seed: this.textureAirbrushActiveNeighborPaintSeed || null,
+          reason: "unavailable-gate"
         };
       }
       const paintHit = this.textureAirbrushNeighborPaintHitFromEvent(event, this.activeTool, {
@@ -597,18 +739,91 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       }
       if (!seed?.enabled) {
         this.textureAirbrushNeighborScreenStrokeBreakPending = true;
+        this.textureAirbrushNeighborScreenStrokeMissPending = null;
+        this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+        this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
         this.textureAirbrushResetStrokeSpacing?.();
-        return { active: true, allowed: false, resetAfterBreak: false, reason: "missing-seed", paintHit, seed: null };
+        return {
+          active: true,
+          allowed: false,
+          resetAfterBreak: false,
+          reason: "missing-seed",
+          paintHit,
+          seed: null
+        };
+      }
+      const lastAccepted = this.textureAirbrushNeighborScreenStrokeLastAcceptedPoint || null;
+      const radiusPixels = Math.max(
+        1,
+        Number(options.radiusPixels) || Number(this.textureBrushRadiusScreenPixels?.()) || 8
+      );
+      const hermiteBridgePending = this.textureAirbrushNeighborScreenStrokeHermiteBridgePending === true;
+      const maxBridgeDistance = hermiteBridgePending
+        ? Math.max(96, Math.min(160, radiusPixels * 16))
+        : Math.max(24, Math.min(64, radiusPixels * 6));
+      const distanceFromAccepted = lastAccepted
+        ? Math.hypot(event.clientX - lastAccepted.clientX, event.clientY - lastAccepted.clientY)
+        : Infinity;
+      const preserveLocalDiscontinuity = (reason = "missing-hit") => {
+        if (distanceFromAccepted <= maxBridgeDistance) {
+          const pendingPoints = this.textureAirbrushNeighborScreenStrokePendingPoints ||= [];
+          const previousPoint = pendingPoints.at(-1) || null;
+          if (
+            !previousPoint
+            || Math.hypot(event.clientX - previousPoint.clientX, event.clientY - previousPoint.clientY) > 0.01
+          ) {
+            pendingPoints.push({ clientX: event.clientX, clientY: event.clientY });
+            if (pendingPoints.length > 96) {
+              compactNeighborBridgePoints(pendingPoints);
+            }
+          }
+          this.textureAirbrushNeighborScreenStrokeMissPending = {
+            clientX: event.clientX,
+            clientY: event.clientY,
+            distanceFromAccepted,
+            reason
+          };
+          return {
+            active: true,
+            allowed: false,
+            preservePath: true,
+            resetAfterBreak: false,
+            reason,
+            paintHit,
+            seed
+          };
+        }
+        this.textureAirbrushNeighborScreenStrokeBreakPending = true;
+        this.textureAirbrushNeighborScreenStrokeMissPending = null;
+        this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+        this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
+        this.textureAirbrushResetStrokeSpacing?.();
+        return {
+          active: true,
+          allowed: false,
+          preservePath: false,
+          resetAfterBreak: false,
+          reason: `${reason}-distance`,
+          paintHit,
+          seed
+        };
+      };
+      if (!paintHit?.record || !paintHit?.hit?.face) {
+        return preserveLocalDiscontinuity("missing-hit");
       }
       if (this.textureAirbrushNeighborSeedAllowsPaintHit(seed, paintHit) !== true) {
         this.textureAirbrushActiveNeighborPaintSeed = seed;
-        this.textureAirbrushNeighborScreenStrokeBreakPending = true;
-        this.textureAirbrushResetStrokeSpacing?.();
-        return { active: true, allowed: false, resetAfterBreak: false, reason: "disconnected", paintHit, seed };
+        return preserveLocalDiscontinuity("disconnected");
       }
       if (this.textureAirbrushNeighborPaintHitTouchesFrontier?.(seed, paintHit) === false) {
         this.textureAirbrushActiveNeighborPaintSeed = seed;
+        if (hermiteBridgePending) {
+          return preserveLocalDiscontinuity("frontier");
+        }
         this.textureAirbrushNeighborScreenStrokeBreakPending = true;
+        this.textureAirbrushNeighborScreenStrokeMissPending = null;
+        this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+        this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
         this.textureAirbrushResetStrokeSpacing?.();
         return { active: true, allowed: false, resetAfterBreak: false, reason: "frontier", paintHit, seed };
       }
@@ -619,7 +834,37 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         this.textureAirbrushResetStrokeSpacing?.();
       }
       this.textureAirbrushRecordNeighborPaintHit?.(seed, paintHit);
-      return { active: true, allowed: true, resetAfterBreak, paintHit, seed };
+      const surfaceAnchor = this.textureAirbrushSurfaceAnchorForPaintHit?.(
+        paintHit,
+        event,
+        radiusPixels
+      ) || null;
+      const pendingPoints = Array.isArray(this.textureAirbrushNeighborScreenStrokePendingPoints)
+        ? this.textureAirbrushNeighborScreenStrokePendingPoints
+        : [];
+      const bridgePoints = neighborBridgePointsWithSurfaceAnchors(
+        lastAccepted,
+        pendingPoints,
+        event,
+        surfaceAnchor,
+        (point, anchor) => this.textureAirbrushSurfaceAnchorAtClientPoint?.(point, anchor) || anchor
+      );
+      this.textureAirbrushNeighborScreenStrokeLastAcceptedPoint = textureAirbrushPointWithSurfaceAnchor(
+        event,
+        surfaceAnchor
+      );
+      this.textureAirbrushNeighborScreenStrokeMissPending = null;
+      this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+      this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
+      return {
+        active: true,
+        allowed: true,
+        resetAfterBreak,
+        paintHit,
+        seed,
+        ...(surfaceAnchor ? { surfaceAnchor } : {}),
+        ...(bridgePoints.length ? { bridgePoints } : {})
+      };
     },
 
     textureAirbrushSyncNeighborPaintSeedForHit(paintHit = null, options = {}) {
@@ -663,6 +908,18 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         this.textureAirbrushNeighborScreenStrokeFrontier = null;
       }
       this.textureAirbrushNeighborPaintHitEventCache = null;
+      const radiusPixels = Math.max(1, Number(this.textureBrushRadiusScreenPixels?.()) || 8);
+      const surfaceAnchor = seed?.enabled
+        ? this.textureAirbrushSurfaceAnchorForPaintHit?.(paintHit, event, radiusPixels) || null
+        : null;
+      this.textureAirbrushNeighborScreenStrokeLastAcceptedPoint = seed?.enabled
+        && Number.isFinite(event?.clientX)
+        && Number.isFinite(event?.clientY)
+        ? textureAirbrushPointWithSurfaceAnchor(event, surfaceAnchor)
+        : null;
+      this.textureAirbrushNeighborScreenStrokeMissPending = null;
+      this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+      this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
       return seed;
     },
 
@@ -671,6 +928,10 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       this.textureAirbrushNeighborScreenStrokeFrontier = null;
       this.textureAirbrushNeighborScreenStrokeBreakPending = false;
       this.textureAirbrushNeighborPaintHitEventCache = null;
+      this.textureAirbrushNeighborScreenStrokeLastAcceptedPoint = null;
+      this.textureAirbrushNeighborScreenStrokeMissPending = null;
+      this.textureAirbrushNeighborScreenStrokePendingPoints = [];
+      this.textureAirbrushNeighborScreenStrokeHermiteBridgePending = false;
     },
 
     textureAirbrushNeighborRecordMatches(seed = null, record = null) {

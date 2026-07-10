@@ -6520,7 +6520,15 @@ function createProjectedSurfaceMaterial(sourceTexture = null, visibleTexture = n
         const surfaceFieldCoverage = segmentHasView
           .select(surfaceBrushCoverage, screenCoverage)
           .toVar();
-        const segmentLocalityGate = float(1).toVar();
+        const segmentLocalityGate = segmentHasView
+          .and(componentGateEnabled.greaterThan(0.5))
+          .select(
+            segmentDistanceGate
+              .mul(segmentDepthGate)
+              .mul(opposedNormalGate),
+            float(1)
+          )
+          .toVar();
         const segmentComponent = segmentComponents.element(i);
         const hasSegmentComponent = segmentComponent.x.greaterThan(0.5).or(segmentComponent.y.greaterThan(0.5)).toVar();
         const componentGateActive = componentGateEnabled
@@ -7086,7 +7094,15 @@ function createSurfaceMaterial(
         const surfaceFieldCoverage = segmentHasView
           .select(surfaceBrushCoverage, screenCoverage)
           .toVar();
-        const segmentLocalityGate = float(1).toVar();
+        const segmentLocalityGate = segmentHasView
+          .and(componentGateEnabled.greaterThan(0.5))
+          .select(
+            segmentDistanceGate
+              .mul(segmentDepthGate)
+              .mul(opposedNormalGate),
+            float(1)
+          )
+          .toVar();
         const segmentComponent = segmentComponents.element(i);
         const hasSegmentComponent = segmentComponent.x.greaterThan(0.5).or(segmentComponent.y.greaterThan(0.5)).toVar();
         const componentGateActive = componentGateEnabled

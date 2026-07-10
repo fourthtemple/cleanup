@@ -265,7 +265,7 @@ function smoothTextureBrushMacroPlaybackEvents(events = []) {
       activeBrushStroke = true;
       activeTool = event.tool || "";
       previousPreviousBrushPointer = null;
-      previousBrushPointer = event;
+      previousBrushPointer = { ...event, t: Number(sourceEvent.t) };
       continue;
     }
 

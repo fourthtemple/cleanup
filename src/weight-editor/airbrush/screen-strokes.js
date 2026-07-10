@@ -5,6 +5,11 @@ import {
   textureAirbrushPressurePointerType
 } from "./pressure.js";
 import { installTextureAirbrushScreenOverlayMethods } from "./screen-overlay.js";
+import {
+  textureAirbrushPointWithSurfaceAnchor,
+  textureAirbrushSurfaceAnchorFromPoint,
+  textureAirbrushSurfaceSegmentMetadata
+} from "./surface-path.js";
 
 const TEXTURE_AIRBRUSH_PRESSURE_STYLE_DELTA = 0.12;
 const TEXTURE_AIRBRUSH_PRESSURE_REVERSAL_JITTER_DELTA = 0.22;
@@ -24,7 +29,7 @@ const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_SEGMENTS = TEXTURE_AIRBRUSH_MAX
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MAX_BATCH_MS = 12;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_MIN_MS = 16;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_NEIGHBOR_IMMEDIATE_MIN_MS = 24;
-const TEXTURE_AIRBRUSH_LIVE_WEBGPU_CONTINUATION_COALESCE_MS = 40;
+const TEXTURE_AIRBRUSH_LIVE_WEBGPU_CONTINUATION_COALESCE_MS = 16;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_CONTINUATION_COALESCE_MS = 40;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_SCREEN_FLUSH_MIN_MS = 16;
 const TEXTURE_AIRBRUSH_LIVE_WEBGPU_LARGE_BRUSH_MIN_RADIUS_PIXELS = 18;
@@ -120,10 +125,10 @@ function finiteClientPoint(point = null) {
   if (!Number.isFinite(point?.clientX) || !Number.isFinite(point?.clientY)) {
     return null;
   }
-  return {
-    clientX: point.clientX,
-    clientY: point.clientY
-  };
+  return textureAirbrushPointWithSurfaceAnchor(
+    point,
+    textureAirbrushSurfaceAnchorFromPoint(point)
+  );
 }
 
 function clientEventAtPoint(editor, sourceEvent = null, point = null) {
@@ -153,9 +158,20 @@ function finiteClientPointLike(point = null) {
 }
 
 function cloneClientPoint(point = null) {
-  return finiteClientPointLike(point)
-    ? { clientX: point.clientX, clientY: point.clientY }
-    : null;
+  return finiteClientPoint(point);
+}
+
+function applyClientPointSurfaceAnchor(target = null, source = null) {
+  if (!target) {
+    return false;
+  }
+  const anchor = textureAirbrushSurfaceAnchorFromPoint(source);
+  if (anchor) {
+    target.textureAirbrushSurfaceAnchor = anchor;
+    return true;
+  }
+  delete target.textureAirbrushSurfaceAnchor;
+  return false;
 }
 
 function sameClientPoint(left = null, right = null, epsilonSq = 0.000001) {
@@ -173,6 +189,8 @@ function appendUniqueClientPoint(points = [], point = null) {
   }
   if (!points.length || !sameClientPoint(points.at(-1), clone)) {
     points.push(clone);
+  } else if (textureAirbrushSurfaceAnchorFromPoint(clone)) {
+    applyClientPointSurfaceAnchor(points.at(-1), clone);
   }
   return true;
 }
@@ -187,6 +205,9 @@ function appendContinuousClientPoint(points = [], point = null) {
     return true;
   }
   if (sameClientPoint(points.at(-1), clone)) {
+    if (textureAirbrushSurfaceAnchorFromPoint(clone)) {
+      applyClientPointSurfaceAnchor(points.at(-1), clone);
+    }
     return true;
   }
   if (points.length >= 2 && sameClientPoint(points.at(-2), clone)) {
@@ -1877,6 +1898,7 @@ function mergeCoalescedScreenStrokePayload(previous = null, next = null) {
   }
   previous.clientX = next.clientX;
   previous.clientY = next.clientY;
+  applyClientPointSurfaceAnchor(previous, next);
   previous.preSmoothedStrokePath = previous.preSmoothedStrokePath === true
     || next.preSmoothedStrokePath === true;
   if (Number.isFinite(Number(next.continuousStrokePathSerial))) {
@@ -2003,6 +2025,7 @@ function strokeSegmentsForPayload(payload = null, radiusPixels = 1, options = {}
       return [{
         start: point,
         end: point,
+        ...textureAirbrushSurfaceSegmentMetadata(point, point),
         ...(variableRadiusPayload(payload) ? { radiusPixels } : {})
       }];
   }
@@ -2018,6 +2041,7 @@ function strokeSegmentsForPayload(payload = null, radiusPixels = 1, options = {}
         segments.push({
           start,
           end,
+          ...textureAirbrushSurfaceSegmentMetadata(start, end),
           ...(variableRadiusPayload(payload) ? { radiusPixels } : {})
         });
       }
@@ -2026,6 +2050,7 @@ function strokeSegmentsForPayload(payload = null, radiusPixels = 1, options = {}
     segments.push({
       start,
       end,
+      ...textureAirbrushSurfaceSegmentMetadata(start, end),
       ...(variableRadiusPayload(payload) ? { radiusPixels } : {})
     });
   }
@@ -2120,16 +2145,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       if (!event) {
         return null;
       }
-      const current = {
-        clientX: event.clientX,
-        clientY: event.clientY
-      };
-      const start = strokeStart && Number.isFinite(strokeStart.clientX) && Number.isFinite(strokeStart.clientY)
-        ? {
-            clientX: strokeStart.clientX,
-            clientY: strokeStart.clientY
-          }
-        : current;
+      const current = finiteClientPoint(event);
+      if (!current) {
+        return null;
+      }
+      const start = finiteClientPoint(strokeStart) || current;
       const baseOptions = this.textureAirbrushScreenStrokeBaseOptions?.() || {};
       const baseRadiusPixels = Math.max(1, Number(baseOptions.radiusPixels) || this.textureBrushRadiusScreenPixels?.() || 8);
       const baseOpacity = baseOptions.opacity ?? this.textureAirbrushOpacity?.() ?? 0.42;
@@ -2157,8 +2177,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const pressureInputActive = this.textureAirbrushPressureInputActive?.(event, stabilizedOptions)
         ?? pressurePointerType(event);
       const payload = {
-        clientX: current.clientX,
-        clientY: current.clientY,
+        ...current,
         strokeStart: start,
         radiusPixels,
         color: { r: color.r, g: color.g, b: color.b },
@@ -2931,6 +2950,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       rememberPayloadCurvePoints(previous, [start, current]);
       previous.clientX = current.clientX;
       previous.clientY = current.clientY;
+      applyClientPointSurfaceAnchor(previous, current);
       this.textureAirbrushAttachContinuousScreenStrokePath?.(previous);
       const root = typeof window !== "undefined" ? window.document?.documentElement : null;
       if (root?.dataset && new URLSearchParams(window.location?.search || "").has("debugAirbrush")) {
@@ -3150,11 +3170,13 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const neighborStrokeRewarmActive = neighborPaintActive
         && this.textureAirbrushNeighborProjectionStrokeRewarmedActive === true;
       const postCameraStrokeAccumulateActive = this.textureAirbrushPostCameraProjectionStrokeAccumulateActive === true;
+      const forceStrokeReset = options.forceStrokeReset === true;
       const forcePostCameraStrokeReset = options.reset !== true
         && this.textureAirbrushForceNextScreenStrokeResetAfterCameraChange === true
         && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
-      const requestedStrokeReset = options.reset === true || forcePostCameraStrokeReset;
-      const duplicateActiveStrokeReset = options.reset === true
+      const requestedStrokeReset = options.reset === true || forceStrokeReset || forcePostCameraStrokeReset;
+      const duplicateActiveStrokeReset = !forceStrokeReset
+        && options.reset === true
         && forcePostCameraStrokeReset !== true
         && this.painting === true
         && finiteClientPointLike(this.texturePaintStrokePoint);

@@ -3,6 +3,46 @@ import test from "node:test";
 import { installPaintToolMethods } from "../src/weight-editor/paint-tools.js";
 import { installSceneAndControlMethods } from "../src/weight-editor/scene-and-controls.js";
 
+test("GPU undo can clear an empty layer target back to transparent", () => {
+  class Color {}
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, { THREE: { Color } });
+  const editor = new PaintEditor();
+  const target = { texture: {} };
+  const previousTarget = { texture: {} };
+  const previousColor = { value: "previous" };
+  const calls = [];
+  editor.renderer = {
+    isWebGPURenderer: true,
+    autoClear: false,
+    getRenderTarget: () => previousTarget,
+    setRenderTarget: (value) => calls.push(["target", value]),
+    getClearAlpha: () => 0.75,
+    getClearColor: () => previousColor,
+    setClearColor: (color, alpha) => calls.push(["clear-color", color, alpha]),
+    clear: () => calls.push(["clear"])
+  };
+  const targetEntry = {
+    target,
+    emptyTransparent: false,
+    texturePaintLayerHasPaint: true,
+    paintRevision: 7
+  };
+
+  assert.equal(editor.clearTexturePaintGpuTarget(targetEntry, { markMutated: false }), true);
+  assert.deepEqual(calls, [
+    ["target", target],
+    ["clear-color", 0x000000, 0],
+    ["clear"],
+    ["target", previousTarget],
+    ["clear-color", previousColor, 0.75]
+  ]);
+  assert.equal(editor.renderer.autoClear, false);
+  assert.equal(targetEntry.emptyTransparent, true);
+  assert.equal(targetEntry.texturePaintLayerHasPaint, false);
+  assert.equal(targetEntry.paintRevision, 7);
+});
+
 test("texture paint undo finalization exposes a promise while screen work drains", async () => {
   class PaintEditor {}
   installPaintToolMethods(PaintEditor, {});
@@ -585,4 +625,159 @@ test("GPU undo restore keeps TSL surface targets bound to restored display textu
   assert.equal(editable.texture, targetTexture);
   assert.equal(material.needsUpdate, true);
   assert.equal(material.disposed, 1);
+});
+
+test("layer GPU history restore keeps its target attached after canvas restoration", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const copyCalls = [];
+  const displayCalls = [];
+  let disposedLayerGpuState = 0;
+  editor.copyTextureToRenderTarget = (source, target) => {
+    copyCalls.push({ source, target });
+    return true;
+  };
+  editor.restoreTexturePaintCanvasWebGpuDisplay = () => true;
+  editor.texturePaintUpdateLayerEmptyState = () => true;
+  editor.disposeTexturePaintLayerGpuState = () => {
+    disposedLayerGpuState += 1;
+  };
+  editor.texturePaintCompositeMaterialLayers = () => true;
+  editor.rebuildTexturePaintCompositeCanvasTexture = () => ({});
+  editor.resetTexturePaintLayerDisplayCaches = () => true;
+  editor.bumpTexturePaintLayerMutationSerial = () => true;
+  editor.textureAirbrushResetLiveProjectionFrame = () => true;
+  editor.flushTexturePaintLayerGpuTargetsToCanvases = () => 1;
+  editor.texturePaintCompositeMaterialLayerDisplay = (material, options) => {
+    displayCalls.push({ material, options });
+    return true;
+  };
+  editor.renderTexturePaintLayerPanel = () => {};
+  editor.scheduleTextureAirbrushPostStrokePrewarm = () => {};
+  editor.updateClonePaintPreviews = () => {};
+  editor.syncPatchJson = () => {};
+  editor.updateUndoButton = () => {};
+
+  const layer = {
+    id: "paint-layer",
+    isEmpty: true,
+    canvas: { width: 2, height: 2 }
+  };
+  const material = { userData: {}, needsUpdate: false };
+  const target = { texture: {} };
+  const targetEntry = {
+    target,
+    layer,
+    layerMode: true,
+    emptyTransparent: true,
+    paintRevision: 0
+  };
+  layer.gpuTarget = targetEntry;
+  const canvasImage = { width: 1, height: 1, data: new Uint8ClampedArray(4) };
+  const canvasEntry = {
+    type: "canvas",
+    material,
+    layer,
+    layerStack: { layers: [layer] },
+    canvas: layer.canvas,
+    context: { putImageData() {} },
+    regions: [{ bounds: { x: 0, y: 0, width: 1, height: 1 }, before: canvasImage }]
+  };
+  const snapshot = { texture: { name: "painted-layer" } };
+  const gpuEntry = {
+    type: "gpu",
+    material,
+    targetEntry,
+    before: snapshot
+  };
+
+  assert.equal(editor.restoreTexturePaintSnapshot([canvasEntry, gpuEntry], "before"), true);
+  assert.equal(disposedLayerGpuState, 0);
+  assert.equal(layer.gpuTarget, targetEntry);
+  assert.equal(layer.isEmpty, false);
+  assert.equal(layer.texturePaintHasPaint, true);
+  assert.equal(layer.texturePaintGpuPainted, true);
+  assert.equal(targetEntry.emptyTransparent, false);
+  assert.equal(targetEntry.texturePaintLayerHasPaint, true);
+  assert.deepEqual(copyCalls, [{ source: snapshot.texture, target }]);
+  assert.equal(displayCalls.length, 1);
+  assert.equal(displayCalls[0].material, material);
+  assert.equal(displayCalls[0].options.changedLayer, layer);
+});
+
+test("repeated layer GPU undo rebuilds the cleared CPU composite after redo", () => {
+  class PaintEditor {}
+  installPaintToolMethods(PaintEditor, {});
+  const editor = new PaintEditor();
+  const calls = [];
+  editor.clearTexturePaintGpuTarget = () => {
+    calls.push("clear-target");
+    return true;
+  };
+  editor.copyTextureToRenderTarget = () => {
+    calls.push("copy-target");
+    return true;
+  };
+  editor.restoreTexturePaintCanvasWebGpuDisplay = () => true;
+  editor.resetTexturePaintLayerDisplayCaches = () => true;
+  editor.bumpTexturePaintLayerMutationSerial = () => true;
+  editor.textureAirbrushResetLiveProjectionFrame = () => true;
+  editor.flushTexturePaintLayerGpuTargetsToCanvases = () => {
+    calls.push("flush-layer-canvas");
+    return 1;
+  };
+  editor.texturePaintCompositeMaterialLayers = (material, options) => {
+    calls.push(["cpu-composite", material, options]);
+    return true;
+  };
+  editor.texturePaintCompositeMaterialLayerDisplay = () => {
+    calls.push("display");
+    return true;
+  };
+  editor.renderTexturePaintLayerPanel = () => {};
+  editor.scheduleTextureAirbrushPostStrokePrewarm = () => {};
+  editor.updateClonePaintPreviews = () => {};
+  editor.syncPatchJson = () => {};
+  editor.updateUndoButton = () => {};
+
+  const layer = {
+    canvas: { width: 2, height: 2 },
+    context: {
+      clearRect() {
+        calls.push("clear-layer-canvas");
+      }
+    }
+  };
+  const material = { userData: {} };
+  const targetEntry = {
+    target: { texture: {} },
+    layer,
+    layerMode: true
+  };
+  layer.gpuTarget = targetEntry;
+  const entry = {
+    type: "gpu",
+    material,
+    targetEntry,
+    before: { clear: true, width: 2, height: 2 },
+    after: { texture: {} }
+  };
+
+  editor.restoreTexturePaintSnapshot([entry], "before");
+  editor.restoreTexturePaintSnapshot([entry], "after");
+  editor.restoreTexturePaintSnapshot([entry], "before");
+
+  const cpuComposites = calls.filter((call) => Array.isArray(call) && call[0] === "cpu-composite");
+  assert.equal(cpuComposites.length, 2);
+  assert.deepEqual(cpuComposites[0], [
+    "cpu-composite",
+    material,
+    { skipGpuFlush: true, preferCpuDisplay: true }
+  ]);
+  assert.equal(calls.filter((call) => call === "clear-target").length, 2);
+  assert.equal(calls.filter((call) => call === "clear-layer-canvas").length, 2);
+  assert.equal(calls.filter((call) => call === "copy-target").length, 1);
+  assert.equal(calls.filter((call) => call === "flush-layer-canvas").length, 1);
+  assert.equal(calls.at(-1), "display");
 });

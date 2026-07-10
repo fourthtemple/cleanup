@@ -1416,6 +1416,48 @@ test("lost airbrush pointer release on move restores orbit controls", () => {
   assert.deepEqual(released, [42]);
 });
 
+test("transient pen buttons zero does not end an active airbrush stroke", () => {
+  const editor = new TestEditor();
+  const released = [];
+  let painted = 0;
+  let prevented = 0;
+  editor.activeTool = "airbrush";
+  editor.painting = true;
+  editor.texturePaintActivePointerId = 42;
+  editor.controls = { enabled: false };
+  editor.canvas = {
+    hasPointerCapture(pointerId) {
+      return pointerId === 42;
+    },
+    releasePointerCapture(pointerId) {
+      released.push(pointerId);
+    }
+  };
+  editor.showTextureStrokeCursor = () => {};
+  editor.paintTextureStrokeFromEvent = () => {
+    painted += 1;
+    return true;
+  };
+
+  editor.onPointerMove({
+    pointerId: 42,
+    pointerType: "pen",
+    buttons: 0,
+    clientX: 120,
+    clientY: 140,
+    preventDefault() {
+      prevented += 1;
+    }
+  });
+
+  assert.equal(editor.painting, true);
+  assert.equal(editor.controls.enabled, false);
+  assert.equal(editor.texturePaintActivePointerId, 42);
+  assert.equal(painted, 1);
+  assert.equal(prevented, 1);
+  assert.deepEqual(released, []);
+});
+
 test("already-ended airbrush pointer release still restores idle orbit controls", () => {
   const editor = new TestEditor();
   const released = [];

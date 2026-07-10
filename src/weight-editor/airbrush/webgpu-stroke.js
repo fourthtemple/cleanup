@@ -6,6 +6,7 @@ import {
 } from "./constants.js";
 import { airbrushHaloRadius } from "./math.js";
 import { textureAirbrushRecordIdentity } from "./record-identity.js";
+import { textureAirbrushCloneSurfaceSegmentMetadata } from "./surface-path.js";
 
 const TEXTURE_AIRBRUSH_WEBGPU_TRIANGLE_CACHE_LIMIT = 4096;
 const TEXTURE_AIRBRUSH_WEBGPU_TRIANGLE_LIST_CACHE_LIMIT = 4096;
@@ -1804,6 +1805,7 @@ function connectScreenStrokeSegmentGaps(segments = [], radiusPixels = 1) {
       return {
         start,
         end,
+        ...textureAirbrushCloneSurfaceSegmentMetadata(segment),
         radiusPixels: segmentRadius
       };
     })
@@ -5617,47 +5619,45 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
       };
     });
   };
-  // The visible projected brush field must follow the continuous pointer
-  // polyline. Hit-resampled UV/surface pieces are allowed to seed visibility
-  // and dispatch, but using them as the field makes strokes break at UV seams,
-  // missed ray samples, and triangle boundaries.
-	  const continuousNeighborScreenFieldSegments = preferTslFullSurfaceUvRaster
-	    && neighborSurfacePaintActive
-	    && screenPaintStrokeSegments.length
-	    ? screenPaintStrokeSegments.slice(0, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS)
-	    : [];
-	  const projectedFieldStrokeSegments = annotateSurfaceFieldComponents(continuousNeighborScreenFieldSegments.length
-	    ? continuousNeighborScreenFieldSegments
-	    : surfaceEnrichedScreenPaintStrokeSegments.length
-	    ? surfaceEnrichedScreenPaintStrokeSegments
-	    : projectedSurfaceBrushSegments.length
-	    ? projectedSurfaceBrushSegments
-	    : screenPaintStrokeSegments);
-	  const cameraFacingSurfaceFieldStrokeSegments = (() => {
-	    if (!projectedFieldStrokeSegments.length) {
-	      return [];
-	    }
-	    const visibleEdgeMode = String(options.visibleEdgeMode || "soft").toLowerCase();
-	    const rejectZ = visibleEdgeMode === "hard" ? 0 : -0.28;
-	    const normalZ = (normal = null) => (
-	      Number.isFinite(Number(normal?.z)) ? Number(normal.z) : null
-	    );
-	    return projectedFieldStrokeSegments.filter((segment) => {
-	      const startZ = normalZ(segment?.viewNormalStart);
-	      const endZ = normalZ(segment?.viewNormalEnd);
-	      if (startZ === null && endZ === null) {
-	        return true;
-	      }
-	      return Math.max(startZ ?? endZ, endZ ?? startZ) >= rejectZ;
-	    });
-	  })();
-	  const usesScreenProjectedVisibility = options.useVisibilityTrianglePaintRegions === true
-	    && options.liveProjectedPaint === true
-	    && cameraFacingSurfaceFieldStrokeSegments.length
-	    && (
-	      preferTslFullSurfaceUvRaster
-	      || visibilityTriangles.some((triangle) => triangle.screenA && triangle.screenB && triangle.screenC)
-	    );
+  // The visible projected brush field follows the continuous pointer path.
+  // Neighbor input filters topological jumps before these segments arrive.
+  const continuousNeighborScreenFieldSegments = preferTslFullSurfaceUvRaster
+    && neighborSurfacePaintActive
+    && screenPaintStrokeSegments.length
+    ? screenPaintStrokeSegments.slice(0, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS)
+    : [];
+  const projectedFieldStrokeSegments = annotateSurfaceFieldComponents(continuousNeighborScreenFieldSegments.length
+    ? continuousNeighborScreenFieldSegments
+    : surfaceEnrichedScreenPaintStrokeSegments.length
+      ? surfaceEnrichedScreenPaintStrokeSegments
+      : projectedSurfaceBrushSegments.length
+        ? projectedSurfaceBrushSegments
+        : screenPaintStrokeSegments);
+  const cameraFacingSurfaceFieldStrokeSegments = (() => {
+    if (!projectedFieldStrokeSegments.length) {
+      return [];
+    }
+    const visibleEdgeMode = String(options.visibleEdgeMode || "soft").toLowerCase();
+    const rejectZ = visibleEdgeMode === "hard" ? 0 : -0.28;
+    const normalZ = (normal = null) => (
+      Number.isFinite(Number(normal?.z)) ? Number(normal.z) : null
+    );
+    return projectedFieldStrokeSegments.filter((segment) => {
+      const startZ = normalZ(segment?.viewNormalStart);
+      const endZ = normalZ(segment?.viewNormalEnd);
+      if (startZ === null && endZ === null) {
+        return true;
+      }
+      return Math.max(startZ ?? endZ, endZ ?? startZ) >= rejectZ;
+    });
+  })();
+  const usesScreenProjectedVisibility = options.useVisibilityTrianglePaintRegions === true
+    && options.liveProjectedPaint === true
+    && cameraFacingSurfaceFieldStrokeSegments.length
+    && (
+      preferTslFullSurfaceUvRaster
+      || visibilityTriangles.some((triangle) => triangle.screenA && triangle.screenB && triangle.screenC)
+    );
   const preferTslSurfaceProjectedPrimary = options.useTslSurfaceAirbrush !== false
     && options.projectedPrimary === true
     && options.liveProjectedPaint === true

@@ -953,6 +953,8 @@ function screenHitPointCacheKey(point = null, tool = "airbrush", options = {}) {
   return [
     options.firstOnly === true ? "first" : "all",
     options.firstOnly === true ? "" : Math.max(0, Math.floor(Number(options.maxHits) || 0)),
+    options.skipTransparentTextureHits === false ? "all-texels" : "visible-texels",
+    options.includeBackFacingTriangles === true ? "two-sided" : "front-facing",
     tool || "airbrush",
     Math.round(point.x * 4),
     Math.round(point.y * 4)
@@ -1060,6 +1062,126 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
       return textureAirbrushHitHasVisibleTexel(this, record, hit, options);
     },
 
+    textureAirbrushSurfaceAnchorForPaintHit(paintHit = null, event = null, radiusPixels = 1) {
+      const record = paintHit?.record || null;
+      const hit = paintHit?.hit || null;
+      const rect = this.canvas?.getBoundingClientRect?.() || null;
+      if (!record || !hit?.face || !rect?.width || !rect?.height || !this.camera) {
+        return null;
+      }
+      const screenPoint = Number.isFinite(event?.clientX) && Number.isFinite(event?.clientY)
+        ? {
+            x: event.clientX - (Number(rect.left) || 0),
+            y: event.clientY - (Number(rect.top) || 0)
+          }
+        : null;
+      const surface = screenPoint
+        ? interpolateScreenTriangleSurface(hit.screen, screenPoint)
+        : null;
+      let view = surface?.view || null;
+      if (
+        !view
+        && Number.isFinite(hit.point?.x)
+        && Number.isFinite(hit.point?.y)
+        && Number.isFinite(hit.point?.z)
+        && this.camera.matrixWorldInverse
+      ) {
+        const transformed = new Vector3(hit.point.x, hit.point.y, hit.point.z);
+        transformed.applyMatrix4(this.camera.matrixWorldInverse);
+        if (Number.isFinite(transformed.x) && Number.isFinite(transformed.y) && Number.isFinite(transformed.z)) {
+          view = { x: transformed.x, y: transformed.y, z: transformed.z };
+        }
+      }
+      if (!view) {
+        return null;
+      }
+      let normal = viewNormalForScreenTriangle(hit.screen);
+      const object = hit.object || record.object || null;
+      if (
+        !normal
+        && Number.isFinite(hit.face.normal?.x)
+        && Number.isFinite(hit.face.normal?.y)
+        && Number.isFinite(hit.face.normal?.z)
+        && object?.matrixWorld
+        && this.camera.matrixWorldInverse
+      ) {
+        const transformed = new Vector3(hit.face.normal.x, hit.face.normal.y, hit.face.normal.z);
+        transformed.transformDirection(object.matrixWorld);
+        transformed.transformDirection(this.camera.matrixWorldInverse);
+        if (Number.isFinite(transformed.x) && Number.isFinite(transformed.y) && Number.isFinite(transformed.z)) {
+          normal = { x: transformed.x, y: transformed.y, z: transformed.z };
+        }
+      }
+      const componentState = this.textureAirbrushNeighborComponentState?.(record) || null;
+      const faceVertices = (Array.isArray(hit.face.vertices)
+        ? hit.face.vertices
+        : [hit.face.a, hit.face.b, hit.face.c])
+        .filter((vertexIndex) => Number.isInteger(vertexIndex));
+      const componentCounts = new Map();
+      for (const vertexIndex of faceVertices) {
+        const componentId = Math.floor(Number(componentState?.componentIds?.[vertexIndex]));
+        if (componentId >= 0) {
+          componentCounts.set(componentId, (componentCounts.get(componentId) || 0) + 1);
+        }
+      }
+      let component = -1;
+      let componentCount = 0;
+      for (const [componentId, count] of componentCounts) {
+        if (count > componentCount) {
+          component = componentId;
+          componentCount = count;
+        }
+      }
+      const viewRadiusPixels = viewRadiusForScreenRadius(
+        this.camera,
+        rect,
+        view.z,
+        radiusPixels
+      );
+      return {
+        view: { x: view.x, y: view.y, z: view.z },
+        ...(normal ? { normal } : {}),
+        ...(Number.isFinite(viewRadiusPixels) && viewRadiusPixels > 0 ? { viewRadiusPixels } : {}),
+        ...(component >= 0 ? { component } : {})
+      };
+    },
+
+    textureAirbrushSurfaceAnchorAtClientPoint(point = null, anchor = null) {
+      const rect = this.canvas?.getBoundingClientRect?.() || null;
+      const viewZ = Number(anchor?.view?.z);
+      const projectionInverse = this.camera?.projectionMatrixInverse || null;
+      if (
+        !Number.isFinite(point?.clientX)
+        || !Number.isFinite(point?.clientY)
+        || !Number.isFinite(viewZ)
+        || !rect?.width
+        || !rect?.height
+        || !projectionInverse
+      ) {
+        return null;
+      }
+      const ndcX = ((point.clientX - (Number(rect.left) || 0)) / rect.width) * 2 - 1;
+      const ndcY = -((point.clientY - (Number(rect.top) || 0)) / rect.height) * 2 + 1;
+      const viewRay = new Vector3(ndcX, ndcY, 0).applyMatrix4(projectionInverse);
+      let viewX = viewRay.x;
+      let viewY = viewRay.y;
+      if (this.camera?.isPerspectiveCamera === true) {
+        if (!Number.isFinite(viewRay.z) || Math.abs(viewRay.z) <= 0.000001) {
+          return null;
+        }
+        const scale = viewZ / viewRay.z;
+        viewX *= scale;
+        viewY *= scale;
+      }
+      if (!Number.isFinite(viewX) || !Number.isFinite(viewY)) {
+        return null;
+      }
+      return {
+        ...anchor,
+        view: { x: viewX, y: viewY, z: viewZ }
+      };
+    },
+
     texturePaintFrontRegionHitAtCanvasPoint(point, targetEntries = null) {
       if (!point || !this.canvas || !this.camera) {
         return null;
@@ -1113,7 +1235,9 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
             rect,
             allowAnimationProgressMismatch,
             firstOnly: false,
-            maxHits: 8
+            maxHits: 8,
+            skipTransparentTextureHits: options.skipTransparentTextureHits,
+            includeBackFacingTriangles: options.includeBackFacingTriangles
           }) || [];
           const indexedHit = indexedHits[0] || null;
           if (indexedHit?.record && indexedHit?.hit) {
@@ -1124,7 +1248,9 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
         const indexedHits = this.textureAirbrushScreenHitsForEvent?.(event, tool, {
           rect,
           allowAnimationProgressMismatch,
-          firstOnly: true
+          firstOnly: true,
+          skipTransparentTextureHits: options.skipTransparentTextureHits,
+          includeBackFacingTriangles: options.includeBackFacingTriangles
         }) || [];
         const indexedHit = indexedHits[0] || null;
         if (indexedHit?.record && indexedHit?.hit) {
@@ -2132,7 +2258,9 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
       const firstOnly = options.firstOnly === true;
       const cacheKey = screenHitPointCacheKey(point, tool, {
         firstOnly,
-        maxHits: options.maxHits
+        maxHits: options.maxHits,
+        skipTransparentTextureHits: options.skipTransparentTextureHits,
+        includeBackFacingTriangles: options.includeBackFacingTriangles
       });
       if (cacheKey && index.hitCache?.has(cacheKey)) {
         return index.hitCache.get(cacheKey) || [];
