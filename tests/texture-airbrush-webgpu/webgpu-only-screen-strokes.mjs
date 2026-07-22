@@ -143,6 +143,51 @@ test("texture-mode WebGPU pressure-radius strokes keep per-segment radii", () =>
   assert.equal(paintCalls[0].options.radiusPixels, 8);
 });
 
+test("pressure-controlled screen batches preserve channel identity through the WebGPU paint call", () => {
+  class ScreenEditor {}
+  installTextureAirbrushScreenStrokeMethods(ScreenEditor);
+  const editor = new ScreenEditor();
+  installEditorDefaults(editor);
+  const paintCalls = [];
+  editor.textureAirbrushWebGpuDevice = () => ({ label: "native-webgpu-device" });
+  editor.textureAirbrushResolveBackend = () => ({ backend: "webgpu", webGpuStatus: "ready" });
+  editor.textureAirbrushWebGpuPaintFromEvent = (event, options = {}) => {
+    paintCalls.push({ event, options });
+    return 1;
+  };
+  editor.textureAirbrushScreenStrokeQueue = [
+    strokePayload({
+      opacity: 0.2,
+      styleOpacity: 0.2,
+      styleKey: "pressure-low",
+      pressurePointer: true,
+      pressureOpacity: true,
+      pressureHardness: true,
+      pressureScatter: true
+    }),
+    strokePayload({
+      clientX: 32,
+      strokeStart: { clientX: 24, clientY: 30 },
+      opacity: 0.5,
+      styleOpacity: 0.5,
+      styleKey: "pressure-high",
+      pressurePointer: true,
+      pressureOpacity: true,
+      pressureHardness: true,
+      pressureScatter: true
+    })
+  ];
+
+  assert.equal(editor.flushTextureAirbrushScreenStroke({ live: true }), 2);
+  assert.equal(paintCalls.length, 2);
+  for (const call of paintCalls) {
+    assert.equal(call.options.pressurePointer, true);
+    assert.equal(call.options.pressureOpacity, true);
+    assert.equal(call.options.pressureHardness, true);
+    assert.equal(call.options.pressureScatter, true);
+  }
+});
+
 test("continuous WebGPU screen strokes collapse accumulated path duplicates before painting", () => {
   class ScreenEditor {}
   installTextureAirbrushScreenStrokeMethods(ScreenEditor);

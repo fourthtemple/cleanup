@@ -3,6 +3,8 @@ import {
   texturePaintPrewarmTslSurfaceAirbrush
 } from "../../texture-paint/surface-airbrush-tsl.js";
 
+const TEXTURE_AIRBRUSH_HOVER_PREWARM_SETTLE_MS = 120;
+
 function materialsForRecord(record = null) {
   return Array.isArray(record?.object?.material)
     ? record.object.material
@@ -510,6 +512,12 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
         return false;
       }
       const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+      if (event) {
+        this.textureAirbrushPendingPrewarmEventRevision = Math.max(
+          0,
+          Math.floor(Number(this.textureAirbrushPendingPrewarmEventRevision) || 0)
+        ) + 1;
+      }
       const nextPrewarmOptions = mergeScheduledPrewarmOptions(
         this.textureAirbrushPendingPrewarmOptions,
         options,
@@ -562,6 +570,10 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
       this.textureAirbrushPendingPrewarmOptions = nextPrewarmOptions;
       this.textureAirbrushPrewarmPending = true;
       const scheduleSerial = nextPrewarmScheduleSerial(this);
+      let scheduledEventRevision = Math.max(
+        0,
+        Math.floor(Number(this.textureAirbrushPendingPrewarmEventRevision) || 0)
+      );
       const run = () => {
         if (scheduleSerial !== this.textureAirbrushPrewarmScheduleSerial) {
           debugWebGpuScheduledPrewarm("skip", {
@@ -573,6 +585,35 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
             all: nextPrewarmOptions.all === true,
             liveDisplayExternalTexture: nextPrewarmOptions.liveDisplayExternalTexture ?? null,
             allowPrewarmLiveDisplayMaterialSwap: nextPrewarmOptions.allowPrewarmLiveDisplayMaterialSwap ?? null
+          });
+          return;
+        }
+        const currentEventRevision = Math.max(
+          0,
+          Math.floor(Number(this.textureAirbrushPendingPrewarmEventRevision) || 0)
+        );
+        const pendingOptionsForRun = this.textureAirbrushPendingPrewarmOptions || nextPrewarmOptions;
+        if (
+          pendingOptionsForRun.force !== true
+          && this.textureAirbrushPendingPrewarmEvent
+          && currentEventRevision !== scheduledEventRevision
+        ) {
+          scheduledEventRevision = currentEventRevision;
+          debugWebGpuScheduledPrewarm("defer", {
+            reason: "pointer-moving",
+            force: false,
+            activeTool: this.activeTool,
+            hasModel: Boolean(this.model),
+            pending: true,
+            all: pendingOptionsForRun.all === true,
+            liveDisplayExternalTexture: pendingOptionsForRun.liveDisplayExternalTexture ?? null,
+            allowPrewarmLiveDisplayMaterialSwap: pendingOptionsForRun.allowPrewarmLiveDisplayMaterialSwap ?? null
+          });
+          schedulePrewarmCallback(run, {
+            delay: Math.max(
+              TEXTURE_AIRBRUSH_HOVER_PREWARM_SETTLE_MS,
+              Number(pendingOptionsForRun.delay) || 0
+            )
           });
           return;
         }
@@ -616,7 +657,12 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
       } else if (force || !event) {
         schedulePrewarmCallback(run, { delay: nextPrewarmOptions.delay ?? 0 });
       } else {
-        schedulePrewarmCallback(run, { idle: true, delay: 24 });
+        schedulePrewarmCallback(run, {
+          delay: Math.max(
+            TEXTURE_AIRBRUSH_HOVER_PREWARM_SETTLE_MS,
+            Number(nextPrewarmOptions.delay) || 0
+          )
+        });
       }
       return true;
     },

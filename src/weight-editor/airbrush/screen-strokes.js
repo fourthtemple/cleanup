@@ -3804,6 +3804,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             spacing: Math.max(0.1, Math.min(200, Number(segment.spacing ?? this.textureAirbrushSpacingPercent?.() ?? 1))),
             strength,
             pressureApplied: true,
+            pressureRadius: segment.pressureRadius === true,
+            pressurePointer: segment.pressurePointer === true,
+            pressureOpacity: segment.pressureOpacity === true,
+            pressureHardness: segment.pressureHardness === true,
+            pressureScatter: segment.pressureScatter === true,
             erase: segment.erase === true,
             layerMode: segment.layerMode === true,
             layerMutationSerial: mutationSerial,
@@ -3856,6 +3861,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           || continuousStrokePath;
         activeBatch.preSmoothedStrokePath = activeBatch.preSmoothedStrokePath === true
           || segment.preSmoothedStrokePath === true;
+        activeBatch.pressureRadius = activeBatch.pressureRadius === true || segment.pressureRadius === true;
+        activeBatch.pressurePointer = activeBatch.pressurePointer === true || segment.pressurePointer === true;
+        activeBatch.pressureOpacity = activeBatch.pressureOpacity === true || segment.pressureOpacity === true;
+        activeBatch.pressureHardness = activeBatch.pressureHardness === true || segment.pressureHardness === true;
+        activeBatch.pressureScatter = activeBatch.pressureScatter === true || segment.pressureScatter === true;
         activeBatch.radiusPixels = Math.max(activeBatch.radiusPixels, radiusPixels);
         activeBatch.strokeSegments.push(...strokeSegments);
       }
@@ -4339,6 +4349,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             ...(batch.neighborPaintSeed ? { neighborPaintSeed: batch.neighborPaintSeed } : {}),
             ...(batch.neighborPaintKey ? { neighborPaintKey: batch.neighborPaintKey } : {}),
             ...(batchLargeLiveNeighborPaint ? { largeLiveNeighborPaint: true } : {}),
+	            pressureRadius: batch.pressureRadius === true,
+	            pressurePointer: batch.pressurePointer === true,
+	            pressureOpacity: batch.pressureOpacity === true,
+	            pressureHardness: batch.pressureHardness === true,
+	            pressureScatter: batch.pressureScatter === true,
 	            ...(captureCandidateTimingsForDebug ? { captureCandidateTimings: true } : {}),
             ...(liveWebGpuVisiblePaint ? {
               cachedStrokeSamplesOnly: false,

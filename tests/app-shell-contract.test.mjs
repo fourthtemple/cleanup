@@ -119,11 +119,30 @@ test("app shell exposes Photoshop-style texture layer controls", () => {
   assert.match(layers, /id="texture-layer-move-up"/);
   assert.match(layers, /id="texture-layer-move-down"/);
   assert.match(layers, /id="texture-layer-delete"/);
+  assert.doesNotMatch(layers, /id="texture-layer-kind"/);
   assert.match(layers, /id="texture-layer-blend"[\s\S]*Normal/);
   assert.match(layers, /id="texture-layer-blend"[\s\S]*Multiply[\s\S]*Screen[\s\S]*Overlay/);
   assert.match(layers, /id="texture-layer-blend"[\s\S]*Color Dodge[\s\S]*Color Burn[\s\S]*Luminosity/);
   assert.match(layers, /id="texture-layer-opacity" type="range"/);
   assert.match(layers, /id="texture-layer-list" class="texture-layer-list"/);
+});
+
+test("app shell exposes the texture fixup PNG round trip", () => {
+  const html = indexHtml();
+  const fixup = sectionText(html, "Texture Fixup");
+
+  assert.match(fixup, /id="texture-fixup-new-mask"[^>]*>New Mask/);
+  assert.match(fixup, /id="texture-fixup-padding" type="range"/);
+  assert.match(fixup, /id="texture-fixup-export"[^>]*disabled>Export PNG/);
+  assert.match(fixup, /id="texture-fixup-import"[^>]*disabled>Import PNG/);
+  assert.match(fixup, /id="texture-fixup-clear"[^>]*disabled>Clear Mask/);
+  assert.match(fixup, /id="texture-fixup-histogram"[^>]*aria-label="Active paint layer RGB histogram"/);
+  assert.match(fixup, /id="texture-fixup-tint-color" type="color"/);
+  assert.match(fixup, /id="texture-fixup-tone-range"[^>]*disabled/);
+  assert.match(fixup, /id="texture-fixup-grade-apply"[^>]*disabled>Apply/);
+  assert.match(fixup, /id="texture-fixup-grade-cancel"[^>]*disabled>Cancel/);
+  assert.match(fixup, /id="texture-fixup-file" type="file" accept="image\/png" hidden/);
+  assert.doesNotMatch(fixup, /texture-fixup-wand|texture-fixup-tolerance|Color region|UV island/);
 });
 
 test("app exposes a WebGPU airbrush runtime diagnostic helper", () => {

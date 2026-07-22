@@ -330,6 +330,72 @@
           <div id="texture-layer-list" class="texture-layer-list" aria-label="Texture paint layers"></div>
         </section>
 
+        <section class="viewer-section texture-fixup-panel">
+          <span class="viewer-label">Texture Fixup</span>
+          <div class="viewer-grid-actions texture-fixup-actions" role="group" aria-label="Texture fixup actions">
+            <button id="texture-fixup-new-mask" type="button" title="Create a Fixup Mask layer and paint it with Airbrush Neighbor mode">New Mask</button>
+            <button id="texture-fixup-export" type="button" disabled>Export PNG</button>
+            <button id="texture-fixup-import" type="button" disabled>Import PNG</button>
+            <button id="texture-fixup-clear" type="button" disabled>Clear Mask</button>
+          </div>
+          <label class="viewer-field">
+            <span>Context padding</span>
+            <div class="viewer-range-row">
+              <input id="texture-fixup-padding" type="range" min="0" max="256" step="4" value="32" />
+              <output id="texture-fixup-padding-output">32px</output>
+            </div>
+          </label>
+          <canvas id="texture-fixup-preview" class="texture-fixup-preview" width="240" height="140" aria-label="Fixup mask preview"></canvas>
+          <div id="texture-fixup-status" class="texture-fixup-status" aria-live="polite">Create or select a Fixup Mask layer</div>
+          <div class="texture-fixup-color-grade">
+            <span class="viewer-subheading">Color Grade</span>
+            <canvas id="texture-fixup-histogram" class="texture-fixup-histogram" width="240" height="72" aria-label="Active paint layer RGB histogram"></canvas>
+            <label class="viewer-field">
+              <span>Tint</span>
+              <div class="texture-fixup-tint-row">
+                <input id="texture-fixup-tint-color" type="color" value="#c58b57" aria-label="Color grade tint" disabled />
+                <input id="texture-fixup-tint-amount" type="range" min="0" max="100" step="1" value="0" aria-label="Tint amount" disabled />
+                <output id="texture-fixup-tint-amount-output">0%</output>
+              </div>
+            </label>
+            <label class="viewer-field texture-fixup-range-field">
+              <span>Range</span>
+              <select id="texture-fixup-tone-range" aria-label="Color grade tone range" disabled>
+                <option value="all">All</option>
+                <option value="shadows">Shadows</option>
+                <option value="midtones">Midtones</option>
+                <option value="highlights" selected>Highlights</option>
+              </select>
+            </label>
+            <label class="viewer-field">
+              <span>Hue</span>
+              <div class="viewer-range-row">
+                <input id="texture-fixup-hue" type="range" min="-180" max="180" step="1" value="0" disabled />
+                <output id="texture-fixup-hue-output">0deg</output>
+              </div>
+            </label>
+            <label class="viewer-field">
+              <span>Saturation</span>
+              <div class="viewer-range-row">
+                <input id="texture-fixup-saturation" type="range" min="-100" max="100" step="1" value="0" disabled />
+                <output id="texture-fixup-saturation-output">0%</output>
+              </div>
+            </label>
+            <label class="viewer-field">
+              <span>Brightness</span>
+              <div class="viewer-range-row">
+                <input id="texture-fixup-brightness" type="range" min="-100" max="100" step="1" value="0" disabled />
+                <output id="texture-fixup-brightness-output">0%</output>
+              </div>
+            </label>
+            <div class="viewer-grid-actions texture-fixup-grade-actions" role="group" aria-label="Color grade actions">
+              <button id="texture-fixup-grade-apply" type="button" disabled>Apply</button>
+              <button id="texture-fixup-grade-cancel" type="button" disabled>Cancel</button>
+            </div>
+          </div>
+          <input id="texture-fixup-file" type="file" accept="image/png" hidden />
+        </section>
+
         <section class="viewer-section edit-tool-panel">
           <span class="viewer-label">3D Edit</span>
           <div class="viewer-grid-actions edit-tool-actions" role="group" aria-label="3D edit tools">

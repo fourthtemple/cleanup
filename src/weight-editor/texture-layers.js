@@ -33,9 +33,16 @@ const TEXTURE_PAINT_LAYER_BLEND_MODE_BY_VALUE = new Map(
   TEXTURE_PAINT_LAYER_BLEND_MODES.map((mode) => [mode.value, mode])
 );
 
+const TEXTURE_PAINT_LAYER_KINDS = new Set(["paint", "fixup-mask"]);
+
 function normalizeLayerBlendMode(value) {
   const key = String(value || "normal").toLowerCase();
   return TEXTURE_PAINT_LAYER_BLEND_MODE_BY_VALUE.has(key) ? key : "normal";
+}
+
+function normalizeLayerKind(value) {
+  const key = String(value || "paint").toLowerCase();
+  return TEXTURE_PAINT_LAYER_KINDS.has(key) ? key : "paint";
 }
 
 function layerBlendModeInfo(value) {
@@ -429,6 +436,14 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
 
     texturePaintLayerBlendMode(layer = null) {
       return normalizeLayerBlendMode(layer?.blendMode);
+    },
+
+    normalizeTexturePaintLayerKind(value) {
+      return normalizeLayerKind(value);
+    },
+
+    texturePaintLayerKind(layer = null) {
+      return normalizeLayerKind(layer?.kind);
     },
 
     texturePaintCanvasCompositeOperation(value) {
@@ -844,6 +859,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
           visible: layer.visible !== false,
           opacity: clamp01(layer.opacity, 1),
           blendMode: this.texturePaintLayerBlendMode?.(layer) || "normal",
+          kind: this.texturePaintLayerKind?.(layer) || "paint",
           isEmpty: layerEffectivelyEmpty(layer),
           autoCreated: layer.autoCreated === true,
           canvas
@@ -900,6 +916,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
           visible: layerSnapshot.visible !== false,
           opacity: layerSnapshot.opacity,
           blendMode: layerSnapshot.blendMode,
+          kind: layerSnapshot.kind,
           autoCreated: layerSnapshot.autoCreated === true,
           isEmpty: layerSnapshot.isEmpty === true
         });
@@ -1001,6 +1018,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         visible: options.visible !== false,
         opacity: clamp01(options.opacity, 1),
         blendMode: normalizeLayerBlendMode(options.blendMode),
+        kind: normalizeLayerKind(options.kind),
         canvas,
         context,
         isEmpty: options.isEmpty !== false,
@@ -1078,7 +1096,8 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         name: layer.name || this.texturePaintLayerName?.(stack) || "Paint 1",
         visible: layer.visible !== false,
         opacity: layer.opacity,
-        blendMode: layer.blendMode
+        blendMode: layer.blendMode,
+        kind: this.texturePaintLayerKind?.(layer) || "paint"
       };
     },
 
@@ -2073,7 +2092,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       return this.texturePaintLayerStackForMaterial(material, editable, { create: true });
     },
 
-    addTexturePaintLayer() {
+    addTexturePaintLayer(options = {}) {
       const material = this.texturePaintActiveMaterial || this.texturePaintFirstLayerMaterial?.();
       if (!material) {
         this.setStatus?.("Load a textured model before adding paint layers");
@@ -2093,6 +2112,19 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       const reusableLayer = this.texturePaintReusableAutoLayer?.(stack);
       if (reusableLayer) {
         this.prepareTexturePaintLayerTargetChange?.();
+        reusableLayer.name = options.name
+          ? this.normalizeTexturePaintLayerName?.(options.name, reusableLayer.name) || reusableLayer.name
+          : reusableLayer.name;
+        reusableLayer.kind = normalizeLayerKind(options.kind ?? reusableLayer.kind);
+        if (Object.hasOwn(options, "visible")) {
+          reusableLayer.visible = options.visible !== false;
+        }
+        if (Object.hasOwn(options, "opacity")) {
+          reusableLayer.opacity = clamp01(options.opacity, 1);
+        }
+        if (Object.hasOwn(options, "blendMode")) {
+          reusableLayer.blendMode = normalizeLayerBlendMode(options.blendMode);
+        }
         reusableLayer.autoCreated = false;
         if (reusableLayer.gpuTarget) {
           this.invalidateTexturePaintLayerGpuCaches?.(reusableLayer);
@@ -2122,7 +2154,12 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
 
       const previousLayerCount = stack.layers?.length || 0;
       this.prepareTexturePaintLayerMutation?.();
-      const layer = this.texturePaintNewLayer(stack);
+      const layer = this.texturePaintNewLayer(stack, {
+        ...options,
+        name: options.name
+          ? this.normalizeTexturePaintLayerName?.(options.name, this.texturePaintLayerName(stack))
+          : undefined
+      });
       if (!layer) {
         return false;
       }
@@ -2230,7 +2267,8 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         name: `${source.name || "Layer"} copy`,
         visible: source.visible !== false,
         opacity: source.opacity,
-        blendMode: source.blendMode
+        blendMode: source.blendMode,
+        kind: this.texturePaintLayerKind?.(source) || "paint"
       });
       if (!layer) {
         return false;
@@ -2314,9 +2352,14 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       const undoBefore = this.captureTexturePaintLayerHistorySnapshot?.(material);
       this.prepareTexturePaintLayerMutation?.();
       const mergedLayer = this.texturePaintNewLayer(stack, {
-        name: "Merged Paint",
+        name: selectedEntries.every(({ layer }) => this.texturePaintLayerKind?.(layer) === "fixup-mask")
+          ? "Merged Fixup Mask"
+          : "Merged Paint",
         visible: selectedEntries.some((entry) => entry.layer.visible !== false),
-        opacity: 1
+        opacity: 1,
+        kind: selectedEntries.every(({ layer }) => this.texturePaintLayerKind?.(layer) === "fixup-mask")
+          ? "fixup-mask"
+          : "paint"
       });
       if (!mergedLayer) {
         return false;
@@ -2391,6 +2434,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
       }
       const activeLayer = stack.layers.find((layer) => layer.id === stack.activeLayerId) || null;
       this.rememberTexturePaintLayerSelection?.(stack, activeLayer);
+      this.syncTextureFixupControls?.();
       this.prewarmTexturePaintActiveLayerForAction?.(material, layerAirbrushPrewarmOptions({
         label: "texture-airbrush-select-layer-prewarm"
       }));
@@ -2620,6 +2664,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
             visible: layer.visible !== false,
             opacity: clamp01(layer.opacity, 1),
             blendMode: this.texturePaintLayerBlendMode(layer),
+            kind: this.texturePaintLayerKind(layer),
             image: layer.canvas?.toDataURL?.("image/png") || ""
           }))
         });
@@ -2643,7 +2688,8 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
           name: layerEntry.name || this.texturePaintLayerName(stack),
           visible: layerEntry.visible !== false,
           opacity: layerEntry.opacity,
-          blendMode: layerEntry.blendMode
+          blendMode: layerEntry.blendMode,
+          kind: layerEntry.kind
         });
         if (!layer) {
           continue;
@@ -2788,6 +2834,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
           empty.textContent = "Load a model";
           list.append(empty);
         }
+        this.syncTextureFixupControls?.();
         return true;
       }
       for (const layer of [...panelLayers].reverse()) {
@@ -2795,7 +2842,9 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         row.className = "texture-layer-row";
         row.classList.toggle("is-active", layer.id === stack.activeLayerId);
         row.classList.toggle("is-selected", selectedLayerIdSet.has(layer.id));
+        row.classList.toggle("is-fixup-mask", this.texturePaintLayerKind(layer) === "fixup-mask");
         row.dataset.layerId = layer.id;
+        row.dataset.layerKind = this.texturePaintLayerKind(layer);
 
         const eye = document.createElement("button");
         eye.type = "button";
@@ -2832,6 +2881,7 @@ export function installTexturePaintLayerMethods(BirdWeightEditor) {
         list.append(row);
       }
       appendBackgroundRow(stack.baseCanvas);
+      this.syncTextureFixupControls?.();
       return true;
     }
   });

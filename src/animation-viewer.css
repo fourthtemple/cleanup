@@ -1169,6 +1169,87 @@ input[type="color"] {
   background: rgba(9, 12, 16, 0.78);
 }
 
+.texture-fixup-panel {
+  gap: 9px;
+}
+
+.texture-fixup-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.texture-fixup-preview {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 12 / 7;
+  border: 1px solid rgba(148, 166, 178, 0.28);
+  background:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.045) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.045) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.045) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.045) 75%),
+    #10151a;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.texture-fixup-status {
+  min-height: 16px;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.texture-fixup-color-grade {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(244, 234, 214, 0.14);
+}
+
+.texture-fixup-histogram {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 10 / 3;
+  border: 1px solid rgba(148, 166, 178, 0.28);
+  background: #0b1014;
+}
+
+.texture-fixup-tint-row {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) 42px;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.texture-fixup-tint-row input[type="color"] {
+  width: 28px;
+  min-height: 22px;
+  height: 22px;
+  padding: 2px;
+}
+
+.texture-fixup-tint-row output {
+  color: var(--text);
+  font-size: calc(var(--cleanup-side-panel-font-size) - 1px);
+  text-align: right;
+}
+
+.texture-fixup-range-field select {
+  min-height: 24px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: calc(var(--cleanup-side-panel-font-size) - 1px);
+}
+
+.texture-fixup-grade-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .texture-layer-empty {
   display: grid;
   min-height: 34px;
@@ -1199,6 +1280,15 @@ input[type="color"] {
 .texture-layer-row.is-selected:not(.is-active) {
   border-color: rgba(99, 151, 180, 0.58);
   background: rgba(24, 36, 43, 0.92);
+}
+
+.texture-layer-row.is-fixup-mask {
+  box-shadow: inset 3px 0 0 rgba(240, 184, 90, 0.82);
+}
+
+.texture-layer-row.is-fixup-mask.is-active {
+  border-color: rgba(240, 184, 90, 0.92);
+  background: rgba(54, 45, 31, 0.92);
 }
 
 .texture-layer-row.is-locked {

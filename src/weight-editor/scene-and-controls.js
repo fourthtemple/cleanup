@@ -2849,6 +2849,7 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.recordTutorialMacroBrushState?.("neighbor");
       });
       this.syncTexturePaintNeighborMode?.();
+      this.bindTextureFixupControls?.();
       this.clonePaintSourceButton?.addEventListener("click", () => {
         this.captureClonePaintSource?.();
       });

@@ -249,13 +249,13 @@ test("surface stroke-mask sizing preserves aspect ratio under its GPU cap", () =
   });
 });
 
-test("TSL layer paint caps overlap coverage while preserving source-over color mixing", () => {
+test("TSL layer paint accumulates between stroke-start bases while preserving source-over color mixing", () => {
   const body = functionSource("surfaceLayerPaintColor");
   assert.match(body, /const compositedLayerAlpha = clamp\(/);
   assert.match(body, /alpha\.add\(baseColor\.a\.mul\(oneMinusAlpha\)\)/);
   assert.match(body, /\.add\(baseLayerPremul\.mul\(oneMinusAlpha\)\)/);
-  assert.match(body, /const cappedLayerAlpha = max\(baseColor\.a, alpha\)\.toVar\(\)/);
-  assert.match(body, /const layerOutAlpha = emptyLayer\.select\(alpha, cappedLayerAlpha\)\.toVar\(\)/);
+  assert.doesNotMatch(body, /max\(baseColor\.a, alpha\)/);
+  assert.match(body, /const layerOutAlpha = emptyLayer\.select\(alpha, compositedLayerAlpha\)\.toVar\(\)/);
   assert.match(body, /layerOutRgb\.mul\(layerOutAlpha\)/);
 });
 
@@ -744,14 +744,35 @@ test("TSL surface airbrush can gate ambiguous UV overlap texels", () => {
   assert.match(uvOwnershipSource, /trianglesHaveAmbiguousUvOverlap\(triangles\[previous\], triangle\)/);
   assert.match(source, /new THREE\.DataTexture/);
   const body = functionSource("createSurfaceMaterial");
-  assert.match(body, /const overlapMaskTexture = sourceObjectUvOverlapMaskTexture\(sourceObject\)/);
+  assert.match(body, /const allowAmbiguousUvOverlap = options\.allowAmbiguousUvOverlap === true/);
+  assert.match(body, /const overlapMaskTexture = allowAmbiguousUvOverlap[\s\S]*?\? surfaceAirbrushWhiteMaskTexture\(\)[\s\S]*?: sourceObjectUvOverlapMaskTexture\(sourceObject\)/);
   assert.match(body, /const overlapMaskTextureNode = texture\(overlapMaskTexture, paintUv\)/);
+  assert.match(body, /const uvOverlapMaskEnabled = uniform\(allowAmbiguousUvOverlap \? 0 : 1, "float"\)/);
   assert.match(body, /const overlapSample = overlapMaskTextureNode\.toVar\(\)/);
-  assert.match(body, /const overlapCanWrite = overlapSample\.r\.greaterThan\(0\.5\)\.toVar\(\)/);
+  assert.match(body, /const overlapCanWrite = uvOverlapMaskEnabled\.lessThan\(0\.5\)[\s\S]*?\.or\(overlapSample\.r\.greaterThan\(0\.5\)\)/);
   assert.match(body, /\.or\(occupancySample\.r\.lessThan\(0\.5\)\)[\s\S]*?\.and\(overlapCanWrite\)/);
   assert.match(body, /const uvOwnershipGate = overlapCanWrite\.select\(float\(1\), float\(0\)\)\.toVar\(\)/);
   assert.match(body, /const sourceCoverage = originalMeshUvRaster[\s\S]*?\? gatedCoverage\.mul\(uvOwnershipGate\)\.toVar\(\)[\s\S]*?: gatedCoverage\.mul\(gutterCanWrite\.select\(float\(1\), float\(0\)\)\)\.toVar\(\)/);
   assert.match(source, /tslSurfaceOverlapMaskAmbiguousTexels/);
+});
+
+test("TSL stroke masks select shared UV texels while direct paint keeps ownership gating", () => {
+  const policyBody = functionSource("surfaceAirbrushAllowsAmbiguousUvOverlap");
+  const rasterBody = functionSource("ensureUvRasterMeshes");
+  const updateBody = functionSource("updateSurfaceMaterial");
+  const prewarmBody = functionSource("texturePaintPrewarmTslSurfaceAirbrush");
+  const runBody = functionSource("texturePaintRunTslSurfaceAirbrush");
+
+  assert.match(policyBody, /options\.allowAmbiguousUvOverlap === true \|\| options\.maskOnly === true/);
+  assert.match(policyBody, /editable\?\.layerMode === true/);
+  assert.match(policyBody, /String\(editable\?\.layer\?\.kind \|\| ""\)\.toLowerCase\(\) === "fixup-mask"/);
+  assert.match(rasterBody, /allowAmbiguousUvOverlap: options\.allowAmbiguousUvOverlap === true/);
+  assert.match(updateBody, /state\.uvOverlapMaskEnabled\.value = allowAmbiguousUvOverlap \? 0 : 1/);
+  assert.match(updateBody, /!allowAmbiguousUvOverlap[\s\S]*?sourceObjectUvOverlapMaskTexture\(state\.sourceObject\)/);
+  assert.match(prewarmBody, /const allowAmbiguousUvOverlap = surfaceAirbrushAllowsAmbiguousUvOverlap\(editable, \{[\s\S]*?maskOnly: true[\s\S]*?\}\)/);
+  assert.match(prewarmBody, /maskOnly: true,[\s\S]*?allowAmbiguousUvOverlap/);
+  assert.match(runBody, /const useStrokeMaskComposite = !useProjectedPrimary[\s\S]*?const allowAmbiguousUvOverlap = surfaceAirbrushAllowsAmbiguousUvOverlap\(editable, \{[\s\S]*?maskOnly: useStrokeMaskComposite[\s\S]*?\}\)/);
+  assert.match(runBody, /maskOnly: useStrokeMaskComposite,[\s\S]*?allowAmbiguousUvOverlap/);
 });
 
 test("UV ownership rejects disconnected triangles that share texture coordinates", () => {
@@ -887,6 +908,11 @@ test("TSL source raster uses UV seam bleed by default", () => {
   assert.match(source, /const SOURCE_RASTER_GEOMETRY_MIN_TRIANGLES = 4096/);
   assert.match(source, /const UV_GUTTER_PIXELS = 0/);
   assert.match(source, /const UV_SEAM_BLEED_PIXELS = 8/);
+  const sourceRasterModeBody = functionSource("surfaceAirbrushOriginalMeshUvRasterEnabled");
+  assert.match(sourceRasterModeBody, /debugAirbrushOriginalMeshUvRaster/);
+  assert.match(sourceRasterModeBody, /debugAirbrushSourceMeshUvRaster/);
+  assert.match(sourceRasterModeBody, /return false;/);
+  assert.doesNotMatch(sourceRasterModeBody, /return true;/);
   assert.match(source, /debugAirbrushNoSourceGutters/);
   assert.match(functionSource("surfaceAirbrushSourceRasterGutterPixels"), /return UV_SEAM_BLEED_PIXELS/);
   assert.match(source, /function sourceRasterGeometryData/);
@@ -1005,7 +1031,6 @@ test("TSL surface airbrush keeps scoped projected triangles opt-in instead of th
   assert.doesNotMatch(body, /debugAirbrushClipSourceRaster/);
   assert.match(source, /function surfaceAirbrushOriginalMeshUvRasterEnabled/);
   assert.match(source, /debugAirbrushSourceMeshUvRaster/);
-  assert.match(source, /return true;/);
   assert.doesNotMatch(source, /debugAirbrushExpandedSourceUvRaster/);
   assert.doesNotMatch(body, /const liveSurfaceStrokeForRasterClip = options\.liveProjectedPaint === true \|\| options\.screenStrokePaint === true/);
   assert.match(body, /const liveProjectedPaint = options\.liveProjectedPaint === true/);
@@ -1050,7 +1075,7 @@ test("TSL surface airbrush keeps scoped projected triangles opt-in instead of th
   assert.match(body, /sourceRasterClipHardness: options\.hardness/);
   assert.match(source, /function simplifiedSourceRasterClipSegments/);
   assert.match(source, /const TSL_SURFACE_DILATION_PASSES = 1/);
-  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 0/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1/);
 });
 
 test("TSL source raster dispatch constrains components without changing brush field shape", () => {
@@ -1113,16 +1138,17 @@ test("TSL surface airbrush skips duplicate live batches before projected geometr
   assert.doesNotMatch(duplicateBlock, /editor\.textureAirbrushLastWebGpuPaintStats = stats/);
 });
 
-test("TSL surface airbrush keeps GPU seam dilation without path-blind stroke-mask dilation", () => {
+test("TSL surface airbrush closes narrow stroke-mask cracks before compositing", () => {
   const body = functionSource("texturePaintRunTslSurfaceAirbrush");
   const dilationBody = functionSource("runSurfaceDilation");
   const dilationSeedBody = functionSource("createDilationSeedMaterial");
   const updateDilationSeedBody = functionSource("updateDilationSeedMaterial");
   const ensureDilationBody = functionSource("ensureDilationResources");
   const dilationMaterialBody = functionSource("createDilationMaterial");
+  const strokeMaskDilationBody = functionSource("surfaceAirbrushStrokeMaskDilationPasses");
   assert.doesNotMatch(body, /const liveSurfaceStroke = options\.liveProjectedPaint === true \|\| options\.screenStrokePaint === true/);
   assert.match(body, /strokeMaskDilationPasses = surfaceAirbrushStrokeMaskDilationPasses\(\)/);
-  assert.match(body, /runSurfaceDilation\([\s\S]*?strokeMaskTarget,[\s\S]*?strokeMaskDilationPasses,[\s\S]*?preserveSourceAlpha: true,[\s\S]*?alphaThreshold: 0\.000001,[\s\S]*?sampleAlphaThreshold: TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,[\s\S]*?interiorOnly: true/);
+  assert.match(body, /runSurfaceDilation\([\s\S]*?strokeMaskTarget,[\s\S]*?strokeMaskDilationPasses,[\s\S]*?preserveSourceAlpha: true,[\s\S]*?alphaThreshold: 0\.000001,[\s\S]*?sampleAlphaThreshold: TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,[\s\S]*?interiorOnly: true,[\s\S]*?uvGutter: true,[\s\S]*?uvOccupancyTexture/);
   assert.match(body, /compositeMaskTarget\?\.texture \|\| strokeMaskTarget\.texture/);
   assert.match(body, /const surfaceDilationPasses = useStrokeMaskComposite\s+\?\s+0\s+:\s+projectedGutterTriangleCount > 0\s+\?\s+0\s+:\s+surfaceAirbrushDilationPasses\(\)/);
   assert.match(body, /runSurfaceDilation\([\s\S]*?surfaceDilationPasses,[\s\S]*?\{\s*preserveSourceAlpha: Boolean\(layerMode\)\s*\}/);
@@ -1131,12 +1157,16 @@ test("TSL surface airbrush keeps GPU seam dilation without path-blind stroke-mas
   assert.match(body, /tslSurfaceDilationPasses: Math\.max\(/);
   assert.match(body, /tslSurfaceStrokeMaskDilation: strokeMaskDilated/);
   assert.match(body, /tslSurfaceStrokeMaskDilationPasses: strokeMaskDilated \? strokeMaskDilationPasses : 0/);
+  assert.match(body, /tslSurfaceStrokeMaskUvGutter: strokeMaskDilated && Boolean\(uvOccupancyTexture\)/);
   assert.match(source, /strokeMaskDilation: stats\.tslSurfaceStrokeMaskDilation === true/);
+  assert.match(source, /strokeMaskUvGutter: stats\.tslSurfaceStrokeMaskUvGutter === true/);
   assert.match(dilationBody, /passCount = surfaceAirbrushDilationPasses\(\),\s*options = \{\}/);
   assert.match(dilationBody, /const passes = Math\.max\(0, Math\.floor\(finiteNumber\(passCount/);
-  assert.match(functionSource("surfaceAirbrushStrokeMaskDilationPasses"), /debugAirbrushStrokeMaskDilation/);
-  assert.match(functionSource("surfaceAirbrushStrokeMaskDilationPasses"), /return TSL_SURFACE_STROKE_MASK_DILATION_PASSES/);
-  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 0/);
+  assert.match(strokeMaskDilationBody, /const availablePasses = Math\.max\(0, surfaceAirbrushDilationPasses\(\)\)/);
+  assert.match(strokeMaskDilationBody, /if \(!availablePasses\) \{[\s\S]*?return 0/);
+  assert.match(strokeMaskDilationBody, /debugAirbrushStrokeMaskDilation/);
+  assert.match(strokeMaskDilationBody, /return Math\.min\(TSL_SURFACE_STROKE_MASK_DILATION_PASSES, availablePasses\)/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1/);
   assert.match(dilationSeedBody, /options = \{\}/);
   assert.match(dilationSeedBody, /const preserveSourceAlpha = options\.preserveSourceAlpha === true/);
   assert.match(dilationSeedBody, /return vec4\(color\.rgb, preserveSourceAlpha \? color\.a : mask\.r\)/);
@@ -1146,23 +1176,29 @@ test("TSL surface airbrush keeps GPU seam dilation without path-blind stroke-mas
   assert.match(ensureDilationBody, /cache\.dilationSeedAlphaMaterial \|\|= createDilationSeedMaterial\([\s\S]*?preserveSourceAlpha: true/);
   assert.match(dilationBody, /const seedMaterial = options\.preserveSourceAlpha === true[\s\S]*?cache\.dilationSeedAlphaMaterial[\s\S]*?: cache\.dilationSeedMaterial/);
   assert.match(source, /const TSL_SURFACE_DILATION_SAMPLE_RADII = \[1, 2, 4, 8, 12\]/);
-  assert.match(source, /const TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS = 8/);
-  assert.match(source, /const TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD = 0\.08/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_BRIDGE_SAMPLE_RADII = \[1, 2, 4, 8, 12, 16\]/);
+  assert.match(source, /const TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD = 0\.04/);
+  assert.match(source, /const TSL_SURFACE_UV_GUTTER_SAMPLE_RADII = \[1, 2, 4, UV_SEAM_BLEED_PIXELS\]/);
+  assert.match(source, /const TSL_SURFACE_UV_GUTTER_OFFSETS = TSL_SURFACE_UV_GUTTER_SAMPLE_RADII\.flatMap/);
   assert.match(dilationMaterialBody, /TSL_SURFACE_DILATION_SAMPLE_RADII\.flatMap/);
   assert.match(dilationMaterialBody, /const alphaThreshold = uniform\(0\.5, "float"\)/);
   assert.match(dilationMaterialBody, /const sampleAlphaThreshold = uniform\(0, "float"\)/);
   assert.match(dilationMaterialBody, /const interiorOnly = uniform\(0, "float"\)/);
+  assert.match(dilationMaterialBody, /const uvGutterEnabled = uniform\(0, "float"\)/);
   assert.match(dilationMaterialBody, /result\.a\.lessThan\(alphaThreshold\)/);
   assert.match(dilationMaterialBody, /sample\.a\.greaterThan\(max\(candidate\.a, sampleAlphaThreshold\)\)/);
-  assert.match(dilationMaterialBody, /const bridgePairs = TSL_SURFACE_DILATION_SAMPLE_RADII[\s\S]*?\.filter\(\(radius\) => radius <= TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS\)[\s\S]*?\[\[-radius, -radius\], \[radius, radius\]\]/);
+  assert.match(dilationMaterialBody, /const bridgePairs = TSL_SURFACE_STROKE_MASK_BRIDGE_SAMPLE_RADII[\s\S]*?\.flatMap[\s\S]*?\[\[-radius, -radius\], \[radius, radius\]\]/);
   assert.match(dilationMaterialBody, /If\(interiorOnly\.lessThan\(0\.5\)[\s\S]*?candidate\.assign\(vec4\(sample\.rgb, sample\.a\)\)/);
   assert.match(dilationMaterialBody, /If\(interiorOnly\.greaterThan\(0\.5\)[\s\S]*?const bridgeAlpha = min\(firstSample\.a, secondSample\.a\)\.toVar\(\)/);
   assert.match(dilationMaterialBody, /const bridgeThreshold = max\(sampleAlphaThreshold, float\(TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD\)\)\.toVar\(\)/);
   assert.match(dilationMaterialBody, /bridgeAlpha\.greaterThan\(max\(candidate\.a, bridgeThreshold\)\)[\s\S]*?candidate\.assign\(vec4\(bridgeAlpha, bridgeAlpha, bridgeAlpha, bridgeAlpha\)\)/);
+  assert.match(dilationMaterialBody, /uvGutterEnabled\.greaterThan\(0\.5\)\.and\(currentOccupancy\.lessThan\(0\.5\)\)/);
+  assert.match(dilationMaterialBody, /TSL_SURFACE_UV_GUTTER_OFFSETS[\s\S]*?sampleOccupancy\.greaterThanEqual\(0\.5\)[\s\S]*?sample\.a\.greaterThan\(max\(candidate\.a, sampleAlphaThreshold\)\)[\s\S]*?candidate\.assign\(vec4\(sample\.rgb, sample\.a\)\)/);
   assert.doesNotMatch(dilationMaterialBody, /leftAxis|rightAxis|topAxis|bottomAxis|horizontalBridge|verticalBridge/);
   assert.match(functionSource("updateDilationMaterial"), /finiteNumber\(options\.alphaThreshold, 0\.5\)/);
   assert.match(functionSource("updateDilationMaterial"), /finiteNumber\(options\.sampleAlphaThreshold, 0\)/);
   assert.match(functionSource("updateDilationMaterial"), /options\.interiorOnly === true \? 1 : 0/);
+  assert.match(functionSource("updateDilationMaterial"), /options\.uvGutter === true && options\.uvOccupancyTexture \? 1 : 0/);
   assert.match(dilationMaterialBody, /transparent: true/);
   assert.match(dilationMaterialBody, /blending: THREE\.NoBlending/);
 });
@@ -1811,7 +1847,7 @@ test("TSL surface airbrush recomputes a live stroke from its stroke-start base t
   assert.doesNotMatch(body, /direct-paint-target/);
 });
 
-test("TSL surface airbrush stroke style key includes Neighbor eligibility state without pressure radius", () => {
+test("TSL surface airbrush stroke style keeps pressure channels inside one pointer-down stroke", () => {
   const body = functionSource("surfaceStrokeStyleKey");
   assert.match(body, /const neighborSeed = options\.neighborPaintSeed \|\| candidate\?\.options\?\.neighborPaintSeed \|\| null/);
   assert.match(body, /const neighborKey = String\(/);
@@ -1826,6 +1862,12 @@ test("TSL surface airbrush stroke style key includes Neighbor eligibility state 
   assert.match(body, /neighborKey/);
   assert.match(body, /"large-neighbor"/);
   assert.match(body, /"component-gate"/);
+  assert.match(body, /const pressureOpacity = options\.pressureOpacity === true/);
+  assert.match(body, /const pressureHardness = options\.pressureHardness === true/);
+  assert.match(body, /const pressureScatter = options\.pressureScatter === true/);
+  assert.match(body, /pressureOpacity[\s\S]*?\? "pressure-opacity"[\s\S]*?: Math\.round\(finiteNumber\(options\.opacity/);
+  assert.match(body, /pressureHardness[\s\S]*?\? "pressure-hardness"[\s\S]*?: Math\.round\(finiteNumber\(options\.hardness/);
+  assert.match(body, /pressureScatter[\s\S]*?\? "pressure-scatter"[\s\S]*?: Math\.round\(finiteNumber\(options\.scatter/);
   assert.doesNotMatch(body, /screenRadiusPixels/);
   assert.doesNotMatch(body, /radiusPixels/);
 });

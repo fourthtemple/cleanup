@@ -592,6 +592,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
     clearActorModel() {
       this.pausePlayback?.();
       this.clearClonePaintState?.({ silent: true });
+      this.clearTextureFixupSelection?.({ silent: true });
       this.disposeMeshWireOverlays?.();
       this.disposeSkeletonHelper?.();
       this.transformControls.detach();
@@ -624,6 +625,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
       this.groundGrid?.position.set(0, 0, 0);
       this.groundFloor?.position.set(0, -0.012, 0);
       this.model = null;
+      this.syncTextureFixupControls?.();
       this.syncExportButtons?.();
       this.bindPose = [];
       this.bones.clear();
@@ -2324,6 +2326,7 @@ export function installActorAndModelMethods(BirdWeightEditor, deps) {
         this.paintRecords.push(record);
         this.updateRecordColors(record);
       });
+      this.syncTextureFixupControls?.();
     },
 
     populateBoneSelect() {

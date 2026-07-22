@@ -74,10 +74,16 @@ const UV_SEAM_BLEED_PIXELS = 8;
 const PROJECTED_GUTTER_GEOMETRY_MIN_TRIANGLES = 256;
 const SOURCE_RASTER_GEOMETRY_MIN_TRIANGLES = 4096;
 const TSL_SURFACE_DILATION_PASSES = 1;
-const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 0;
+const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1;
 const TSL_SURFACE_DILATION_SAMPLE_RADII = [1, 2, 4, 8, 12];
-const TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS = 8;
-const TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD = 0.08;
+const TSL_SURFACE_STROKE_MASK_BRIDGE_SAMPLE_RADII = [1, 2, 4, 8, 12, 16];
+const TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD = 0.04;
+const TSL_SURFACE_UV_GUTTER_SAMPLE_RADII = [1, 2, 4, UV_SEAM_BLEED_PIXELS];
+const TSL_SURFACE_UV_GUTTER_OFFSETS = TSL_SURFACE_UV_GUTTER_SAMPLE_RADII.flatMap((radius) => [
+  [-radius, -radius], [0, -radius], [radius, -radius],
+  [-radius, 0], [radius, 0],
+  [-radius, radius], [0, radius], [radius, radius]
+]);
 const SURFACE_AIRBRUSH_RETIRED_RESOURCE_LIMIT = 48;
 const SURFACE_AIRBRUSH_RETIRE_FALLBACK_MS = 3000;
 const SURFACE_AIRBRUSH_RETIRE_MIN_AGE_MS = 5000;
@@ -133,13 +139,17 @@ function surfaceAirbrushDilationPasses() {
 }
 
 function surfaceAirbrushStrokeMaskDilationPasses() {
+  const availablePasses = Math.max(0, surfaceAirbrushDilationPasses());
+  if (!availablePasses) {
+    return 0;
+  }
   if (
     typeof window !== "undefined"
     && new URLSearchParams(window.location?.search || "").has("debugAirbrushStrokeMaskDilation")
   ) {
-    return Math.max(0, surfaceAirbrushDilationPasses());
+    return availablePasses;
   }
-  return TSL_SURFACE_STROKE_MASK_DILATION_PASSES;
+  return Math.min(TSL_SURFACE_STROKE_MASK_DILATION_PASSES, availablePasses);
 }
 
 function surfaceAirbrushSourceRasterGutterPixels() {
@@ -159,15 +169,21 @@ function surfaceAirbrushUvOverlapMaskEnabled() {
   );
 }
 
-function surfaceAirbrushOriginalMeshUvRasterEnabled() {
-  if (typeof window === "undefined") {
+function surfaceAirbrushAllowsAmbiguousUvOverlap(editable = null, options = {}) {
+  if (options.allowAmbiguousUvOverlap === true || options.maskOnly === true) {
     return true;
   }
-  const params = new URLSearchParams(window.location?.search || "");
-  if (params.has("debugAirbrushSourceMeshUvRaster")) {
+  return editable?.layerMode === true
+    && String(editable?.layer?.kind || "").toLowerCase() === "fixup-mask";
+}
+
+function surfaceAirbrushOriginalMeshUvRasterEnabled() {
+  if (typeof window === "undefined") {
     return false;
   }
-  return true;
+  const params = new URLSearchParams(window.location?.search || "");
+  return params.has("debugAirbrushOriginalMeshUvRaster")
+    && !params.has("debugAirbrushSourceMeshUvRaster");
 }
 
 function surfaceAirbrushSourceRasterClipEnabled() {
@@ -4290,8 +4306,7 @@ function surfaceLayerPaintColor(
   const compositedLayerRgb = compositedLayerAlpha.greaterThan(0.0001)
     .select(compositedLayerPremul.div(max(compositedLayerAlpha, 0.0001)), brushColor.rgb)
     .toVar();
-  const cappedLayerAlpha = max(baseColor.a, alpha).toVar();
-  const layerOutAlpha = emptyLayer.select(alpha, cappedLayerAlpha).toVar();
+  const layerOutAlpha = emptyLayer.select(alpha, compositedLayerAlpha).toVar();
   const layerOutRgb = emptyLayer.select(brushColor.rgb, compositedLayerRgb).toVar();
   const storedLayerRgb = layerOutAlpha.greaterThan(0.0001)
     .select(layerOutRgb.mul(layerOutAlpha), vec3(0))
@@ -5058,24 +5073,29 @@ function updateDilationSeedMaterial(material = null, sourceTexture = null, maskT
   return true;
 }
 
-function createDilationMaterial(sourceTexture = null, texelSize = new THREE.Vector2(1, 1)) {
+function createDilationMaterial(
+  sourceTexture = null,
+  texelSize = new THREE.Vector2(1, 1),
+  uvOccupancyTexture = sourceTexture
+) {
   const tsl = THREE.TSL || null;
   if (!tsl || typeof THREE.MeshBasicNodeMaterial !== "function") {
     return null;
   }
   const { Fn, If, float, max, min, texture, uniform, uv, vec2, vec4 } = tsl;
   const sourceTextureNode = texture(sourceTexture, uv());
+  const uvOccupancyTextureNode = texture(uvOccupancyTexture || sourceTexture, uv());
   const texelSizeNode = uniform(texelSize, "vec2");
   const alphaThreshold = uniform(0.5, "float");
   const sampleAlphaThreshold = uniform(0, "float");
   const interiorOnly = uniform(0, "float");
+  const uvGutterEnabled = uniform(0, "float");
   const offsets = TSL_SURFACE_DILATION_SAMPLE_RADII.flatMap((radius) => [
     [-radius, -radius], [0, -radius], [radius, -radius],
     [-radius, 0], [radius, 0],
     [-radius, radius], [0, radius], [radius, radius]
   ]);
-  const bridgePairs = TSL_SURFACE_DILATION_SAMPLE_RADII
-    .filter((radius) => radius <= TSL_SURFACE_STROKE_MASK_BRIDGE_MAX_RADIUS)
+  const bridgePairs = TSL_SURFACE_STROKE_MASK_BRIDGE_SAMPLE_RADII
     .flatMap((radius) => [
       [[-radius, 0], [radius, 0]],
       [[0, -radius], [0, radius]],
@@ -5096,15 +5116,32 @@ function createDilationMaterial(sourceTexture = null, texelSize = new THREE.Vect
         }
       });
       If(interiorOnly.greaterThan(0.5), () => {
-        for (const [firstOffset, secondOffset] of bridgePairs) {
-          const firstSample = sourceTextureNode.sample(currentUv.add(vec2(firstOffset[0], firstOffset[1]).mul(texelSizeNode))).toVar();
-          const secondSample = sourceTextureNode.sample(currentUv.add(vec2(secondOffset[0], secondOffset[1]).mul(texelSizeNode))).toVar();
-          const bridgeAlpha = min(firstSample.a, secondSample.a).toVar();
-          const bridgeThreshold = max(sampleAlphaThreshold, float(TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD)).toVar();
-          If(bridgeAlpha.greaterThan(max(candidate.a, bridgeThreshold)), () => {
-            candidate.assign(vec4(bridgeAlpha, bridgeAlpha, bridgeAlpha, bridgeAlpha));
-          });
-        }
+        const currentOccupancy = uvOccupancyTextureNode.sample(currentUv).r.toVar();
+        If(uvGutterEnabled.lessThan(0.5).or(currentOccupancy.greaterThanEqual(0.5)), () => {
+          for (const [firstOffset, secondOffset] of bridgePairs) {
+            const firstSample = sourceTextureNode.sample(currentUv.add(vec2(firstOffset[0], firstOffset[1]).mul(texelSizeNode))).toVar();
+            const secondSample = sourceTextureNode.sample(currentUv.add(vec2(secondOffset[0], secondOffset[1]).mul(texelSizeNode))).toVar();
+            const bridgeAlpha = min(firstSample.a, secondSample.a).toVar();
+            const bridgeThreshold = max(sampleAlphaThreshold, float(TSL_SURFACE_STROKE_MASK_BRIDGE_ALPHA_THRESHOLD)).toVar();
+            If(bridgeAlpha.greaterThan(max(candidate.a, bridgeThreshold)), () => {
+              candidate.assign(vec4(bridgeAlpha, bridgeAlpha, bridgeAlpha, bridgeAlpha));
+            });
+          }
+        });
+        If(uvGutterEnabled.greaterThan(0.5).and(currentOccupancy.lessThan(0.5)), () => {
+          for (const offset of TSL_SURFACE_UV_GUTTER_OFFSETS) {
+            const sampleUv = currentUv.add(vec2(offset[0], offset[1]).mul(texelSizeNode)).toVar();
+            const sampleOccupancy = uvOccupancyTextureNode.sample(sampleUv).r.toVar();
+            const sample = sourceTextureNode.sample(sampleUv).toVar();
+            If(
+              sampleOccupancy.greaterThanEqual(0.5)
+                .and(sample.a.greaterThan(max(candidate.a, sampleAlphaThreshold))),
+              () => {
+                candidate.assign(vec4(sample.rgb, sample.a));
+              }
+            );
+          }
+        });
       });
       If(candidate.a.greaterThan(result.a), () => {
         result.assign(candidate);
@@ -5126,7 +5163,9 @@ function createDilationMaterial(sourceTexture = null, texelSize = new THREE.Vect
     texelSizeNode,
     alphaThreshold,
     sampleAlphaThreshold,
-    interiorOnly
+    interiorOnly,
+    uvOccupancyTextureNode,
+    uvGutterEnabled
   };
   return material;
 }
@@ -5146,6 +5185,12 @@ function updateDilationMaterial(material = null, sourceTexture = null, width = 1
   }
   if (state.interiorOnly) {
     state.interiorOnly.value = options.interiorOnly === true ? 1 : 0;
+  }
+  if (state.uvOccupancyTextureNode) {
+    state.uvOccupancyTextureNode.value = options.uvOccupancyTexture || sourceTexture;
+  }
+  if (state.uvGutterEnabled) {
+    state.uvGutterEnabled.value = options.uvGutter === true && options.uvOccupancyTexture ? 1 : 0;
   }
   return true;
 }
@@ -5735,7 +5780,8 @@ function ensureUvRasterMeshes(
       const material = createSurfaceMaterial(sourceTexture, sourceObject, visibleTexture, uvOccupancyTexture, {
         originalMeshUvRaster: useOriginalMeshUvRaster,
         maskOnly: options.maskOnly === true,
-        layerOnly: layerOnlyPaint
+        layerOnly: layerOnlyPaint,
+        allowAmbiguousUvOverlap: options.allowAmbiguousUvOverlap === true
       });
       const mesh = useOriginalMeshUvRaster
         ? createUvRasterMesh(sourceObject, material)
@@ -6784,8 +6830,12 @@ function createSurfaceMaterial(
   const sourceTextureNode = texture(sourceTexture, paintUv);
   const visibleTextureNode = texture(visibleTexture || sourceTexture);
   const uvOccupancyTextureNode = texture(uvOccupancyTexture || surfaceAirbrushWhiteMaskTexture(), uv());
-  const overlapMaskTexture = sourceObjectUvOverlapMaskTexture(sourceObject);
+  const allowAmbiguousUvOverlap = options.allowAmbiguousUvOverlap === true;
+  const overlapMaskTexture = allowAmbiguousUvOverlap
+    ? surfaceAirbrushWhiteMaskTexture()
+    : sourceObjectUvOverlapMaskTexture(sourceObject);
   const overlapMaskTextureNode = texture(overlapMaskTexture, paintUv);
+  const uvOverlapMaskEnabled = uniform(allowAmbiguousUvOverlap ? 0 : 1, "float");
   const editorViewMatrix = uniform(new THREE.Matrix4(), "mat4");
   const editorProjectionMatrix = uniform(new THREE.Matrix4(), "mat4");
   const editorViewportSize = uniform(new THREE.Vector2(1, 1), "vec2");
@@ -6880,7 +6930,9 @@ function createSurfaceMaterial(
     const visibleUv = vec2(visibleUvRaw.x, float(1).sub(visibleUvRaw.y)).toVar();
     const visibleSample = visibleTextureNode.sample(visibleUv).toVar();
     const overlapSample = overlapMaskTextureNode.toVar();
-    const overlapCanWrite = overlapSample.r.greaterThan(0.5).toVar();
+    const overlapCanWrite = uvOverlapMaskEnabled.lessThan(0.5)
+      .or(overlapSample.r.greaterThan(0.5))
+      .toVar();
     let gutterCanWrite = null;
     if (!originalMeshUvRaster) {
       const occupancySample = uvOccupancyTextureNode.toVar();
@@ -7314,8 +7366,10 @@ function createSurfaceMaterial(
     segmentComponents,
     maskOnly,
     layerOnly,
+    sourceObject,
     overlapMaskTextureNode,
-    overlapMaskTexture
+    overlapMaskTexture,
+    uvOverlapMaskEnabled
   };
   return material;
 }
@@ -7444,6 +7498,19 @@ function updateSurfaceMaterial(
   if (state.uvOccupancyTextureNode) {
     state.uvOccupancyTextureNode.value = uvOccupancyTexture || surfaceAirbrushWhiteMaskTexture();
     state.uvOccupancyTexture = uvOccupancyTexture || null;
+  }
+  if (state.uvOverlapMaskEnabled) {
+    const allowAmbiguousUvOverlap = options.allowAmbiguousUvOverlap === true;
+    state.uvOverlapMaskEnabled.value = allowAmbiguousUvOverlap ? 0 : 1;
+    if (
+      !allowAmbiguousUvOverlap
+      && state.overlapMaskTexture === surfaceAirbrushWhiteMaskTexture()
+      && state.sourceObject
+    ) {
+      const overlapMaskTexture = sourceObjectUvOverlapMaskTexture(state.sourceObject);
+      state.overlapMaskTextureNode.value = overlapMaskTexture;
+      state.overlapMaskTexture = overlapMaskTexture;
+    }
   }
   if (
     material
@@ -7811,11 +7878,26 @@ function surfaceStrokeStyleKey(candidate = null, options = {}) {
     || options.largeLiveNeighborPaint === true
     || candidate?.options?.largeLiveNeighborPaint === true
   );
+  const pressureOpacity = options.pressureOpacity === true
+    || candidate?.options?.pressureOpacity === true
+    || candidate?.pressureOpacity === true;
+  const pressureHardness = options.pressureHardness === true
+    || candidate?.options?.pressureHardness === true
+    || candidate?.pressureHardness === true;
+  const pressureScatter = options.pressureScatter === true
+    || candidate?.options?.pressureScatter === true
+    || candidate?.pressureScatter === true;
   return [
     colorKey,
-    Math.round(finiteNumber(options.opacity, candidate?.opacity ?? 1) * 10000),
-    Math.round(finiteNumber(options.hardness, candidate?.hardness ?? 0) * 10000),
-    Math.round(finiteNumber(options.scatter, candidate?.scatter ?? 0) * 10000),
+    pressureOpacity
+      ? "pressure-opacity"
+      : Math.round(finiteNumber(options.opacity, candidate?.opacity ?? 1) * 10000),
+    pressureHardness
+      ? "pressure-hardness"
+      : Math.round(finiteNumber(options.hardness, candidate?.hardness ?? 0) * 10000),
+    pressureScatter
+      ? "pressure-scatter"
+      : Math.round(finiteNumber(options.scatter, candidate?.scatter ?? 0) * 10000),
     Math.round(finiteNumber(options.spacing, candidate?.spacing ?? 1) * 100),
     String(options.visibleEdgeMode || candidate?.options?.visibleEdgeMode || candidate?.visibleEdgeMode || "soft"),
     options.erase === true || candidate?.erase === true ? "erase" : "paint",
@@ -8182,6 +8264,7 @@ function exposeSurfaceRunDebug(stats = null) {
     strokeMaskInitialized: stats.tslSurfaceStrokeMaskInitialized === true,
     strokeMaskDilation: stats.tslSurfaceStrokeMaskDilation === true,
     strokeMaskDilationPasses: stats.tslSurfaceStrokeMaskDilationPasses ?? 0,
+    strokeMaskUvGutter: stats.tslSurfaceStrokeMaskUvGutter === true,
     strokeBaseCopy: stats.tslSurfaceStrokeBaseCopy || "",
     baseCopy: stats.tslSurfaceBaseCopy || "",
     sourceColorSpace: stats.tslSurfaceSourceColorSpace || "",
@@ -8406,6 +8489,10 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
     editable.texture
   ]);
   const layerMode = editable?.layerMode === true && editable?.layer;
+  const allowAmbiguousUvOverlap = surfaceAirbrushAllowsAmbiguousUvOverlap(editable, {
+    ...options,
+    maskOnly: true
+  });
   const layerBaseTexture = layerMode
     ? surfaceLayerBaseTexture(editor, material, editable, materialOriginalMap)
     : null;
@@ -8540,6 +8627,7 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
       sourceRasterClipHardness: finiteNumber(options.hardness, editor?.textureAirbrushHardness?.() ?? 0.35),
       hardness: finiteNumber(options.hardness, editor?.textureAirbrushHardness?.() ?? 0.35),
       maskOnly: true,
+      allowAmbiguousUvOverlap,
       sourceRasterClipPaddingPixels: Math.max(
         SOURCE_RASTER_CLIP_MIN_PADDING_PIXELS,
         Math.min(
@@ -8579,6 +8667,7 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
       prewarmSegments,
       {
         ...options,
+        allowAmbiguousUvOverlap,
         blendOnly: Boolean(layerMode),
         emptyLayerSource: layerSourceEmpty,
         visibleEdgeMode,
@@ -9197,6 +9286,10 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
   const blendOntoBaseTarget = false;
   const useStrokeMaskComposite = !useProjectedPrimary
     && debugParams?.has("debugAirbrushDirectSurfaceComposite") !== true;
+  const allowAmbiguousUvOverlap = surfaceAirbrushAllowsAmbiguousUvOverlap(editable, {
+    ...options,
+    maskOnly: useStrokeMaskComposite
+  });
   const newlyAppendedPaintSegments = Array.isArray(cache.lastSurfaceStrokeAppendSegments)
     ? cache.lastSurfaceStrokeAppendSegments
     : startsNewSurfaceStroke
@@ -9276,6 +9369,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     sampleTexture: baseTexture,
     maskOnly: useStrokeMaskComposite,
     layerOnly: layerMode && !useStrokeMaskComposite,
+    allowAmbiguousUvOverlap,
     hardness: options.hardness,
     sourceRasterGutterPixels,
     sourceRasterClipPaddingPixels: Math.max(
@@ -9377,6 +9471,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
 	      shaderPaintSegments,
 	      {
 	        ...options,
+	        allowAmbiguousUvOverlap,
 	        blendOnly: layerMode,
 	        emptyLayerSource: emptyLayerSourceTexture,
 	        projectedPaintGutterOnly: false,
@@ -9490,6 +9585,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
             batchSegments,
             {
               ...options,
+              allowAmbiguousUvOverlap,
               blendOnly: layerMode,
               emptyLayerSource: emptyLayerSourceTexture,
               projectedPaintGutterOnly: false,
@@ -9516,7 +9612,9 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
             preserveSourceAlpha: true,
             alphaThreshold: 0.000001,
             sampleAlphaThreshold: TEXTURE_AIRBRUSH_ALPHA_DISCARD_THRESHOLD,
-            interiorOnly: true
+            interiorOnly: true,
+            uvGutter: true,
+            uvOccupancyTexture
           })
         : strokeMaskTarget;
       strokeMaskDilated = Boolean(compositeMaskTarget?.texture && compositeMaskTarget !== strokeMaskTarget);
@@ -9809,6 +9907,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     ),
     tslSurfaceStrokeMaskDilation: strokeMaskDilated,
     tslSurfaceStrokeMaskDilationPasses: strokeMaskDilated ? strokeMaskDilationPasses : 0,
+    tslSurfaceStrokeMaskUvGutter: strokeMaskDilated && Boolean(uvOccupancyTexture),
     tslSurfaceProjectedGutterTriangleCount: projectedGutterTriangleCount,
     tslSurfaceProjectedPrimary: useProjectedPrimary,
     tslSurfaceCandidateProjectedGutters: useCandidateProjectedGutters,

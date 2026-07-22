@@ -641,6 +641,8 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         return;
       }
       if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser") {
+        this.cancelTextureAirbrushScheduledPrewarm?.();
+        this.cancelTextureAirbrushDeferredBroadLayerPrewarm?.();
         const cameraSettled = this.settleTextureAirbrushCameraMotion?.() === true;
         if (cameraSettled) {
           this.prewarmTextureAirbrushAfterCameraChange?.();
@@ -3524,6 +3526,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       };
       const settlePendingStrokeUndo = (finalized = false) => {
         forgetPendingStrokeUndo();
+        if (finalized) {
+          this.scheduleTextureFixupMaskPreviewRefresh?.(stroke);
+        }
         resolveFinalization?.(finalized);
         delete stroke.finalizationPromise;
         return finalized;

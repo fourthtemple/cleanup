@@ -587,6 +587,45 @@ test("WebGPU prewarm scheduler defers throttled compile prewarm instead of dropp
   assert.equal(prewarmOptions.renderCompilePass, true);
 });
 
+test("WebGPU hover prewarm waits for pointer movement to settle", () => {
+  class TestEditor {}
+  installTextureAirbrushWebGpuMethods(TestEditor);
+  const editor = new TestEditor();
+  const callbacks = [];
+  const delays = [];
+  const prewarmEvents = [];
+  const originalSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback, delay = 0) => {
+    callbacks.push(callback);
+    delays.push(delay);
+    return callbacks.length;
+  };
+  try {
+    editor.activeTool = "airbrush";
+    editor.textureAirbrushPrewarm = (event) => {
+      prewarmEvents.push(event);
+      return true;
+    };
+    const firstEvent = { clientX: 10, clientY: 12 };
+    const latestEvent = { clientX: 18, clientY: 20 };
+
+    assert.equal(editor.scheduleTextureAirbrushPrewarm(firstEvent), true);
+    assert.equal(editor.scheduleTextureAirbrushPrewarm(latestEvent), false);
+    assert.equal(callbacks.length, 1);
+    assert.ok(delays[0] >= 120);
+
+    callbacks.shift()?.();
+    assert.equal(prewarmEvents.length, 0);
+    assert.equal(callbacks.length, 1);
+    assert.ok(delays[1] >= 120);
+
+    callbacks.shift()?.();
+    assert.deepEqual(prewarmEvents, [latestEvent]);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
 test("WebGPU prewarm prioritizes the active texture paint layer", () => {
   class TestEditor {}
   installTextureAirbrushWebGpuMethods(TestEditor);

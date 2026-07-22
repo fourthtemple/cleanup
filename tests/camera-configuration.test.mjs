@@ -1610,6 +1610,14 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
     calls.push(["reset-frame"]);
     return true;
   };
+  editor.cancelTextureAirbrushScheduledPrewarm = () => {
+    calls.push(["cancel-hover-prewarm"]);
+    return true;
+  };
+  editor.cancelTextureAirbrushDeferredBroadLayerPrewarm = () => {
+    calls.push(["cancel-broad-prewarm"]);
+    return true;
+  };
   editor.prewarmTextureAirbrushAfterCameraChange = () => {
     calls.push(["prewarm-camera"]);
     return true;
@@ -1639,6 +1647,8 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
 
   assert.deepEqual(calls, [
     ["prevent"],
+    ["cancel-hover-prewarm"],
+    ["cancel-broad-prewarm"],
     ["controls-update", 1],
     ["controls-update", 2],
     ["controls-update", 3],
@@ -1662,6 +1672,8 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
 
   assert.deepEqual(calls, [
     ["prevent"],
+    ["cancel-hover-prewarm"],
+    ["cancel-broad-prewarm"],
     ["controls-update", 1],
     ["controls-update", 2],
     ["controls-update", 3],
