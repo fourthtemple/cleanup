@@ -884,6 +884,81 @@ function pointToTriangleDistance(point = null, triangle = []) {
   );
 }
 
+function screenSegmentsIntersect(leftStart = null, leftEnd = null, rightStart = null, rightEnd = null) {
+  const points = [leftStart, leftEnd, rightStart, rightEnd];
+  if (!points.every((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y))) {
+    return false;
+  }
+  const cross = (a, b, c) => (
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
+  );
+  const epsilon = 0.0001;
+  const leftRightStart = cross(leftStart, leftEnd, rightStart);
+  const leftRightEnd = cross(leftStart, leftEnd, rightEnd);
+  const rightLeftStart = cross(rightStart, rightEnd, leftStart);
+  const rightLeftEnd = cross(rightStart, rightEnd, leftEnd);
+  if (
+    leftRightStart * leftRightEnd < -epsilon
+    && rightLeftStart * rightLeftEnd < -epsilon
+  ) {
+    return true;
+  }
+  const onSegment = (point, start, end, area) => (
+    Math.abs(area) <= epsilon
+    && point.x >= Math.min(start.x, end.x) - epsilon
+    && point.x <= Math.max(start.x, end.x) + epsilon
+    && point.y >= Math.min(start.y, end.y) - epsilon
+    && point.y <= Math.max(start.y, end.y) + epsilon
+  );
+  return onSegment(rightStart, leftStart, leftEnd, leftRightStart)
+    || onSegment(rightEnd, leftStart, leftEnd, leftRightEnd)
+    || onSegment(leftStart, rightStart, rightEnd, rightLeftStart)
+    || onSegment(leftEnd, rightStart, rightEnd, rightLeftEnd);
+}
+
+function screenSegmentDistance(leftStart = null, leftEnd = null, rightStart = null, rightEnd = null) {
+  if (screenSegmentsIntersect(leftStart, leftEnd, rightStart, rightEnd)) {
+    return 0;
+  }
+  return Math.min(
+    pointToSegmentDistance(leftStart, rightStart, rightEnd),
+    pointToSegmentDistance(leftEnd, rightStart, rightEnd),
+    pointToSegmentDistance(rightStart, leftStart, leftEnd),
+    pointToSegmentDistance(rightEnd, leftStart, leftEnd)
+  );
+}
+
+export function screenTriangleDistance(left = [], right = []) {
+  if (
+    !Array.isArray(left)
+    || left.length < 3
+    || !Array.isArray(right)
+    || right.length < 3
+  ) {
+    return Infinity;
+  }
+  let distance = Infinity;
+  for (let leftIndex = 0; leftIndex < 3; leftIndex += 1) {
+    const leftStart = left[leftIndex];
+    const leftEnd = left[(leftIndex + 1) % 3];
+    for (let rightIndex = 0; rightIndex < 3; rightIndex += 1) {
+      distance = Math.min(
+        distance,
+        screenSegmentDistance(
+          leftStart,
+          leftEnd,
+          right[rightIndex],
+          right[(rightIndex + 1) % 3]
+        )
+      );
+      if (distance <= 0) {
+        return 0;
+      }
+    }
+  }
+  return distance;
+}
+
 function screenTriangleDistanceToSegment(screen = [], segment = null) {
   if (!Array.isArray(screen) || screen.length < 3 || !segment?.start || !segment?.end) {
     return Infinity;
@@ -1969,10 +2044,10 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
         if (options.surfaceContinuityKeepDisconnected === true) {
           return sourceTriangles;
         }
-        const componentGap = Math.max(
-          1.5,
-          Math.min(5, Number(options.surfaceContinuityComponentGapPixels) || radius * 0.08)
-        );
+        const requestedComponentGap = Number(options.surfaceContinuityComponentGapPixels);
+        const componentGap = Number.isFinite(requestedComponentGap)
+          ? Math.max(0.25, Math.min(5, requestedComponentGap))
+          : Math.max(1.5, Math.min(5, radius * 0.08));
         const componentDepthWindow = Math.max(
           continuityDepthWindow * 1.5,
           Number(options.surfaceContinuityComponentDepthWindow) || 0.018
@@ -2000,6 +2075,7 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
           return sourceTriangles;
         }
         const entryByKey = new Map(entries.map((entry) => [entry.key, entry]));
+        const entryByIndex = new Map(entries.map((entry) => [entry.index, entry]));
         const seedIndexes = new Set();
         for (const sample of surfaceSamples) {
           const sampleKey = screenTriangleIndexKey(sample?.triangle);
@@ -2043,10 +2119,11 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
         }
         const connected = new Set(seedIndexes);
         const queueEntries = [...seedIndexes]
-          .map((indexValue) => entries.find((entry) => entry.index === indexValue))
+          .map((indexValue) => entryByIndex.get(indexValue))
           .filter(Boolean);
-        while (queueEntries.length) {
-          const current = queueEntries.shift();
+        const testedPairs = new Set();
+        for (let queueIndex = 0; queueIndex < queueEntries.length; queueIndex += 1) {
+          const current = queueEntries[queueIndex];
           const minColumn = Math.floor((current.bounds.minX - componentGap) / cellSize);
           const maxColumn = Math.floor((current.bounds.maxX + componentGap) / cellSize);
           const minRow = Math.floor((current.bounds.minY - componentGap) / cellSize);
@@ -2057,7 +2134,17 @@ export function installTextureAirbrushPointerMethods(BirdWeightEditor) {
                 if (connected.has(next.index) || next.index === current.index) {
                   continue;
                 }
+                const pairKey = current.index < next.index
+                  ? `${current.index}:${next.index}`
+                  : `${next.index}:${current.index}`;
+                if (testedPairs.has(pairKey)) {
+                  continue;
+                }
+                testedPairs.add(pairKey);
                 if (boundsGap(current.bounds, next.bounds) > componentGap) {
+                  continue;
+                }
+                if (screenTriangleDistance(current.triangle.screen, next.triangle.screen) > componentGap) {
                   continue;
                 }
                 if (

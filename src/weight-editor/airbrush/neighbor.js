@@ -19,6 +19,53 @@ function compactNeighborBridgePoints(points = [], limit = 96) {
   return points;
 }
 
+function neighborDiscontinuityProbePoints(
+  startPoint = null,
+  pendingPoints = [],
+  endPoint = null,
+  spacingPixels = 6,
+  limit = 16
+) {
+  const path = [
+    startPoint,
+    ...(Array.isArray(pendingPoints) ? pendingPoints : []),
+    endPoint
+  ].filter((point) => (
+    Number.isFinite(point?.clientX)
+    && Number.isFinite(point?.clientY)
+  ));
+  if (path.length < 2) {
+    return [];
+  }
+  const spacing = Math.max(2, Number(spacingPixels) || 6);
+  const probes = [];
+  for (let index = 1; index < path.length; index += 1) {
+    const start = path[index - 1];
+    const end = path[index];
+    const distance = Math.hypot(
+      end.clientX - start.clientX,
+      end.clientY - start.clientY
+    );
+    const steps = Math.max(1, Math.ceil(distance / spacing));
+    for (let step = 1; step <= steps; step += 1) {
+      if (index === path.length - 1 && step === steps) {
+        continue;
+      }
+      const ratio = step / steps;
+      probes.push({
+        clientX: start.clientX + (end.clientX - start.clientX) * ratio,
+        clientY: start.clientY + (end.clientY - start.clientY) * ratio
+      });
+    }
+  }
+  if (probes.length <= limit) {
+    return probes;
+  }
+  return Array.from({ length: limit }, (_, index) => (
+    probes[Math.round(index * (probes.length - 1) / Math.max(1, limit - 1))]
+  ));
+}
+
 function neighborBridgePointsWithSurfaceAnchors(
   startPoint = null,
   pendingPoints = [],
@@ -583,10 +630,22 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         this.textureAirbrushNeighborScreenStrokeFrontier = null;
         return null;
       }
+      const strokeSerial = Math.max(
+        0,
+        Math.floor(Number(this.textureAirbrushNeighborTopologyStrokeSerial)) || 0
+      ) + 1;
+      this.textureAirbrushNeighborTopologyStrokeSerial = strokeSerial;
       const frontier = {
         record: seed.record,
-        vertices: new Set()
+        vertices: new Set(),
+        strokeSerial,
+        serial: 0
       };
+      seed.localTopologyFrontier = frontier;
+      seed.localTopologyVertices = frontier.vertices;
+      seed.localTopologyStrokeSerial = strokeSerial;
+      seed.localTopologySerial = 0;
+      seed.localTopologyKey = `${seed.key || "neighbor"}:${strokeSerial}`;
       this.textureAirbrushNeighborScreenStrokeFrontier = frontier;
       return frontier;
     },
@@ -649,7 +708,7 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       return false;
     },
 
-    textureAirbrushNeighborPaintHitTouchesFrontier(seed = null, paintHit = null) {
+    textureAirbrushNeighborPaintHitTouchesFrontier(seed = null, paintHit = null, options = {}) {
       if (!seed?.enabled) {
         return true;
       }
@@ -657,7 +716,51 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
       const hit = paintHit?.hit || null;
       const vertices = this.textureAirbrushNeighborPaintHitVertexSet?.(record, hit) || new Set();
       const frontier = this.textureAirbrushNeighborScreenStrokeFrontier || null;
-      return this.textureAirbrushNeighborFrontierTouchesCandidate?.(record, vertices, frontier) === true;
+      return this.textureAirbrushNeighborFrontierTouchesCandidate?.(
+        record,
+        vertices,
+        frontier,
+        options
+      ) === true;
+    },
+
+    textureAirbrushNeighborPendingPathIsCovered(seed = null, event = null, options = {}) {
+      if (!seed?.enabled || !event) {
+        return false;
+      }
+      const pendingPoints = this.textureAirbrushNeighborScreenStrokePendingPoints || [];
+      const pendingReason = String(
+        this.textureAirbrushNeighborScreenStrokeMissPending?.reason || ""
+      );
+      const radiusPixels = Math.max(1, Number(options.radiusPixels) || 8);
+      const probes = neighborDiscontinuityProbePoints(
+        this.textureAirbrushNeighborScreenStrokeLastAcceptedPoint,
+        pendingPoints,
+        event,
+        Math.max(3, Math.min(8, radiusPixels / 4)),
+        16
+      );
+      if (!probes.length) {
+        return pendingReason === "disconnected";
+      }
+      let crossedOccluder = false;
+      for (const point of probes) {
+        const paintHit = this.textureAirbrushNeighborPaintHitFromEvent?.({
+          clientX: point.clientX,
+          clientY: point.clientY,
+          pointerType: event.pointerType,
+          buttons: event.buttons
+        }, this.activeTool, {
+          raycastFallbackOnScreenMiss: false
+        }) || null;
+        if (!paintHit?.record || !paintHit?.hit?.face) {
+          return false;
+        }
+        if (this.textureAirbrushNeighborSeedAllowsPaintHit?.(seed, paintHit) !== true) {
+          crossedOccluder = true;
+        }
+      }
+      return crossedOccluder;
     },
 
     textureAirbrushNeighborPreSmoothedBatchEndpointState(event = null, tool = this.activeTool) {
@@ -732,8 +835,20 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         return false;
       }
       const vertices = this.textureAirbrushNeighborPaintHitVertexSet?.(paintHit.record, paintHit.hit) || new Set();
+      let added = 0;
       for (const vertexIndex of vertices) {
+        if (frontier.vertices.has(vertexIndex)) {
+          continue;
+        }
         frontier.vertices.add(vertexIndex);
+        added += 1;
+      }
+      if (added > 0) {
+        frontier.serial = Math.max(0, Math.floor(Number(frontier.serial)) || 0) + 1;
+        seed.localTopologyFrontier = frontier;
+        seed.localTopologyVertices = frontier.vertices;
+        seed.localTopologyStrokeSerial = frontier.strokeSerial;
+        seed.localTopologySerial = frontier.serial;
       }
       return vertices.size > 0;
     },
@@ -861,7 +976,19 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
         this.textureAirbrushActiveNeighborPaintSeed = seed;
         return preserveLocalDiscontinuity("disconnected");
       }
-      if (this.textureAirbrushNeighborPaintHitTouchesFrontier?.(seed, paintHit) === false) {
+      const pendingDiscontinuity = hermiteBridgePending
+        || (this.textureAirbrushNeighborScreenStrokePendingPoints?.length || 0) > 0;
+      const coveredDiscontinuity = pendingDiscontinuity
+        && this.textureAirbrushNeighborPendingPathIsCovered?.(seed, event, {
+          radiusPixels
+        }) === true;
+      const recoveryHops = coveredDiscontinuity
+        ? Math.max(4, Math.min(12, Math.ceil(radiusPixels / 4)))
+        : 3;
+      if (this.textureAirbrushNeighborPaintHitTouchesFrontier?.(seed, paintHit, {
+        maxHops: recoveryHops,
+        maxVisited: coveredDiscontinuity ? 512 : 256
+      }) === false) {
         this.textureAirbrushActiveNeighborPaintSeed = seed;
         if (hermiteBridgePending) {
           return preserveLocalDiscontinuity("frontier");
@@ -905,7 +1032,7 @@ export function installTextureAirbrushNeighborPaintMethods(BirdWeightEditor) {
           bridgeFrontier.vertices.add(vertexIndex);
         }
       }
-      const bridgeAnchorProbeLimitPerEnd = 12;
+      const bridgeAnchorProbeLimitPerEnd = 10;
       const bridgeProbeResults = new Map();
       const bridgePoints = neighborBridgePointsWithSurfaceAnchors(
         lastAccepted,

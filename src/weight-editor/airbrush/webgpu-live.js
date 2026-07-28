@@ -1121,9 +1121,20 @@ function webGpuCandidateStyleKey(candidate = null) {
 
 function webGpuQueuedCandidateStyleKey(candidate = null) {
   const options = candidate?.options || {};
-  return options.liveProjectedPaint === true && options.visibilityMaskMode === "samples"
+  let styleKey = options.liveProjectedPaint === true && options.visibilityMaskMode === "samples"
     ? webGpuDirectLiveCandidateStyleKey(candidate)
     : webGpuCandidateStyleKey(candidate);
+  if (candidateUsesTslSurfaceDescriptor(candidate)) {
+    const rasterScopeKey = tslSurfaceRasterScopeKey(candidate);
+    if (rasterScopeKey) {
+      styleKey = `${styleKey}:surface-scope-${rasterScopeKey}`;
+    }
+  }
+  const strokePathSerial = Math.max(
+    0,
+    Math.floor(Number(options.strokePathSerial ?? candidate?.strokePathSerial)) || 0
+  );
+  return strokePathSerial > 0 ? `${styleKey}:path-${strokePathSerial}` : styleKey;
 }
 
 function webGpuDirectLiveCandidateVisibilityStyleKey(options = {}) {
@@ -1889,11 +1900,34 @@ function sameLiveSurfaceQueueTarget(batch = null, candidate = null, context = {}
   );
 }
 
+function tslSurfaceRasterScopeKey(candidate = null) {
+  const options = candidate?.options || {};
+  const topologyVertices = options.sourceRasterTopologySeedVertices;
+  const visibleFaces = options.sourceRasterVisibleFaceIndices;
+  const componentIds = Array.isArray(options.sourceRasterAllowedComponentIds)
+    ? [...options.sourceRasterAllowedComponentIds]
+        .map((value) => Math.floor(Number(value)))
+        .filter((value) => Number.isFinite(value) && value >= 0)
+        .sort((left, right) => left - right)
+    : [];
+  return [
+    String(options.sourceRasterTopologyKey || ""),
+    Math.max(0, Math.floor(Number(options.sourceRasterTopologySerial)) || 0),
+    topologyVertices instanceof Set ? topologyVertices.size : 0,
+    String(options.sourceRasterVisibleFaceKey || ""),
+    visibleFaces instanceof Set ? visibleFaces.size : 0,
+    componentIds.join(",")
+  ].join("|");
+}
+
 function staleQueuedTslSurfaceBatch(batch = null, candidate = null, context = {}) {
   if (!candidateUsesTslSurfaceDescriptor(candidate) || !candidateUsesTslSurfaceDescriptor(batch)) {
     return false;
   }
   if (!sameLiveSurfaceQueueTarget(batch, candidate, context)) {
+    return false;
+  }
+  if (tslSurfaceRasterScopeKey(batch) !== tslSurfaceRasterScopeKey(candidate)) {
     return false;
   }
   const nextScreenSegments = Array.isArray(candidate?.options?.screenProjectedStrokeSegments)

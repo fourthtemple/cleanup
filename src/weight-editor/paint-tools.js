@@ -643,11 +643,8 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser") {
         this.cancelTextureAirbrushScheduledPrewarm?.();
         this.cancelTextureAirbrushDeferredBroadLayerPrewarm?.();
-        const cameraSettled = this.settleTextureAirbrushCameraMotion?.() === true;
-        if (cameraSettled) {
-          this.prewarmTextureAirbrushAfterCameraChange?.();
-        }
-        this.texturePaintTslSurfaceAirbrushInvalidate?.();
+        // Pen contact must not run camera or GPU initialization. The queued
+        // stroke rebuilds its current visible patch from the captured point.
         this.texturePaintStrokePoint = null;
         this.textureAirbrushResetStrokeSpacing?.();
         this.textureAirbrushResetStrokeBrushState?.();
@@ -714,6 +711,14 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         texturePaintSetPointerCapture(this.canvas, event.pointerId);
       }
       if (this.activeTool === "airbrush" || this.activeTool === "texture-eraser") {
+        const pendingInitialStroke = this.textureAirbrushPendingInitialStroke || null;
+        this.textureAirbrushPendingInitialStroke = null;
+        if (pendingInitialStroke?.tool === this.activeTool) {
+          this.paintTextureStrokeFromEvent?.(pendingInitialStroke.event, {
+            reset: true,
+            strokeStart: pendingInitialStroke.point
+          });
+        }
         return;
       }
       if (this.activeTool === "clone") {
@@ -1511,11 +1516,14 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           ...(color ? { color: { r: color.r, g: color.g, b: color.b } } : {}),
           preserveLayerDisplay: this.texturePaintLayerModeActive?.() === true,
           prewarmPaintablesWithoutHit: true,
+          warmUvOccupancy: this.texturePaintLayerModeActive?.() === true,
           warmScreenHitIndex: true,
-          warmNeighborTopology: false,
+          warmNeighborTopology: true,
           tslSurfacePrewarmAll: true,
           tslSurfacePrewarmLimit: 1,
-          renderCompilePass: true
+          renderCompilePass: true,
+          compileOnly: true,
+          idle: true
         });
       }
       return true;
@@ -1749,11 +1757,14 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
           ...(color ? { color: { r: color.r, g: color.g, b: color.b } } : {}),
           preserveLayerDisplay: this.texturePaintLayerModeActive?.() === true,
           prewarmPaintablesWithoutHit: true,
+          warmUvOccupancy: this.texturePaintLayerModeActive?.() === true,
           warmScreenHitIndex: true,
-          warmNeighborTopology: false,
+          warmNeighborTopology: true,
           tslSurfacePrewarmAll: true,
           tslSurfacePrewarmLimit: 1,
-          renderCompilePass: true
+          renderCompilePass: true,
+          compileOnly: true,
+          idle: true
         });
       }
       if (
@@ -1938,7 +1949,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
               const sampleQueued = queueStroke?.call(this, pathEvent, {
                 strokeStart,
                 reset: resetSpacing || !previous,
-                ...(forceNeighborStrokeReset ? { forceStrokeReset: true } : {}),
+                ...(forceNeighborStrokeReset
+                  ? { forceStrokeReset: true, preserveStrokeOpacity: true }
+                  : {}),
                 preSmoothedStrokePath: true,
                 ...(pathEvent.textureAirbrushCurveSample === true ? { preserveCurveSamples: true } : {}),
                 ...(collapseCoalescedWebGpuScreenStroke ? { deferResetRewarm: true } : {})
@@ -1967,7 +1980,9 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
               const sampleQueued = queueStroke?.call(this, strokeEvent, {
                 strokeStart,
                 reset: resetSpacing || !previous,
-                ...(forceNeighborStrokeReset ? { forceStrokeReset: true } : {}),
+                ...(forceNeighborStrokeReset
+                  ? { forceStrokeReset: true, preserveStrokeOpacity: true }
+                  : {}),
                 ...(
                   skipInterpolatedSamples
                   || strokeEvent.textureAirbrushCurveSample === true

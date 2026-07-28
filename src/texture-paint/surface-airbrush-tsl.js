@@ -47,6 +47,14 @@ import {
 } from "./surface-airbrush/core.js";
 import { setSurfaceBrushColorUniform } from "./surface-airbrush/color.js";
 import { surfaceStrokeMaskSize } from "./surface-airbrush/performance.js";
+import {
+  locallyConnectedSourceRasterTriangles,
+  sourceRasterTopologySeedVertices,
+  sourceRasterTopologyKey,
+  sourceRasterTriangleAllowsVisibleFace,
+  sourceRasterVisibleFaceIndices,
+  sourceRasterVisibleFaceKey
+} from "./source-raster-topology.js";
 
 const MAX_TSL_SURFACE_SEGMENTS = Math.min(48, TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS);
 const MAX_TSL_SURFACE_STROKE_SEGMENTS = TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS;
@@ -72,7 +80,8 @@ const SURFACE_LAYER_BLEND_MODE_CODES = Object.freeze({
 const UV_GUTTER_PIXELS = 0;
 const UV_SEAM_BLEED_PIXELS = 8;
 const PROJECTED_GUTTER_GEOMETRY_MIN_TRIANGLES = 256;
-const SOURCE_RASTER_GEOMETRY_MIN_TRIANGLES = 4096;
+const SOURCE_RASTER_GEOMETRY_MIN_TRIANGLES = 512;
+const SOURCE_RASTER_GEOMETRY_CACHE_LIMIT = 8;
 const TSL_SURFACE_DILATION_PASSES = 1;
 const TSL_SURFACE_STROKE_MASK_DILATION_PASSES = 1;
 const TSL_SURFACE_DILATION_SAMPLE_RADII = [1, 2, 4, 8, 12];
@@ -1767,6 +1776,25 @@ function surfaceAirbrushReferenceTexture(material = null, editable = null, origi
   return null;
 }
 
+export function surfaceAirbrushCachedTextureStillBound(cache = null, material = null, editable = null) {
+  const currentTexture = cache?.currentTexture || null;
+  if (
+    !currentTexture
+    || !surfaceAirbrushCacheOwnsTexture(cache, currentTexture)
+    || cache.hasPaintedSurfaceStroke !== true
+  ) {
+    return false;
+  }
+  return Boolean(
+    material?.map === currentTexture
+    || editable?.texture === currentTexture
+    || (
+      editable?.layerMode === true
+      && editable?.layer?.gpuTarget?.target?.texture === currentTexture
+    )
+  );
+}
+
 function bindSurfaceEditableMetadata(material = null, editable = null, finalTexture = null, options = {}) {
   if (!material || !editable?.canvas || !editable?.context || !finalTexture) {
     return false;
@@ -3220,31 +3248,28 @@ function sourceObjectComponentKey(editor = null, sourceObject = null) {
   ].join(":");
 }
 
+function componentIdForVertex(componentIds = null, vertexIndex = -1) {
+  const index = Math.floor(Number(vertexIndex));
+  return componentIds && Number.isInteger(index) && index >= 0
+    ? finiteComponentId(componentIds[index])
+    : -1;
+}
+
 function componentIdForTriangleVertices(componentState = null, ia = -1, ib = -1, ic = -1) {
   const componentIds = componentState?.componentIds || null;
   if (!componentIds) {
     return -1;
   }
-  const counts = new Map();
-  for (const vertexIndex of [ia, ib, ic]) {
-    const index = Math.floor(Number(vertexIndex));
-    const componentId = Number.isInteger(index) && index >= 0
-      ? finiteComponentId(componentIds[index])
-      : -1;
-    if (componentId < 0) {
-      continue;
-    }
-    counts.set(componentId, (counts.get(componentId) || 0) + 1);
+  const componentA = componentIdForVertex(componentIds, ia);
+  const componentB = componentIdForVertex(componentIds, ib);
+  const componentC = componentIdForVertex(componentIds, ic);
+  if (componentA >= 0 && (componentA === componentB || componentA === componentC)) {
+    return componentA;
   }
-  let bestComponentId = -1;
-  let bestCount = 0;
-  for (const [componentId, count] of counts) {
-    if (count > bestCount) {
-      bestComponentId = componentId;
-      bestCount = count;
-    }
+  if (componentB >= 0 && componentB === componentC) {
+    return componentB;
   }
-  return bestComponentId;
+  return componentA >= 0 ? componentA : componentB >= 0 ? componentB : componentC;
 }
 
 function geometryTriangleCount(geometry = null, materialIndex = 0) {
@@ -3762,6 +3787,34 @@ function createSourceRasterGeometry(
   return geometry;
 }
 
+function createSourceRasterScratchGeometry(
+  reserveTriangleCount = SOURCE_RASTER_GEOMETRY_MIN_TRIANGLES
+) {
+  const capacityVertices = Math.max(1, Math.floor(Number(reserveTriangleCount) || 1)) * 3;
+  const geometry = new THREE.BufferGeometry();
+  const attributes = [
+    ["position", 3],
+    ["uv", 2],
+    ["sourceUv", 2],
+    ["paintView", 3],
+    ["paintScreen", 3],
+    ["paintNormal", 3],
+    ["paintBarycentric", 3],
+    ["paintComponent", 1]
+  ];
+  for (const [name, itemSize] of attributes) {
+    geometry.setAttribute(
+      name,
+      new THREE.BufferAttribute(new Float32Array(capacityVertices * itemSize), itemSize)
+    );
+  }
+  geometry.setDrawRange(0, 0);
+  geometry.userData.texturePaintTslSourceRasterCapacityVertices = capacityVertices;
+  geometry.userData.texturePaintTslSourceRasterVertexCount = 0;
+  geometry.userData.texturePaintTslSourceRasterTriangleCount = 0;
+  return geometry;
+}
+
 function updateSourceRasterGeometry(
   geometry = null,
   triangles = [],
@@ -3845,6 +3898,10 @@ function sourceUvRasterGeometryKey(
   const paintIndices = sourceObjectMaterialPaintIndices(sourceObject, editable, textures, fallbackMaterialIndex, options);
   const writeTexture = options.writeTexture || texture;
   const sampleTexture = options.sampleTexture || texture;
+  const componentKey = options.sourceRasterComponentKey
+    || sourceObjectComponentKey(editor, sourceObject);
+  const projectionFrameKey = options.sourceRasterProjectionFrameKey
+    || surfaceProjectionFrameKey(editor, [sourceObject]);
   return [
     width,
     height,
@@ -3857,8 +3914,10 @@ function sourceUvRasterGeometryKey(
     matrixSurfaceKey(sampleTexture?.matrix),
     [...paintIndices].sort((a, b) => a - b).join(","),
     sourceRasterClipKey(options),
-    sourceObjectComponentKey(editor, sourceObject),
-    surfaceProjectionFrameKey(editor, [sourceObject])
+    sourceRasterTopologyKey(options),
+    sourceRasterVisibleFaceKey(options),
+    componentKey,
+    projectionFrameKey
   ].join("|");
 }
 
@@ -3894,9 +3953,14 @@ function sourceUvRasterTriangles(
   }
   sourceObject.updateMatrixWorld?.(true);
   editor.camera.updateMatrixWorld?.(true);
-  const componentState = sourceObjectComponentState(editor, sourceObject);
+  const componentState = options.sourceRasterComponentState
+    || sourceObjectComponentState(editor, sourceObject);
   const elementCount = geometry.index?.count || position.count || 0;
-  const projectionRecords = new Array(Math.max(0, Math.floor(Number(position.count) || 0)));
+  const projectionRecordCount = Math.max(0, Math.floor(Number(position.count) || 0));
+  const projectionRecords = Array.isArray(options.sourceRasterProjectionRecords)
+    && options.sourceRasterProjectionRecords.length === projectionRecordCount
+    ? options.sourceRasterProjectionRecords
+    : new Array(projectionRecordCount);
   const projectionRecordAt = (vertexIndex = 0) => {
     if (projectionRecords[vertexIndex] === undefined) {
       projectionRecords[vertexIndex] = surfaceProjectionRecord(
@@ -3909,8 +3973,25 @@ function sourceUvRasterTriangles(
     }
     return projectionRecords[vertexIndex];
   };
+  const visibleFaceIndices = sourceRasterVisibleFaceIndices(options);
+  const visibleElementStarts = visibleFaceIndices?.size
+    ? [...visibleFaceIndices]
+        .map((faceIndex) => Math.floor(Number(faceIndex)) * 3)
+        .filter((elementStart) => elementStart >= 0 && elementStart + 2 < elementCount)
+        .sort((left, right) => left - right)
+    : null;
+  const iterationCount = visibleElementStarts
+    ? visibleElementStarts.length
+    : Math.floor(elementCount / 3);
   const triangles = [];
-  for (let elementStart = 0; elementStart + 2 < elementCount; elementStart += 3) {
+  for (let iteration = 0; iteration < iterationCount; iteration += 1) {
+    const elementStart = visibleElementStarts
+      ? visibleElementStarts[iteration]
+      : iteration * 3;
+    const faceIndex = Math.floor(elementStart / 3);
+    if (!sourceRasterTriangleAllowsVisibleFace(faceIndex, options)) {
+      continue;
+    }
     const materialIndex = geometryTriangleMaterialIndex(geometry, elementStart);
     if (!paintMaterialIndices.has(materialIndex)) {
       continue;
@@ -3918,6 +3999,10 @@ function sourceUvRasterTriangles(
     const ia = vertexIndexAt(geometry, elementStart);
     const ib = vertexIndexAt(geometry, elementStart + 1);
     const ic = vertexIndexAt(geometry, elementStart + 2);
+    const componentId = componentIdForTriangleVertices(componentState, ia, ib, ic);
+    if (!sourceRasterTriangleAllowsComponent(componentId, options)) {
+      continue;
+    }
     const a = texturePixelForUv(uvAttribute, ia, writeTexture, width, height);
     const b = texturePixelForUv(uvAttribute, ib, writeTexture, width, height);
     const c = texturePixelForUv(uvAttribute, ic, writeTexture, width, height);
@@ -3936,10 +4021,6 @@ function sourceUvRasterTriangles(
     const normalA = projectionA?.normal || { x: 0, y: 0, z: 1 };
     const normalB = projectionB?.normal || normalA;
     const normalC = projectionC?.normal || normalB;
-    const componentId = componentIdForTriangleVertices(componentState, ia, ib, ic);
-    if (!sourceRasterTriangleAllowsComponent(componentId, options)) {
-      continue;
-    }
     if (!screenA || !screenB || !screenC) {
       continue;
     }
@@ -3957,11 +4038,12 @@ function sourceUvRasterTriangles(
       normalA,
       normalB,
       normalC,
+      vertexIndices: [ia, ib, ic],
       componentId,
       materialIndex
     });
   }
-  return triangles;
+  return locallyConnectedSourceRasterTriangles(triangles, componentState, options);
 }
 
 function normalizeSurfaceSegments(editor = null, segments = [], fallbackRadius = 1) {
@@ -4232,6 +4314,20 @@ function ensureSurfacePrewarmTarget(cache = null, width = 1, height = 1, referen
     cache.prewarmTarget.texture.flipY = false;
   }
   return cache.prewarmTarget?.texture ? cache.prewarmTarget : null;
+}
+
+function surfacePrewarmWritableTarget(cache = null, baseTexture = null, referenceTexture = null, width = 1, height = 1) {
+  return {
+    target: ensureSurfacePrewarmTarget(cache, width, height, referenceTexture || baseTexture),
+    targetIndex: -1
+  };
+}
+
+function surfacePrewarmStrokeMaskTarget(cache = null, width = 1, height = 1) {
+  return {
+    target: ensureSurfacePrewarmStrokeMaskTarget(cache, width, height),
+    primesLiveTarget: false
+  };
 }
 
 function clearSurfaceMaskTarget(renderer = null, target = null) {
@@ -5398,6 +5494,30 @@ function ensureSourceUvRasterGeometry(
   const rasterWidth = Math.max(1, Math.floor(Number(options.rasterWidth) || width));
   const rasterHeight = Math.max(1, Math.floor(Number(options.rasterHeight) || height));
   const sampleSize = textureLikeSize(sampleTexture);
+  const componentState = sourceObjectComponentState(editor, sourceObject);
+  const componentKey = sourceObjectComponentKey(editor, sourceObject);
+  const projectionFrameKey = surfaceProjectionFrameKey(editor, [sourceObject]);
+  const projectionCacheKey = `${componentKey}|${projectionFrameKey}`;
+  const projectionRecordCount = Math.max(
+    0,
+    Math.floor(Number(sourceObject.geometry?.attributes?.position?.count) || 0)
+  );
+  if (
+    entry.texturePaintTslSourceRasterProjectionKey !== projectionCacheKey
+    || entry.texturePaintTslSourceRasterProjectionRecords?.length !== projectionRecordCount
+  ) {
+    entry.texturePaintTslSourceRasterProjectionKey = projectionCacheKey;
+    entry.texturePaintTslSourceRasterProjectionRecords = new Array(projectionRecordCount);
+  }
+  const sourceRasterOptions = {
+    ...options,
+    writeTexture,
+    sampleTexture,
+    sourceRasterComponentState: componentState,
+    sourceRasterComponentKey: componentKey,
+    sourceRasterProjectionFrameKey: projectionFrameKey,
+    sourceRasterProjectionRecords: entry.texturePaintTslSourceRasterProjectionRecords
+  };
   const key = sourceUvRasterGeometryKey(
     editor,
     sourceObject,
@@ -5407,12 +5527,56 @@ function ensureSourceUvRasterGeometry(
     editable,
     textures,
     fallbackMaterialIndex,
-    options,
+    sourceRasterOptions,
     gutterPixels
   );
-  if (key && entry.texturePaintTslSourceRasterKey === key && entry.mesh.geometry?.attributes?.sourceUv) {
+  const transientGeometry = Boolean(
+    sourceRasterTopologySeedVertices(sourceRasterOptions)?.size
+    || sourceRasterVisibleFaceIndices(sourceRasterOptions)?.size
+    || sourceRasterClipSegments(sourceRasterOptions).length
+  );
+  entry.texturePaintTslSourceRasterGeometryVariants ||= new Map();
+  const geometryVariants = entry.texturePaintTslSourceRasterGeometryVariants;
+  const transientVariant = transientGeometry
+    ? entry.texturePaintTslTransientSourceRasterGeometry || null
+    : null;
+  const compileVariant = entry.texturePaintTslCompileSourceRasterGeometry || null;
+  if (
+    transientVariant?.attributes?.sourceUv
+    && entry.texturePaintTslTransientSourceRasterKey === key
+  ) {
+    entry.mesh.geometry = transientVariant;
     entry.texturePaintTslSourceRasterCacheHit = true;
+    entry.texturePaintTslSourceRasterKey = key;
     entry.texturePaintTslSourceRasterKeyHash = surfaceDebugKeyHash(key);
+    entry.texturePaintTslSourceRasterTriangleCount = Math.max(
+      0,
+      Math.floor(Number(transientVariant.userData?.texturePaintTslSourceRasterTriangleCount) || 0)
+    );
+    entry.texturePaintTslSourceRasterVariantCount = geometryVariants.size;
+    return true;
+  }
+  let cachedVariant = key ? geometryVariants.get(key) : null;
+  if (
+    !cachedVariant
+    && key
+    && entry.texturePaintTslSourceRasterKey === key
+    && entry.mesh.geometry?.attributes?.sourceUv
+  ) {
+    cachedVariant = {
+      geometry: entry.mesh.geometry,
+      triangleCount: entry.texturePaintTslSourceRasterTriangleCount || 0
+    };
+  }
+  if (cachedVariant?.geometry?.attributes?.sourceUv) {
+    geometryVariants.delete(key);
+    geometryVariants.set(key, cachedVariant);
+    entry.mesh.geometry = cachedVariant.geometry;
+    entry.texturePaintTslSourceRasterCacheHit = true;
+    entry.texturePaintTslSourceRasterKey = key;
+    entry.texturePaintTslSourceRasterKeyHash = surfaceDebugKeyHash(key);
+    entry.texturePaintTslSourceRasterTriangleCount = cachedVariant.triangleCount || 0;
+    entry.texturePaintTslSourceRasterVariantCount = geometryVariants.size;
     return true;
   }
   entry.texturePaintTslSourceRasterCacheHit = false;
@@ -5426,14 +5590,16 @@ function ensureSourceUvRasterGeometry(
     editable,
     textures,
     fallbackMaterialIndex,
-    {
-      ...options,
-      writeTexture,
-      sampleTexture
-    }
+    sourceRasterOptions
   );
+  const previousGeometry = entry.mesh.geometry;
+  const reusableGeometry = transientGeometry
+    ? transientVariant || compileVariant || createSourceRasterScratchGeometry()
+    : geometryVariants.size
+      ? null
+      : compileVariant || previousGeometry;
   const geometry = updateSourceRasterGeometry(
-    entry.mesh.geometry,
+    reusableGeometry,
     triangles,
     rasterWidth,
     rasterHeight,
@@ -5445,14 +5611,49 @@ function ensureSourceUvRasterGeometry(
   if (!geometry) {
     return false;
   }
-  if (entry.mesh.geometry !== geometry) {
-    entry.mesh.geometry?.dispose?.();
+  if (transientGeometry) {
+    if (transientVariant && transientVariant !== geometry) {
+      transientVariant.dispose?.();
+    }
+    if (compileVariant && compileVariant !== geometry) {
+      compileVariant.dispose?.();
+    }
+    entry.texturePaintTslCompileSourceRasterGeometry = null;
+    entry.texturePaintTslTransientSourceRasterGeometry = geometry;
+    entry.texturePaintTslTransientSourceRasterKey = key;
     entry.mesh.geometry = geometry;
+    entry.ownsGeometry = true;
+    entry.texturePaintTslSourceRasterKey = key;
+    entry.texturePaintTslSourceRasterKeyHash = surfaceDebugKeyHash(key);
+    entry.texturePaintTslSourceRasterTriangleCount = triangles.length;
+    entry.texturePaintTslSourceRasterVariantCount = geometryVariants.size;
+    return true;
   }
+  if (previousGeometry !== geometry) {
+    const previousGeometryIsCached = [...geometryVariants.values()]
+      .some((variant) => variant?.geometry === previousGeometry);
+    if (!previousGeometryIsCached) {
+      previousGeometry?.dispose?.();
+    }
+  }
+  entry.mesh.geometry = geometry;
+  entry.texturePaintTslCompileSourceRasterGeometry = null;
   entry.ownsGeometry = true;
   entry.texturePaintTslSourceRasterKey = key;
   entry.texturePaintTslSourceRasterKeyHash = surfaceDebugKeyHash(key);
   entry.texturePaintTslSourceRasterTriangleCount = triangles.length;
+  if (key) {
+    geometryVariants.set(key, { geometry, triangleCount: triangles.length });
+  }
+  while (geometryVariants.size > SOURCE_RASTER_GEOMETRY_CACHE_LIMIT) {
+    const oldestKey = geometryVariants.keys().next().value;
+    const oldestVariant = geometryVariants.get(oldestKey);
+    geometryVariants.delete(oldestKey);
+    if (oldestVariant?.geometry && oldestVariant.geometry !== entry.mesh.geometry) {
+      oldestVariant.geometry.dispose?.();
+    }
+  }
+  entry.texturePaintTslSourceRasterVariantCount = geometryVariants.size;
   return true;
 }
 
@@ -5655,9 +5856,25 @@ function disposeUvRasterEntry(cache = null, entry = null) {
   }
   cache?.scene?.remove?.(entry.mesh);
   entry.material?.dispose?.();
-  if (entry.ownsGeometry === true) {
-    entry.mesh?.geometry?.dispose?.();
+  const ownedGeometries = new Set();
+  if (entry.ownsGeometry === true && entry.mesh?.geometry) {
+    ownedGeometries.add(entry.mesh.geometry);
   }
+  for (const variant of entry.texturePaintTslSourceRasterGeometryVariants?.values?.() || []) {
+    if (variant?.geometry) {
+      ownedGeometries.add(variant.geometry);
+    }
+  }
+  if (entry.texturePaintTslTransientSourceRasterGeometry) {
+    ownedGeometries.add(entry.texturePaintTslTransientSourceRasterGeometry);
+  }
+  if (entry.texturePaintTslCompileSourceRasterGeometry) {
+    ownedGeometries.add(entry.texturePaintTslCompileSourceRasterGeometry);
+  }
+  for (const geometry of ownedGeometries) {
+    geometry.dispose?.();
+  }
+  entry.texturePaintTslSourceRasterGeometryVariants?.clear?.();
 }
 
 function disposeUvRasterEntries(cache = null) {
@@ -5809,6 +6026,14 @@ function ensureUvRasterMeshes(
         componentState: sourceObjectComponentState(cache.editor || null, sourceObject),
         componentKey: sourceObjectComponentKey(cache.editor || null, sourceObject)
       });
+    } else if (options.compileOnly === true) {
+      if (!entry.mesh.geometry?.attributes?.sourceUv) {
+        const compileGeometry = entry.texturePaintTslCompileSourceRasterGeometry
+          || createSourceRasterScratchGeometry();
+        entry.texturePaintTslCompileSourceRasterGeometry = compileGeometry;
+        entry.mesh.geometry = compileGeometry;
+        entry.ownsGeometry = true;
+      }
     } else if (!ensureSourceUvRasterGeometry(
       entry,
       cache.editor || null,
@@ -5841,7 +6066,10 @@ function ensureUvRasterMeshes(
   cache.ownsMeshGeometry = false;
   return cache.surfaceMeshes.filter((entry) => (
     entry?.mesh?.visible !== false
-    && surfaceGeometryDrawTriangleCount(entry?.mesh?.geometry) > 0
+    && (
+      options.compileOnly === true
+      || surfaceGeometryDrawTriangleCount(entry?.mesh?.geometry) > 0
+    )
   ));
 }
 
@@ -7850,6 +8078,14 @@ function surfaceStrokeResetRequested(candidate = null, options = {}) {
   );
 }
 
+function surfaceStrokePathResetRequested(candidate = null, options = {}) {
+  return Boolean(
+    candidate?.strokePathReset === true
+    || candidate?.options?.strokePathReset === true
+    || options.strokePathReset === true
+  );
+}
+
 function surfaceStrokeOwnerChanged(cache = null, owner = null) {
   return owner
     ? cache?.strokeSourceOwner !== owner
@@ -8091,16 +8327,12 @@ function surfaceStrokeUncoveredSegments(existing = [], segments = []) {
   return firstUncoveredIndex > 0 ? segments.slice(firstUncoveredIndex) : segments;
 }
 
-function surfaceStrokeStartsNewStroke(cache = null, owner = null, candidate = null, options = {}, segments = [], styleKey = surfaceStrokeStyleKey(candidate, options)) {
+export function surfaceStrokeStartsNewStroke(cache = null, owner = null, candidate = null, options = {}, segments = [], styleKey = surfaceStrokeStyleKey(candidate, options)) {
   const ownerChanged = surfaceStrokeOwnerChanged(cache, owner);
   if (ownerChanged) {
     return true;
   }
   if (surfaceStrokeStyleChanged(cache, styleKey)) {
-    return true;
-  }
-  const explicitReset = candidate?.strokeReset === true || candidate?.options?.strokeReset === true || options.strokeReset === true;
-  if (explicitReset) {
     return true;
   }
   if (surfaceStrokeResetRequested(candidate, options)) {
@@ -8134,6 +8366,10 @@ function appendSurfaceStrokeSegments(cache = null, segments = [], owner = null, 
     return segments;
   }
   const startsNewStroke = surfaceStrokeStartsNewStroke(cache, owner, candidate, options, segments, styleKey);
+  const resetsStrokePath = !startsNewStroke && surfaceStrokePathResetRequested(candidate, options);
+  if (resetsStrokePath) {
+    cache.previousSurfaceStrokeSegment = null;
+  }
   const appendableSegments = startsNewStroke
     ? segments
     : segments.filter((segment) => !surfaceStrokeSegmentIsPoint(segment));
@@ -8462,6 +8698,8 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
       writeTextureName: detail.writeTextureName || "",
       referenceTextureName: detail.referenceTextureName || "",
       coordinateReferenceTextureName: detail.coordinateReferenceTextureName || "",
+      compileOnly: detail.compileOnly === true,
+      queuedAsyncCompilePasses: Math.max(0, Math.floor(Number(detail.queuedAsyncCompilePasses) || 0)),
       renderedCompilePass: detail.renderedCompilePass === true,
       renderedVisibleSurface: detail.renderedVisibleSurface === true,
       renderedDilationPass: detail.renderedDilationPass === true,
@@ -8482,6 +8720,7 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
   }
   const width = Math.max(1, Math.floor(Number(editable.canvas.width) || 1));
   const height = Math.max(1, Math.floor(Number(editable.canvas.height) || 1));
+  const compileOnly = options.compileOnly === true;
   const sourceObject = sourceObjectForCandidate(candidate);
   const materialIndex = Math.max(0, Math.floor(Number(candidate?.materialIndex ?? candidate?.hit?.face?.materialIndex) || 0));
   const materialOriginalMap = surfaceEditableOriginalMap(material, editable, [
@@ -8516,14 +8755,10 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
   coordinateReferenceTexture = layerMode
     ? (layerCoordinateReferenceTexture || referenceTexture)
     : referenceTexture;
-  const cachedTextureStillBound = Boolean(
-    cache.currentTexture
-    && surfaceAirbrushCacheOwnsTexture(cache, cache.currentTexture)
-    && cache.hasPaintedSurfaceStroke === true
-    && (
-      material.map === cache.currentTexture
-      || editable.texture === cache.currentTexture
-    )
+  const cachedTextureStillBound = surfaceAirbrushCachedTextureStillBound(
+    cache,
+    material,
+    editable
   );
   const sourceTexture = cachedTextureStillBound
     ? cache.currentTexture
@@ -8569,42 +8804,59 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
   const prewarmBaseTexture = layerSourceEmpty
     ? surfaceAirbrushTransparentTexture()
     : surfaceStrokeStartBaseTexture(cache, sourceTexture);
-  const prewarmTargetIndex = -1;
-  const prewarmTarget = ensureSurfacePrewarmTarget(
+  const prewarmWritable = surfacePrewarmWritableTarget(
     cache,
+    prewarmBaseTexture,
+    coordinateReferenceTexture || referenceTexture || prewarmBaseTexture,
     width,
-    height,
-    coordinateReferenceTexture || referenceTexture || prewarmBaseTexture
+    height
   );
+  const prewarmTargetIndex = prewarmWritable.targetIndex;
+  const prewarmTarget = prewarmWritable.target;
   const prewarmWriteTexture = prewarmTarget?.texture || prewarmBaseTexture;
-  const prewarmStrokeMaskTarget = ensureSurfacePrewarmStrokeMaskTarget(cache, width, height);
+  const prewarmStrokeMask = surfacePrewarmStrokeMaskTarget(cache, width, height);
+  const prewarmStrokeMaskTarget = prewarmStrokeMask.target;
   const prewarmRasterWriteTexture = prewarmStrokeMaskTarget?.texture || prewarmWriteTexture;
   const prewarmRasterWriteSize = textureLikeSize(prewarmRasterWriteTexture);
-  const uvOccupancyTexture = ensureUvOccupancyMask(
-    renderer,
-    cache,
-    sourceObjects,
-    prewarmRasterWriteTexture,
-    width,
-    height,
-    editable,
-    editableTextures,
-    sourceObject,
-    materialIndex,
-    materialScopeOptions
-  );
-  const visibleTarget = renderVisibleSurfaceTarget(
-    renderer,
-    cache,
-    visibleOcclusionSourceObjects.length ? visibleOcclusionSourceObjects : sourceObjects,
-    editor,
-    null,
-    new Set(),
-    sourceObject,
-    materialIndex,
-    visibleOcclusionScopeOptions
-  );
-  const visibleTexture = visibleTarget?.texture || null;
+  const warmUvOccupancy = options.warmUvOccupancy === true;
+  const uvOccupancyTexture = compileOnly && !warmUvOccupancy
+    ? surfaceAirbrushWhiteMaskTexture()
+    : ensureUvOccupancyMask(
+        renderer,
+        cache,
+        sourceObjects,
+        prewarmRasterWriteTexture,
+        width,
+        height,
+        editable,
+        editableTextures,
+        sourceObject,
+        materialIndex,
+        materialScopeOptions
+      );
+  const visibleTarget = compileOnly
+    ? ensureVisibleSurfaceResources(
+        cache,
+        visibleOcclusionSourceObjects.length ? visibleOcclusionSourceObjects : sourceObjects,
+        editor,
+        null,
+        new Set(),
+        sourceObject,
+        materialIndex,
+        visibleOcclusionScopeOptions
+      )
+    : renderVisibleSurfaceTarget(
+        renderer,
+        cache,
+        visibleOcclusionSourceObjects.length ? visibleOcclusionSourceObjects : sourceObjects,
+        editor,
+        null,
+        new Set(),
+        sourceObject,
+        materialIndex,
+        visibleOcclusionScopeOptions
+      );
+  const visibleTexture = compileOnly ? null : visibleTarget?.texture || null;
   const prewarmOriginalMeshUvRaster = surfaceAirbrushOriginalMeshUvRasterEnabled();
   const surfaceMeshEntries = ensureUvRasterMeshes(
     cache,
@@ -8613,16 +8865,22 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
     visibleTexture,
     uvOccupancyTexture,
     editable,
-      editableTextures,
+    editableTextures,
     sourceObject,
     materialIndex,
     {
       ...materialScopeOptions,
+      compileOnly,
       originalMeshUvRaster: prewarmOriginalMeshUvRaster,
       sourceRasterGutterPixels: surfaceAirbrushSourceRasterGutterPixels(),
       sourceRasterClipSegments: prewarmRasterClipPath,
       sourceRasterClipRequired: usePrewarmSourceRasterClip,
       sourceRasterAllowedComponentIds: options.sourceRasterAllowedComponentIds,
+      sourceRasterTopologySeedVertices: options.sourceRasterTopologySeedVertices,
+      sourceRasterTopologyKey: options.sourceRasterTopologyKey,
+      sourceRasterTopologySerial: options.sourceRasterTopologySerial,
+      sourceRasterVisibleFaceIndices: options.sourceRasterVisibleFaceIndices,
+      sourceRasterVisibleFaceKey: options.sourceRasterVisibleFaceKey,
       sourceRasterClipScatter: finiteNumber(options.scatter, editor?.textureAirbrushScatter?.() ?? 0.35),
       sourceRasterClipHardness: finiteNumber(options.hardness, editor?.textureAirbrushHardness?.() ?? 0.35),
       hardness: finiteNumber(options.hardness, editor?.textureAirbrushHardness?.() ?? 0.35),
@@ -8635,11 +8893,11 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
           prewarmRadiusPixels * SOURCE_RASTER_CLIP_RADIUS_PADDING_SCALE
         )
       ),
-        writeTexture: prewarmRasterWriteTexture,
-        rasterWidth: prewarmRasterWriteSize.width,
-        rasterHeight: prewarmRasterWriteSize.height,
-        sampleTexture: prewarmBaseTexture
-      }
+      writeTexture: prewarmRasterWriteTexture,
+      rasterWidth: prewarmRasterWriteSize.width,
+      rasterHeight: prewarmRasterWriteSize.height,
+      sampleTexture: prewarmBaseTexture
+    }
   );
   if (!surfaceMeshEntries.length) {
     return finish(false, {
@@ -8696,6 +8954,138 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
     }
     return false;
   };
+  if (compileOnly) {
+    const strokeMaskTarget = prewarmStrokeMaskTarget || ensureSurfacePrewarmStrokeMaskTarget(cache, width, height);
+    if (visibleTarget?.texture) {
+      schedulePrewarmCompilePass(
+        cache.visibleScene,
+        editor.camera,
+        visibleTarget,
+        "prewarm-visible-surface"
+      );
+    }
+    schedulePrewarmCompilePass(
+      cache.scene,
+      cache.camera,
+      strokeMaskTarget || prewarmTarget,
+      "prewarm-surface-mask"
+    );
+    updateTextureCopyMaterial(cache.copyMaterial, prewarmBaseTexture);
+    schedulePrewarmCompilePass(
+      cache.copyScene,
+      cache.camera,
+      prewarmTarget,
+      "prewarm-base-copy"
+    );
+    if (
+      strokeMaskTarget?.texture
+      && ensureStrokeCompositePass(cache, prewarmBaseTexture, strokeMaskTarget.texture, {
+        blendOnly: Boolean(layerMode)
+      })
+      && updateStrokeCompositeMaterial(
+        cache.strokeCompositeMaterial,
+        prewarmBaseTexture,
+        strokeMaskTarget.texture,
+        {
+          ...options,
+          blendOnly: Boolean(layerMode),
+          emptyLayerSource: layerSourceEmpty
+        }
+      )
+    ) {
+      schedulePrewarmCompilePass(
+        cache.strokeCompositeScene,
+        cache.camera,
+        prewarmTarget,
+        "prewarm-stroke-composite"
+      );
+    }
+    if (ensureDilationResources(
+      cache,
+      coordinateReferenceTexture || referenceTexture,
+      width,
+      height
+    )) {
+      const previousDilationMaterial = cache.dilationMesh.material;
+      const dilationTarget = cache.dilationTargets?.[0] || prewarmTarget;
+      for (const [material, label] of [
+        [cache.dilationSeedMaterial, "prewarm-dilation-seed"],
+        [cache.dilationSeedAlphaMaterial, "prewarm-dilation-seed-alpha"],
+        [cache.dilationMaterial, "prewarm-dilation"]
+      ]) {
+        if (!material) {
+          continue;
+        }
+        cache.dilationMesh.material = material;
+        schedulePrewarmCompilePass(
+          cache.dilationScene,
+          cache.camera,
+          dilationTarget,
+          label
+        );
+      }
+      cache.dilationMesh.material = previousDilationMaterial;
+    }
+    if (layerMode) {
+      const layerDisplayTarget = ensureSurfaceLayerCompositeTarget(
+        cache,
+        width,
+        height,
+        coordinateReferenceTexture || referenceTexture || prewarmBaseTexture,
+        {
+          avoidTextures: surfaceLayerCompositeAvoidTextures(material, editable)
+        }
+      );
+      if (
+        layerDisplayTarget?.texture
+        && updateLayerCompositeMaterial(
+          cache.layerCompositeMaterial,
+          layerBaseTexture || coordinateReferenceTexture || referenceTexture || prewarmBaseTexture,
+          prewarmTarget?.texture || strokeMaskTarget?.texture,
+          editable.layer?.opacity ?? 1,
+          {
+            alphaFallback: false,
+            blendMode: editable.layer?.blendMode || "normal"
+          }
+        )
+      ) {
+        schedulePrewarmCompilePass(
+          cache.layerCompositeScene,
+          cache.layerCompositeCamera,
+          layerDisplayTarget,
+          "prewarm-layer-display"
+        );
+      }
+    }
+    const meshUvTriangleCount = surfaceMeshEntries.reduce((sum, entry) => (
+      sum + surfaceGeometryDrawTriangleCount(entry?.mesh?.geometry)
+    ), 0);
+    return finish(true, {
+      width,
+      height,
+      sourceObjectCount: sourceObjects.length,
+      sourceMeshCount: surfaceMeshEntries.length,
+      meshUvTriangleCount,
+      uvOccupancy: false,
+      uvOccupancyCacheHit: cache.texturePaintTslLastUvOccupancyCacheHit === true,
+      uvOccupancyKeyHash: cache.texturePaintTslLastUvOccupancyKeyHash || "",
+      sourceRasterCacheHits: surfaceMeshEntries.map((entry) => entry?.texturePaintTslSourceRasterCacheHit === true),
+      sourceRasterKeyHashes: surfaceMeshEntries.map((entry) => entry?.texturePaintTslSourceRasterKeyHash || ""),
+      originalMeshUvRaster: prewarmOriginalMeshUvRaster,
+      prewarmSegmentCount: prewarmSegments.length,
+      targetIndex: prewarmTargetIndex,
+      layerMode: Boolean(layerMode),
+      layerSourceEmpty,
+      sourceTextureName: surfaceTextureDebugName(sourceTexture),
+      baseTextureName: surfaceTextureDebugName(prewarmBaseTexture),
+      writeTextureName: surfaceTextureDebugName(prewarmWriteTexture),
+      referenceTextureName: surfaceTextureDebugName(referenceTexture),
+      coordinateReferenceTextureName: surfaceTextureDebugName(coordinateReferenceTexture),
+      compileOnly: true,
+      uvOccupancyWarmed: warmUvOccupancy,
+      queuedAsyncCompilePasses
+    });
+  }
   if (options.renderCompilePass === true && prewarmTarget) {
     const previousTarget = typeof renderer.getRenderTarget === "function"
       ? renderer.getRenderTarget()
@@ -8708,7 +9098,7 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
       }
       const strokeMaskTarget = prewarmStrokeMaskTarget || ensureSurfacePrewarmStrokeMaskTarget(cache, width, height);
       if (strokeMaskTarget?.texture) {
-        clearSurfacePrewarmStrokeMaskTarget(renderer, cache);
+        clearSurfaceMaskTarget(renderer, strokeMaskTarget);
         renderer.setRenderTarget(strokeMaskTarget);
         renderer.autoClear = false;
         if (visibleTarget?.texture) {
@@ -8839,7 +9229,10 @@ export function texturePaintPrewarmTslSurfaceAirbrush(editor = null, candidate =
 	        renderedDisplayPass = Boolean(displayTarget?.texture);
       }
       if (strokeMaskTarget?.texture) {
-        clearSurfacePrewarmStrokeMaskTarget(renderer, cache);
+        clearSurfaceMaskTarget(renderer, strokeMaskTarget);
+        if (prewarmStrokeMask.primesLiveTarget) {
+          cache.strokeMaskInitialized = false;
+        }
       }
 	    } finally {
       if (cache.projectedMesh && previousProjectedVisible !== undefined) {
@@ -8989,17 +9382,17 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
   const startsNewSurfaceStroke = surfaceStrokeStartsNewStroke(cache, strokeSourceOwner, candidate, options, segments, strokeStyleKey);
   const strokeOwnerChangedAtRunStart = surfaceStrokeOwnerChanged(cache, strokeSourceOwner);
   const strokeResetRequestedAtRunStart = surfaceStrokeResetRequested(candidate, options);
+  const strokePathResetRequestedAtRunStart = surfaceStrokePathResetRequested(candidate, options);
+  if (!startsNewSurfaceStroke && strokePathResetRequestedAtRunStart) {
+    cache.previousSurfaceStrokeSegment = null;
+  }
   const duplicateCoveredSegmentsBeforeReset = !surfaceStrokeOwnerChanged(cache, strokeSourceOwner)
     && !startsNewSurfaceStroke
     && surfaceStrokeSegmentsAlreadyCovered(cache, segments);
-  const cachedTextureStillBound = Boolean(
-    cache.currentTexture
-    && surfaceAirbrushCacheOwnsTexture(cache, cache.currentTexture)
-    && cache.hasPaintedSurfaceStroke === true
-    && (
-      material.map === cache.currentTexture
-      || editable.texture === cache.currentTexture
-    )
+  const cachedTextureStillBound = surfaceAirbrushCachedTextureStillBound(
+    cache,
+    material,
+    editable
   );
   const keepUnboundStrokeTexture = Boolean(
     cache.currentTexture
@@ -9073,6 +9466,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
       tslSurfaceAirbrush: true,
       tslSurfaceStartsNewStroke: startsNewSurfaceStroke,
       tslSurfaceStrokeResetRequested: strokeResetRequestedAtRunStart,
+      tslSurfaceStrokePathResetRequested: strokePathResetRequestedAtRunStart,
       tslSurfaceStrokeSourceOwner: Boolean(strokeSourceOwner),
       tslSurfaceStrokeOwnerChanged: strokeOwnerChangedAtRunStart,
       tslSurfaceStrokeStyleChanged: strokeStyleChangedAtRunStart,
@@ -9359,6 +9753,11 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     sourceRasterClipSegments: sourceRasterClipPath,
     sourceRasterClipRequired: useSourceRasterClip,
     sourceRasterAllowedComponentIds: options.sourceRasterAllowedComponentIds,
+    sourceRasterTopologySeedVertices: options.sourceRasterTopologySeedVertices,
+    sourceRasterTopologyKey: options.sourceRasterTopologyKey,
+    sourceRasterTopologySerial: options.sourceRasterTopologySerial,
+    sourceRasterVisibleFaceIndices: options.sourceRasterVisibleFaceIndices,
+    sourceRasterVisibleFaceKey: options.sourceRasterVisibleFaceKey,
     hardTextureAirbrushComponentGate: options.hardTextureAirbrushComponentGate === true,
     relaxComponentGateOnFrontmost: options.relaxComponentGateOnFrontmost === true,
     sourceRasterClipScatter: options.scatter,
@@ -9880,6 +10279,7 @@ export function texturePaintRunTslSurfaceAirbrush(editor = null, candidate = nul
     tslSurfaceAirbrush: true,
     tslSurfaceStartsNewStroke: startsNewSurfaceStroke,
     tslSurfaceStrokeResetRequested: strokeResetRequestedAtRunStart,
+    tslSurfaceStrokePathResetRequested: strokePathResetRequestedAtRunStart,
     tslSurfaceStrokeSourceOwner: Boolean(strokeSourceOwner),
     tslSurfaceStrokeOwnerChanged: strokeOwnerChangedAtRunStart,
     tslSurfaceStrokeStyleChanged: strokeStyleChangedAtRunStart,

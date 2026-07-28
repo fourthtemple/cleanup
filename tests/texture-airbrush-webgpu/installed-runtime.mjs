@@ -6379,6 +6379,78 @@ test("installed airbrush WebGPU live queue replaces stale TSL surface full-path 
   );
 });
 
+test("installed airbrush WebGPU queue preserves earlier paint across topology scope changes", () => {
+  class TestEditor {}
+  installTextureAirbrushWebGpuMethods(TestEditor);
+  const editor = new TestEditor();
+  const material = { uuid: "material-live-queue-topology-scope" };
+  const record = { id: "record-live-queue-topology-scope" };
+  const editable = {
+    texture: { uuid: "texture-live-queue-topology-scope" },
+    canvas: { width: 1024, height: 1024 }
+  };
+  const firstScreenSegment = {
+    start: { x: 100, y: 128 },
+    end: { x: 124, y: 128 },
+    radiusPixels: 36
+  };
+  const secondScreenSegment = {
+    start: { x: 124, y: 128 },
+    end: { x: 156, y: 128 },
+    radiusPixels: 36
+  };
+  const makeCandidate = (screenSegments, topologyKey, visibleFaceKey, x = 48) => ({
+    record,
+    material,
+    materialIndex: 0,
+    editable,
+    center: { x, y: 48 },
+    radiusPixels: 36,
+    strokeSegments: [{ start: { x, y: 48 }, end: { x: x + 16, y: 48 } }],
+    estimate: 10,
+    options: {
+      liveProjectedPaint: true,
+      screenStrokePaint: true,
+      visibilityMaskMode: "samples",
+      radiusPixels: 36,
+      opacity: 0.5,
+      hardness: 0.25,
+      scatter: 0.35,
+      strength: 1,
+      color: { r: 0, g: 255, b: 80 },
+      useVisibilityMask: true,
+      visibleSurfaceMaskReady: true,
+      fullProjectedSurfaceRenderTriangles: true,
+      sourceRasterTopologyKey: topologyKey,
+      sourceRasterTopologySerial: 1,
+      sourceRasterVisibleFaceKey: visibleFaceKey,
+      sourceRasterTopologySeedVertices: new Set([x]),
+      sourceRasterVisibleFaceIndices: new Set([x]),
+      screenProjectedStrokeSegments: screenSegments,
+      strokeSegments: [{ start: { x, y: 48 }, end: { x: x + 16, y: 48 } }]
+    }
+  });
+
+  editor.textureAirbrushQueueWebGpuStrokeCandidate(
+    makeCandidate([firstScreenSegment], "chest", "faces-chest"),
+    { scheduleFlush: false }
+  );
+  const firstBatch = editor.textureAirbrushQueuedWebGpuStrokes[0];
+
+  editor.textureAirbrushQueueWebGpuStrokeCandidate(
+    makeCandidate(
+      [firstScreenSegment, secondScreenSegment],
+      "shoulder",
+      "faces-shoulder",
+      256
+    ),
+    { scheduleFlush: false }
+  );
+
+  assert.equal(editor.textureAirbrushQueuedWebGpuStrokes.length, 2);
+  assert.equal(editor.textureAirbrushQueuedWebGpuStrokes[0], firstBatch);
+});
+
 test("installed airbrush WebGPU live path keeps screen-projected radius in screen pixels", () => {
   class TestEditor {}
   installTextureAirbrushWebGpuMethods(TestEditor);

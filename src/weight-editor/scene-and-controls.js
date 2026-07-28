@@ -970,9 +970,6 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         this.textureAirbrushForceNextScreenStrokeResetAfterCameraChange = true;
       }
       this.updateBrushCursorForLastPointer?.();
-      this.textureAirbrushPrewarmScreenHitIndex?.({
-        allowAnimationProgressMismatch: false
-      });
       if (layerPaintActive) {
         // DO NOT PAINT ON NON CAMERA FACING SIDES. Layer airbrush also needs
         // the first reset after camera/orbit movement to rebuild visible-only
@@ -999,26 +996,27 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           preserveLayerDisplay: true,
           limit: 1,
           prewarmPaintablesWithoutHit: true,
+          warmUvOccupancy: true,
           warmScreenHitIndex: true,
           warmNeighborTopology: false,
           tslSurfacePrewarmAll: true,
           tslSurfacePrewarmLimit: 1,
-          renderCompilePass: true
+          renderCompilePass: true,
+          compileOnly: true,
+          idle: true
         };
-        const immediate = this.textureAirbrushPrewarm?.(null, null, prewarmOptions) === true;
-        if (immediate) {
-          this.textureAirbrushNeighborProjectionDirty = false;
-        }
-        const scheduled = immediate
-          ? false
-          : this.scheduleTextureAirbrushPrewarm?.(null, null, prewarmOptions) === true;
+        const scheduled = this.scheduleTextureAirbrushPrewarm?.(
+          null,
+          null,
+          prewarmOptions
+        ) === true;
         if (
           this.texturePaintLayerModeActive?.() === true
           && this.textureAirbrushLayerPrewarmNeeded?.(null, { all: true }) === true
         ) {
           this.scheduleTextureAirbrushDeferredBroadLayerPrewarm?.();
         }
-        return immediate || scheduled;
+        return scheduled;
       }
       if (this.activeTool === "airbrush" && layerPaintActive) {
         const activeLayerOptions = {
@@ -1027,18 +1025,22 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           preserveLayerDisplay: true,
           limit: 1,
           prewarmPaintablesWithoutHit: true,
+          warmUvOccupancy: true,
           warmScreenHitIndex: true,
           warmNeighborTopology: false,
           tslSurfacePrewarmAll: true,
           tslSurfacePrewarmLimit: 1,
-          renderCompilePass: true
+          renderCompilePass: true,
+          compileOnly: true,
+          idle: true
         };
-        const activeLayerImmediate = this.textureAirbrushPrewarm?.(null, null, activeLayerOptions) === true;
-        const activeLayerScheduled = activeLayerImmediate
-          ? false
-          : this.scheduleTextureAirbrushPrewarm?.(null, null, activeLayerOptions) === true;
+        const activeLayerScheduled = this.scheduleTextureAirbrushPrewarm?.(
+          null,
+          null,
+          activeLayerOptions
+        ) === true;
         this.scheduleTextureAirbrushDeferredBroadLayerPrewarm?.();
-        return activeLayerImmediate || activeLayerScheduled;
+        return activeLayerScheduled;
       }
       const cameraPrewarmOptions = {
         all: false,
@@ -1049,15 +1051,18 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         warmNeighborTopology: false,
         tslSurfacePrewarmAll: true,
         tslSurfacePrewarmLimit: 1,
-        renderCompilePass: true
+        renderCompilePass: true,
+        compileOnly: true,
+        idle: true
       };
-      const immediate = this.textureAirbrushPrewarm?.(null, null, cameraPrewarmOptions) === true;
-      return immediate
-        ? true
-        : this.scheduleTextureAirbrushPrewarm?.(null, null, cameraPrewarmOptions) === true;
+      return this.scheduleTextureAirbrushPrewarm?.(
+        null,
+        null,
+        cameraPrewarmOptions
+      ) === true;
     },
 
-    scheduleTextureAirbrushDeferredBroadLayerPrewarm(delayMs = 900) {
+    scheduleTextureAirbrushDeferredBroadLayerPrewarm(delayMs = 600) {
       if (
         this.textureAirbrushDeferredBroadLayerPrewarmPending
         || this.activeTool !== "airbrush"
@@ -1066,29 +1071,29 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return false;
       }
       const host = typeof window !== "undefined" ? window : globalThis;
-      const prewarmDelayMs = Math.max(600, Math.floor(Number(delayMs) || 900));
+      const prewarmDelayMs = Math.max(240, Math.floor(Number(delayMs) || 600));
       let cancel = null;
-      const schedule = typeof host.setTimeout === "function"
+      const schedule = typeof host.requestIdleCallback === "function"
         ? (callback) => {
-            const handle = host.setTimeout(callback, prewarmDelayMs);
-            cancel = typeof host.clearTimeout === "function"
-              ? () => host.clearTimeout(handle)
+            const handle = host.requestIdleCallback(callback, { timeout: prewarmDelayMs });
+            cancel = typeof host.cancelIdleCallback === "function"
+              ? () => host.cancelIdleCallback(handle)
               : null;
             return handle;
           }
-        : typeof host.requestAnimationFrame === "function"
+        : typeof host.setTimeout === "function"
           ? (callback) => {
-              const handle = host.requestAnimationFrame(() => callback());
-              cancel = typeof host.cancelAnimationFrame === "function"
-                ? () => host.cancelAnimationFrame(handle)
+              const handle = host.setTimeout(callback, prewarmDelayMs);
+              cancel = typeof host.clearTimeout === "function"
+                ? () => host.clearTimeout(handle)
                 : null;
               return handle;
             }
-          : typeof host.requestIdleCallback === "function"
+          : typeof host.requestAnimationFrame === "function"
             ? (callback) => {
-                const handle = host.requestIdleCallback(callback, { timeout: prewarmDelayMs });
-                cancel = typeof host.cancelIdleCallback === "function"
-                  ? () => host.cancelIdleCallback(handle)
+                const handle = host.requestAnimationFrame(() => callback());
+                cancel = typeof host.cancelAnimationFrame === "function"
+                  ? () => host.cancelAnimationFrame(handle)
                   : null;
                 return handle;
               }
@@ -1130,17 +1135,16 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           allowPrewarmLiveDisplayMaterialSwap: false,
           limit: 1,
           prewarmPaintablesWithoutHit: true,
+          warmUvOccupancy: true,
           warmScreenHitIndex: true,
-          warmNeighborTopology: false,
+          warmNeighborTopology: true,
           tslSurfacePrewarmAll: true,
           tslSurfacePrewarmLimit: 1,
-          renderCompilePass: true
+          renderCompilePass: true,
+          compileOnly: true,
+          idle: true
         };
-        if (typeof this.textureAirbrushPrewarm === "function") {
-          this.textureAirbrushPrewarm(null, null, broadOptions);
-        } else {
-          this.scheduleTextureAirbrushPrewarm?.(null, null, broadOptions);
-        }
+        this.scheduleTextureAirbrushPrewarm?.(null, null, broadOptions);
         if (this.textureAirbrushLayerPrewarmNeeded?.(null, { all: true }) === true) {
           this.scheduleTextureAirbrushDeferredBroadLayerPrewarm?.(delayMs);
         }
@@ -1263,9 +1267,15 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
         return false;
       }
       const maxIterations = Math.max(1, Math.min(64, Math.floor(Number(options.maxIterations) || 48)));
+      const finishDampingImmediately = options.finishDampingImmediately === true
+        && this.controls.enableDamping === true;
+      const previousEnableDamping = this.controls.enableDamping;
       let changed = false;
       this.textureAirbrushCameraMotionSettling = true;
       try {
+        if (finishDampingImmediately) {
+          this.controls.enableDamping = false;
+        }
         for (let index = 0; index < maxIterations; index += 1) {
           if (this.controls.update() !== true) {
             break;
@@ -1273,6 +1283,9 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           changed = true;
         }
       } finally {
+        if (finishDampingImmediately) {
+          this.controls.enableDamping = previousEnableDamping;
+        }
         this.textureAirbrushCameraMotionSettling = false;
       }
       const currentPaintCameraSplitSnapshot = this.textureAirbrushCameraPaintStrokeSnapshot?.();
@@ -4429,73 +4442,37 @@ export function installSceneAndControlMethods(BirdWeightEditor, deps) {
           && previousTool === "orbit"
           && this.texturePaintNeighborModeEnabled?.() === true;
         const webGpuLiveDisplayPrewarmOptions = {
-          all: false,
+          all: neighborPostOrbitRewarm,
           force: true,
           liveDisplayExternalTexture: false,
           allowPrewarmLiveDisplayMaterialSwap: false,
-          prewarmPaintablesWithoutHit: false,
           warmScreenHitIndex: true,
+          warmNeighborTopology: false,
           limit: 1,
           prewarmPaintablesWithoutHit: true,
           tslSurfacePrewarmAll: true,
           tslSurfacePrewarmLimit: 1,
           renderCompilePass: true,
+          compileOnly: true,
+          idle: true,
           delay: 0
         };
+        this.cancelTextureAirbrushScheduledPrewarm?.();
         if (this.texturePaintLayerModeActive?.() === true) {
-          const activeMaterial = this.texturePaintActiveMaterial || null;
-          this.prewarmTexturePaintActiveLayerMaterialGpu?.(activeMaterial, {
-            preserveLayerDisplay: true
-          });
-          this.prewarmTexturePaintActiveLayerProjectionGpu?.(activeMaterial);
-          this.prewarmTexturePaintActiveLayerCursorProbe?.(activeMaterial);
-          if (neighborPostOrbitRewarm) {
-            this.textureAirbrushPrewarm?.(null, null, {
-              all: true,
-              force: true,
-              preserveLayerDisplay: true,
-              limit: 1,
-              tslSurfacePrewarmAll: true,
-              tslSurfacePrewarmLimit: 1,
-              renderCompilePass: true
-            });
-          }
           const layerPrewarmOptions = {
-            all: false,
-            force: true,
-            liveDisplayExternalTexture: false,
-            allowPrewarmLiveDisplayMaterialSwap: false,
-            limit: 1,
-            prewarmPaintablesWithoutHit: true,
+            ...webGpuLiveDisplayPrewarmOptions,
             immediateLayer: false,
             preserveLayerDisplay: true,
-            warmScreenHitIndex: true,
-            warmNeighborTopology: false,
-            tslSurfacePrewarmAll: true,
-            tslSurfacePrewarmLimit: 1,
-            renderCompilePass: true,
-            delay: 0
+            warmUvOccupancy: true
           };
-          this.cancelTextureAirbrushScheduledPrewarm?.();
-          if (this.textureAirbrushPrewarm?.(null, null, layerPrewarmOptions) !== true) {
-            this.scheduleTextureAirbrushPrewarm?.(null, null, layerPrewarmOptions);
-          }
+          this.scheduleTextureAirbrushPrewarm?.(null, null, layerPrewarmOptions);
           this.scheduleTextureAirbrushDeferredBroadLayerPrewarm?.();
         } else {
-          if (neighborPostOrbitRewarm) {
-            this.textureAirbrushPrewarm?.(null, null, {
-              all: true,
-              force: true,
-              limit: 1,
-              tslSurfacePrewarmAll: true,
-              tslSurfacePrewarmLimit: 1,
-              renderCompilePass: true
-            });
-          }
-          this.cancelTextureAirbrushScheduledPrewarm?.();
-          if (this.textureAirbrushPrewarm?.(null, null, webGpuLiveDisplayPrewarmOptions) !== true) {
-            this.scheduleTextureAirbrushPrewarm?.(null, null, webGpuLiveDisplayPrewarmOptions);
-          }
+          this.scheduleTextureAirbrushPrewarm?.(
+            null,
+            null,
+            webGpuLiveDisplayPrewarmOptions
+          );
         }
       }
       this.recordTutorialMacroToolChange?.(tool);

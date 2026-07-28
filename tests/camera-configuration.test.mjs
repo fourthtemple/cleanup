@@ -26,7 +26,9 @@ const EXPECTED_CAMERA_AIRBRUSH_PREWARM = {
   warmNeighborTopology: false,
   tslSurfacePrewarmAll: true,
   tslSurfacePrewarmLimit: 1,
-  renderCompilePass: true
+  renderCompilePass: true,
+  compileOnly: true,
+  idle: true
 };
 
 const EXPECTED_LAYER_CAMERA_AIRBRUSH_PREWARM = {
@@ -43,10 +45,12 @@ const EXPECTED_DEFERRED_LAYER_AIRBRUSH_PREWARM = {
   limit: 1,
   prewarmPaintablesWithoutHit: true,
   warmScreenHitIndex: true,
-  warmNeighborTopology: false,
+  warmNeighborTopology: true,
   tslSurfacePrewarmAll: true,
   tslSurfacePrewarmLimit: 1,
-  renderCompilePass: true
+  renderCompilePass: true,
+  compileOnly: true,
+  idle: true
 };
 
 function classListMock(initial = []) {
@@ -468,14 +472,14 @@ test("OrbitControls change events invalidate airbrush projection frames", () => 
 
 test("layer camera prewarm warms the active layer before broad materials", (t) => {
   const originalWindow = globalThis.window;
-  const frameCallbacks = [];
+  const idleCallbacks = [];
   globalThis.window = {
-    requestAnimationFrame(callback) {
-      frameCallbacks.push(callback);
-      return frameCallbacks.length;
+    requestIdleCallback(callback, options) {
+      idleCallbacks.push({ callback, options });
+      return idleCallbacks.length;
     },
-    requestIdleCallback() {
-      throw new Error("broad layer prewarm should use the next frame before idle");
+    requestAnimationFrame() {
+      throw new Error("broad layer prewarm should prefer idle time");
     }
   };
   t.after(() => {
@@ -498,9 +502,10 @@ test("layer camera prewarm warms the active layer before broad materials", (t) =
 
   assert.equal(cursorUpdates, 1);
   assert.deepEqual(prewarmCalls, [[null, null, EXPECTED_LAYER_CAMERA_AIRBRUSH_PREWARM]]);
-  assert.equal(frameCallbacks.length, 1);
+  assert.equal(idleCallbacks.length, 1);
+  assert.equal(idleCallbacks[0].options.timeout, 600);
 
-  frameCallbacks.shift()();
+  idleCallbacks.shift().callback();
 
   assert.deepEqual(prewarmCalls, [
     [null, null, EXPECTED_LAYER_CAMERA_AIRBRUSH_PREWARM],
@@ -706,7 +711,7 @@ test("stable render frame prewarms layer camera before timer fallback", (t) => {
   assert.deepEqual(prewarmCalls, [[null, null, EXPECTED_CAMERA_AIRBRUSH_PREWARM]]);
 });
 
-test("selecting airbrush schedules active layer warm before broad prewarm", () => {
+test("selecting airbrush schedules nonblocking active layer shader warm", () => {
   const editor = new TestEditor();
   const activeMaterial = { uuid: "active-layer-material" };
   const prewarmCalls = [];
@@ -742,17 +747,14 @@ test("selecting airbrush schedules active layer warm before broad prewarm", () =
     broadPrewarmCalls += 1;
     return true;
   };
-  editor.prewarmTexturePaintActiveLayerMaterialGpu = (material) => {
-    prewarmCalls.push(["active-material", material]);
-    return true;
+  editor.prewarmTexturePaintActiveLayerMaterialGpu = () => {
+    throw new Error("tool activation must not synchronously prewarm the active material");
   };
-  editor.prewarmTexturePaintActiveLayerProjectionGpu = (material) => {
-    prewarmCalls.push(["active-projection", material]);
-    return true;
+  editor.prewarmTexturePaintActiveLayerProjectionGpu = () => {
+    throw new Error("tool activation must not synchronously prewarm layer projection");
   };
-  editor.prewarmTexturePaintActiveLayerCursorProbe = (material) => {
-    prewarmCalls.push(["active-cursor-probe", material]);
-    return true;
+  editor.prewarmTexturePaintActiveLayerCursorProbe = () => {
+    throw new Error("tool activation must not synchronously prewarm the cursor probe");
   };
   editor.scheduleTextureAirbrushPrewarm = (...args) => {
     prewarmCalls.push(args);
@@ -764,9 +766,6 @@ test("selecting airbrush schedules active layer warm before broad prewarm", () =
   assert.equal(editor.activeTool, "airbrush");
   assert.equal(editor.lastStatus, "Airbrush texture color onto the model");
   assert.deepEqual(prewarmCalls, [
-    ["active-material", activeMaterial],
-    ["active-projection", activeMaterial],
-    ["active-cursor-probe", activeMaterial],
     [null, null, {
       all: false,
       immediateLayer: false,
@@ -781,7 +780,9 @@ test("selecting airbrush schedules active layer warm before broad prewarm", () =
       warmNeighborTopology: false,
       tslSurfacePrewarmAll: true,
       tslSurfacePrewarmLimit: 1,
-      renderCompilePass: true
+      renderCompilePass: true,
+      compileOnly: true,
+      idle: true
     }]
   ]);
   assert.equal(broadPrewarmCalls, 1);
@@ -827,16 +828,8 @@ test("returning from orbit to Neighbor airbrush schedules lightweight projection
   editor.setTool("airbrush");
 
   assert.deepEqual(prewarmCalls, [
-    ["immediate", null, null, {
+    ["scheduled", null, null, {
       all: true,
-      force: true,
-      limit: 1,
-      tslSurfacePrewarmAll: true,
-      tslSurfacePrewarmLimit: 1,
-      renderCompilePass: true
-    }],
-    ["immediate", null, null, {
-      all: false,
       delay: 0,
       force: true,
       limit: 1,
@@ -846,7 +839,10 @@ test("returning from orbit to Neighbor airbrush schedules lightweight projection
       warmScreenHitIndex: true,
       tslSurfacePrewarmAll: true,
       tslSurfacePrewarmLimit: 1,
-      renderCompilePass: true
+      renderCompilePass: true,
+      compileOnly: true,
+      idle: true,
+      warmNeighborTopology: false
     }]
   ]);
 });
@@ -1041,7 +1037,7 @@ test("pen orbit button zoom is isolated to the orbit tool", () => {
   assert.equal(cameraChanges, 2);
 });
 
-test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
+test("canvas pen zoom capture queues primary airbrush contact immediately", () => {
   const editor = new TestEditor();
   let capturedPointer = null;
   let prevented = 0;
@@ -1095,11 +1091,15 @@ test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
   assert.equal(editor.painting, true);
   assert.equal(editor.controls.enabled, false);
   assert.equal(capturedPointer, 42);
-  assert.deepEqual(painted, []);
-  assert.deepEqual(editor.textureAirbrushPendingInitialStroke?.point, {
+  assert.deepEqual(painted, [{
+    pointerType: "pen",
+    button: 0,
     clientX: 160,
-    clientY: 140
-  });
+    clientY: 140,
+    reset: true,
+    strokeStart: { clientX: 160, clientY: 140 }
+  }]);
+  assert.equal(editor.textureAirbrushPendingInitialStroke, null);
 
   editor.onPointerMove({
     ...event,
@@ -1110,17 +1110,27 @@ test("canvas pen zoom capture leaves primary airbrush strokes alone", () => {
   });
 
   assert.equal(prevented, 2);
-  assert.deepEqual(painted, [{
-    pointerType: "pen",
-    button: 0,
-    clientX: 170,
-    clientY: 140,
-    reset: true,
-    strokeStart: { clientX: 160, clientY: 140 }
-  }]);
+  assert.deepEqual(painted, [
+    {
+      pointerType: "pen",
+      button: 0,
+      clientX: 160,
+      clientY: 140,
+      reset: true,
+      strokeStart: { clientX: 160, clientY: 140 }
+    },
+    {
+      pointerType: "pen",
+      button: 0,
+      clientX: 170,
+      clientY: 140,
+      reset: false,
+      strokeStart: null
+    }
+  ]);
 });
 
-test("airbrush pointerup without drag does not paint a delayed startup dot", () => {
+test("airbrush pointerup without drag keeps one immediate contact dab", () => {
   const editor = new TestEditor();
   let painted = 0;
   let undoEnded = 0;
@@ -1160,7 +1170,7 @@ test("airbrush pointerup without drag does not paint a delayed startup dot", () 
     clientY: 180
   });
 
-  assert.equal(painted, 0);
+  assert.equal(painted, 1);
   assert.equal(undoEnded, 1);
   assert.equal(editor.painting, false);
   assert.equal(editor.textureAirbrushPendingInitialStroke, null);
@@ -1584,7 +1594,7 @@ test("airbrush pointer release restores orbit controls if final paint cleanup fa
   assert.equal(editor.texturePaintActivePointerId, null);
 });
 
-test("airbrush pointerdown settles orbit motion before reset stroke projection", () => {
+test("airbrush pointerdown queues first contact without camera initialization", () => {
   const editor = new TestEditor();
   const calls = [];
   let updateCalls = 0;
@@ -1594,9 +1604,10 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
   editor.model = new THREE.Object3D();
   editor.controls = {
     enabled: true,
+    enableDamping: true,
     update() {
       updateCalls += 1;
-      calls.push(["controls-update", updateCalls]);
+      calls.push(["controls-update", updateCalls, this.enableDamping]);
       editor.textureAirbrushCameraChanged();
       return updateCalls < 3;
     }
@@ -1649,15 +1660,13 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
     ["prevent"],
     ["cancel-hover-prewarm"],
     ["cancel-broad-prewarm"],
-    ["controls-update", 1],
-    ["controls-update", 2],
-    ["controls-update", 3],
-    ["reset-frame"],
-    ["prewarm-camera"],
     ["cursor"],
     ["begin-undo"],
-    ["capture"]
+    ["capture"],
+    ["paint", true, { clientX: 10, clientY: 12 }]
   ]);
+  assert.equal(updateCalls, 0);
+  assert.equal(editor.controls.enableDamping, true);
 
   editor.onPointerMove({
     button: 0,
@@ -1674,16 +1683,12 @@ test("airbrush pointerdown settles orbit motion before reset stroke projection",
     ["prevent"],
     ["cancel-hover-prewarm"],
     ["cancel-broad-prewarm"],
-    ["controls-update", 1],
-    ["controls-update", 2],
-    ["controls-update", 3],
-    ["reset-frame"],
-    ["prewarm-camera"],
     ["cursor"],
     ["begin-undo"],
     ["capture"],
+    ["paint", true, { clientX: 10, clientY: 12 }],
     ["prevent-move"],
     ["cursor"],
-    ["paint", true, { clientX: 10, clientY: 12 }]
+    ["paint", false, null]
   ]);
 });

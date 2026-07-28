@@ -154,18 +154,6 @@ function webGpuBackendReady(editor = null) {
   return resolved?.backend === "webgpu";
 }
 
-function textureAirbrushStrokeUsesTslSurfaceTarget(stroke = null) {
-  return (stroke?.before || []).some((entry) => {
-    if (entry?.type !== "gpu") {
-      return false;
-    }
-    const targetData = entry.targetEntry?.target?.texture?.userData || null;
-    const displayData = entry.targetEntry?.displayTarget?.texture?.userData || null;
-    return targetData?.texturePaintTslSurfaceAirbrushTargetTexture === true
-      || displayData?.texturePaintTslSurfaceAirbrushDisplayTexture === true;
-  });
-}
-
 function scheduledPrewarmOptions(options = {}, force = false) {
   const scheduled = {
     force: force || options.force === true
@@ -192,9 +180,12 @@ function scheduledPrewarmOptions(options = {}, force = false) {
   }
   for (const key of [
     "allowImmediatePrewarm",
+    "compileOnly",
+    "idle",
     "liveDisplayExternalTexture",
     "allowPrewarmLiveDisplayMaterialSwap",
     "externalSourceUpload",
+    "warmUvOccupancy",
     "warmScreenHitIndex",
     "warmNeighborTopology",
     "ensureStrokeSourceImageData",
@@ -244,9 +235,12 @@ function mergeScheduledPrewarmOptions(previous = null, next = {}, force = false)
   }
   for (const key of [
     "allowImmediatePrewarm",
+    "compileOnly",
+    "idle",
     "liveDisplayExternalTexture",
     "allowPrewarmLiveDisplayMaterialSwap",
     "externalSourceUpload",
+    "warmUvOccupancy",
     "warmScreenHitIndex",
     "warmNeighborTopology",
     "ensureStrokeSourceImageData",
@@ -655,7 +649,10 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
       if (runImmediate) {
         run();
       } else if (force || !event) {
-        schedulePrewarmCallback(run, { delay: nextPrewarmOptions.delay ?? 0 });
+        schedulePrewarmCallback(run, {
+          delay: nextPrewarmOptions.delay ?? 0,
+          idle: nextPrewarmOptions.idle === true
+        });
       } else {
         schedulePrewarmCallback(run, {
           delay: Math.max(
@@ -748,7 +745,6 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
       if (
         this.textureAirbrushPostStrokePrewarmPending
         || !webGpuStrokePrewarmActive
-        || textureAirbrushStrokeUsesTslSurfaceTarget(stroke)
       ) {
         return false;
       }
@@ -796,6 +792,9 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
           hasEditableCanvas: Boolean(editable?.canvas),
           hasMaterial: Boolean(material)
         });
+        return null;
+      }
+      if (options.compileOnly === true) {
         return null;
       }
       const color = options.color || this.textureAirbrushColor?.() || { r: 255, g: 255, b: 255 };
@@ -949,7 +948,22 @@ export function installTextureAirbrushWebGpuPrewarmMethods(BirdWeightEditor) {
         return 0;
       }
       const seen = new Set();
+      const seenGpuTargets = new Set();
       let warmed = 0;
+      for (const entry of stroke.before) {
+        const targetEntry = entry?.type === "gpu" ? entry.targetEntry || null : null;
+        if (
+          !targetEntry?.target?.texture
+          || seenGpuTargets.has(targetEntry)
+          || typeof this.prewarmTexturePaintGpuStrokeSourceSnapshot !== "function"
+        ) {
+          continue;
+        }
+        seenGpuTargets.add(targetEntry);
+        if (this.prewarmTexturePaintGpuStrokeSourceSnapshot(targetEntry) === true) {
+          warmed += 1;
+        }
+      }
       const entries = stroke.before.filter((entry) => (
         entry?.type === "canvas"
         && entry.material

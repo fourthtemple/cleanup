@@ -165,31 +165,37 @@ test("history restore cancels pending post-stroke prewarm work", async () => {
   assert.equal(warmed, 0);
 });
 
-test("TSL surface strokes skip the legacy post-stroke source prewarm", () => {
+test("TSL surface strokes prewarm their next GPU undo snapshot off pen-down", async () => {
   class PaintEditor {}
   installTextureAirbrushWebGpuPrewarmMethods(PaintEditor);
   const editor = new PaintEditor();
+  const warmed = [];
   editor.textureAirbrushResolveBackend = () => ({ backend: "webgpu" });
-  editor.textureAirbrushPrewarmWebGpuStrokeSourcesForStroke = () => {
-    throw new Error("TSL surface target is already warm");
+  editor.prewarmTexturePaintGpuStrokeSourceSnapshot = (targetEntry) => {
+    warmed.push(targetEntry);
+    return true;
+  };
+  const targetEntry = {
+    target: {
+      texture: {
+        userData: {
+          texturePaintTslSurfaceAirbrushTargetTexture: true
+        }
+      }
+    }
   };
   const stroke = {
     before: [{
       type: "gpu",
-      targetEntry: {
-        target: {
-          texture: {
-            userData: {
-              texturePaintTslSurfaceAirbrushTargetTexture: true
-            }
-          }
-        }
-      }
+      targetEntry
     }]
   };
 
-  assert.equal(editor.scheduleTextureAirbrushPostStrokePrewarm(stroke), false);
-  assert.notEqual(editor.textureAirbrushPostStrokePrewarmPending, true);
+  assert.equal(editor.scheduleTextureAirbrushPostStrokePrewarm(stroke), true);
+  assert.equal(editor.textureAirbrushPostStrokePrewarmPending, true);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(warmed, [targetEntry]);
+  assert.equal(editor.textureAirbrushPostStrokePrewarmPending, false);
 });
 
 test("pending undo places finalized texture paint above later non-paint states", () => {

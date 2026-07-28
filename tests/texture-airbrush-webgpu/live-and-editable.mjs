@@ -352,6 +352,63 @@ test("installed airbrush WebGPU live path splits batches at shader segment capac
   assert.equal(undoCaptureCount, 0);
 });
 
+test("installed airbrush WebGPU queue preserves Neighbor path-reset boundaries", () => {
+  class TestEditor {}
+  installTextureAirbrushWebGpuMethods(TestEditor);
+  const editor = new TestEditor();
+  const material = { uuid: "material-neighbor-path-reset" };
+  const record = { id: "record-neighbor-path-reset" };
+  const editable = {
+    texture: { uuid: "texture-neighbor-path-reset" },
+    canvas: { width: 64, height: 64 }
+  };
+  const makeCandidate = (x, strokePathSerial, strokePathReset = false) => {
+    const strokeSegments = [{
+      start: { x, y: 8 },
+      end: { x: x + 1, y: 8 }
+    }];
+    return {
+      record,
+      material,
+      materialIndex: 0,
+      editable,
+      radiusPixels: 4,
+      strokeSegments,
+      options: {
+        radiusPixels: 4,
+        opacity: 0.5,
+        hardness: 0.4,
+        scatter: 0.3,
+        strength: 1,
+        color: { r: 255, g: 0, b: 0 },
+        liveProjectedPaint: true,
+        visibilityMaskMode: "samples",
+        strokePathSerial,
+        strokePathReset,
+        strokeSegments
+      },
+      estimate: 1
+    };
+  };
+
+  editor.textureAirbrushQueueWebGpuStrokeCandidate(
+    makeCandidate(8, 1),
+    { scheduleFlush: false }
+  );
+  editor.textureAirbrushQueueWebGpuStrokeCandidate(
+    makeCandidate(9, 2, true),
+    { scheduleFlush: false }
+  );
+  const batches = editor.textureAirbrushQueuedWebGpuStrokes;
+  assert.equal(batches.length, 2);
+  assert.equal(batches[0].strokeSegments.length, 1);
+  assert.equal(batches[1].strokeSegments.length, 1);
+  assert.equal(batches[0].options.strokePathSerial, 1);
+  assert.equal(batches[1].options.strokePathSerial, 2);
+  assert.equal(batches[1].options.strokePathReset, true);
+  assert.equal(batches[0].webGpuStrokeSourceOwner, batches[1].webGpuStrokeSourceOwner);
+});
+
 test("installed airbrush WebGPU live path queues distinct editable canvases without hot-path undo capture", () => {
   class TestEditor {}
   installTextureAirbrushWebGpuMethods(TestEditor);

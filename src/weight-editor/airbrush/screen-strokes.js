@@ -182,6 +182,22 @@ function sameClientPoint(left = null, right = null, epsilonSq = 0.000001) {
   );
 }
 
+function screenStrokePathSerial(editor = null, advance = false) {
+  const current = Math.max(
+    0,
+    Math.floor(Number(editor?.textureAirbrushScreenStrokePathSerial)) || 0
+  );
+  const serial = advance || current <= 0 ? current + 1 : current;
+  if (editor) {
+    editor.textureAirbrushScreenStrokePathSerial = serial;
+  }
+  return serial;
+}
+
+function payloadStrokePathSerial(payload = null) {
+  return Math.max(0, Math.floor(Number(payload?.strokePathSerial)) || 0);
+}
+
 function appendUniqueClientPoint(points = [], point = null) {
   const clone = cloneClientPoint(point);
   if (!clone) {
@@ -533,6 +549,7 @@ function splitStrokeBatch(batch = null) {
     batches.push({
       ...batch,
       strokeReset: batch.strokeReset === true && index === 0,
+      strokePathReset: batch.strokePathReset === true && index === 0,
       strokeSegments: segments.slice(index, index + TEXTURE_AIRBRUSH_MAX_STROKE_SEGMENTS)
     });
   }
@@ -552,6 +569,8 @@ function compatibleStrokeBatches(previous = null, next = null) {
     && (previous.neighborPaintSeed || null) === (next.neighborPaintSeed || null)
     && (previous.strokeUndo || null) === (next.strokeUndo || null)
     && next.strokeReset !== true
+    && next.strokePathReset !== true
+    && payloadStrokePathSerial(previous) === payloadStrokePathSerial(next)
     && layerMutationSerial(previous.layerMutationSerial) === layerMutationSerial(next.layerMutationSerial)
     && Math.max(0.1, Math.min(200, Number(previous.spacing ?? 1)))
       === Math.max(0.1, Math.min(200, Number(next.spacing ?? 1)))
@@ -801,9 +820,11 @@ function splitLiveStrokeBatches(batches = [], maxSegments = TEXTURE_AIRBRUSH_LIV
       split.push({
         ...batch,
         strokeReset: batch.strokeReset === true && index === 0,
+        strokePathReset: batch.strokePathReset === true && index === 0,
         strokeSegments: segmentSlice,
         options: {
           ...(batch.options || {}),
+          strokePathReset: batch.strokePathReset === true && index === 0,
           strokeSegments: segmentSlice,
           ...(screenProjectedSegments.length
             ? { screenProjectedStrokeSegments: screenProjectedSegments.slice(screenStart, screenEnd) }
@@ -1384,6 +1405,11 @@ function compactLargeLiveWebGpuScreenQueue(queue = [], maxPayloads = TEXTURE_AIR
   };
   addIndex(0);
   addIndex(suffix.length - 1);
+  for (let index = 0; index < suffix.length; index += 1) {
+    if (suffix[index]?.strokeReset === true || suffix[index]?.strokePathReset === true) {
+      addIndex(index);
+    }
+  }
   for (let index = 1; kept.length < limit && index < limit - 1; index += 1) {
     addIndex((index / Math.max(1, limit - 1)) * (suffix.length - 1));
   }
@@ -1765,6 +1791,12 @@ function canCoalesceContinuousPayload(previous = null, next = null) {
   if (previous.preserveCurveSample === true || next.preserveCurveSample === true) {
     return false;
   }
+  if (
+    next.strokePathReset === true
+    || payloadStrokePathSerial(previous) !== payloadStrokePathSerial(next)
+  ) {
+    return false;
+  }
   if (payloadStyleKey(previous) !== payloadStyleKey(next)) {
     return false;
   }
@@ -1834,6 +1866,8 @@ function canCoalesceLargeLiveResetPayload(previous = null, next = null) {
     !largeDirectWebGpuResetFootprintPayload(previous)
     || !largeLiveWebGpuPayload(next)
     || next?.strokeReset === true
+    || next?.strokePathReset === true
+    || payloadStrokePathSerial(previous) !== payloadStrokePathSerial(next)
     || previous?.preserveCurveSample === true
     || next?.preserveCurveSample === true
     || !finiteClientPointLike(previous?.strokeStart)
@@ -2015,12 +2049,15 @@ function strokeSegmentsForPayload(payload = null, radiusPixels = 1, options = {}
     : continuousPoints.length
       ? continuousPoints
       : payloadCurvePoints(payload);
-  const resetPointOnly = payload?.strokeReset === true && points.length <= 1;
-  if (resetPointOnly) {
-    return [];
-  }
   const pointStampSpacing = !continuousPayloadSpacing(payload);
-  if (pointStampSpacing && points.length === 1) {
+  if (
+    (
+      pointStampSpacing
+      || payload?.strokeReset === true
+      || payload?.strokePathReset === true
+    )
+    && points.length === 1
+  ) {
       const point = points[0];
       return [{
         start: point,
@@ -2273,6 +2310,9 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       if (payload && options.strokeReset === true) {
         payload.strokeReset = true;
       }
+      if (payload) {
+        payload.strokePathSerial = screenStrokePathSerial(this, payload.strokeReset === true);
+      }
       return this.textureAirbrushQueueScreenStrokePayload?.(payload) || false;
     },
 
@@ -2312,7 +2352,8 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           }
         : null;
       let previous = options.reset === true ? explicitStrokeStart : this.texturePaintStrokePoint;
-      let reset = options.reset === true || !previous;
+      let strokeResetPending = options.reset === true || !previous;
+      let strokePathResetPending = false;
       let queued = false;
       const radiusPixels = Math.max(
         1,
@@ -2328,19 +2369,27 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const previousDeferScreenStrokeFlush = this.textureAirbrushDeferScreenStrokeFlush;
       let queuedPayloadCount = 0;
       let skippedPayloadCount = 0;
+      let rejectedNeighborSampleCount = 0;
+      let lastProbedPoint = null;
       this.textureAirbrushDeferScreenStrokeFlush = true;
       try {
-        for (const sourceEvent of sourceEvents) {
+        for (let sourceIndex = 0; sourceIndex < sourceEvents.length; sourceIndex += 1) {
+          const sourceEvent = sourceEvents[sourceIndex];
           const current = {
             clientX: sourceEvent.clientX,
             clientY: sourceEvent.clientY
           };
+          const finalSourceEvent = sourceIndex === sourceEvents.length - 1;
+          const neighborBreakPending = this.textureAirbrushNeighborScreenStrokeBreakPending === true;
           if (
-            !reset
-            && previous
+            !strokeResetPending
+            && !strokePathResetPending
+            && !neighborBreakPending
+            && !finalSourceEvent
+            && lastProbedPoint
             && clientDistanceSqValues(
-              previous.clientX,
-              previous.clientY,
+              lastProbedPoint.clientX,
+              lastProbedPoint.clientY,
               current.clientX,
               current.clientY
             ) < minSampleDistanceSq
@@ -2348,37 +2397,114 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             skippedPayloadCount += 1;
             continue;
           }
-          const strokeStart = previous || current;
-          const payload = this.textureAirbrushScreenStrokePayload?.(sourceEvent, strokeStart);
-	          if (!payload) {
-	            previous = current;
-	            reset = false;
-	            continue;
-	          }
-	          payload.strokeReset = reset;
-	          if (reset || !this.textureAirbrushActiveNeighborPaintSeed?.enabled) {
-	            payload.deferredNeighborPaintSeed = true;
-	          } else {
-	            payload.neighborPaintSeed = this.textureAirbrushActiveNeighborPaintSeed;
-	            payload.neighborPaintKey = this.textureAirbrushNeighborSeedKey?.(payload.neighborPaintSeed)
-	              || payload.neighborPaintSeed.key
-	              || "neighbor";
-	          }
-	          if (reset) {
-	            // DO NOT PAINT ON NON CAMERA FACING SIDES.
-	            // Large WebGPU Neighbor strokes stay entirely on the current
+          lastProbedPoint = current;
+          const neighborSampleState = typeof this.textureAirbrushNeighborScreenSampleState === "function"
+            ? this.textureAirbrushNeighborScreenSampleState(sourceEvent, {
+                reset: strokeResetPending || strokePathResetPending || !previous,
+                radiusPixels
+              })
+            : null;
+          if (neighborSampleState?.active === true && neighborSampleState.allowed !== true) {
+            rejectedNeighborSampleCount += 1;
+            if (neighborSampleState.preservePath !== true) {
+              strokePathResetPending = !strokeResetPending;
+              previous = null;
+            }
+            continue;
+          }
+          if (neighborSampleState?.resetAfterBreak === true) {
+            strokePathResetPending = !strokeResetPending;
+            previous = null;
+          }
+          const acceptedPoint = neighborSampleState?.surfaceAnchor
+            ? textureAirbrushPointWithSurfaceAnchor(sourceEvent, neighborSampleState.surfaceAnchor)
+            : null;
+          const acceptedEvent = acceptedPoint
+            ? this.textureAirbrushInputEventAtPoint?.(sourceEvent, acceptedPoint) || {
+                ...sourceEvent,
+                ...acceptedPoint
+              }
+            : sourceEvent;
+          const bridgeEvents = (Array.isArray(neighborSampleState?.bridgePoints)
+            ? neighborSampleState.bridgePoints
+            : [])
+            .map((point) => {
+              const bridgeEvent = this.textureAirbrushInputEventAtPoint?.(sourceEvent, point) || {
+                ...sourceEvent,
+                ...point
+              };
+              if (bridgeEvent && typeof bridgeEvent === "object") {
+                bridgeEvent.textureAirbrushPreSmoothedSample = true;
+                bridgeEvent.textureAirbrushNeighborBridgeSample = true;
+                if (point.textureAirbrushNeighborBridgeReset === true) {
+                  bridgeEvent.textureAirbrushNeighborBridgeReset = true;
+                }
+              }
+              return bridgeEvent;
+            })
+            .filter((bridgeEvent) => (
+              Number.isFinite(bridgeEvent?.clientX)
+              && Number.isFinite(bridgeEvent?.clientY)
+            ));
+          for (const pathEvent of [...bridgeEvents, acceptedEvent]) {
+            const resetBeforePathEvent = pathEvent.textureAirbrushNeighborBridgeReset === true
+              || (
+                neighborSampleState?.resetBeforeAccepted === true
+                && pathEvent === acceptedEvent
+              )
+              || (
+                neighborSampleState?.resetAfterBreak === true
+                && pathEvent === acceptedEvent
+              );
+            if (resetBeforePathEvent) {
+              strokePathResetPending = !strokeResetPending;
+              previous = null;
+            }
+            const pathCurrent = {
+              clientX: pathEvent.clientX,
+              clientY: pathEvent.clientY
+            };
+            const strokeReset = strokeResetPending;
+            const strokePathReset = !strokeReset && strokePathResetPending;
+            const strokeStart = strokeReset || strokePathReset
+              ? pathCurrent
+              : previous || pathCurrent;
+            const payload = this.textureAirbrushScreenStrokePayload?.(pathEvent, strokeStart);
+	            if (!payload) {
+	              continue;
+	            }
+	            payload.strokeReset = strokeReset;
+	            if (strokePathReset) {
+	              payload.strokePathReset = true;
+	            }
+	            payload.strokePathSerial = screenStrokePathSerial(this, strokeReset || strokePathReset);
+	            if (!payload.neighborPaintSeed?.enabled && !this.textureAirbrushActiveNeighborPaintSeed?.enabled) {
+	              payload.deferredNeighborPaintSeed = true;
+	            } else {
+	              payload.neighborPaintSeed = payload.neighborPaintSeed?.enabled
+	                ? payload.neighborPaintSeed
+	                : this.textureAirbrushActiveNeighborPaintSeed;
+	              payload.neighborPaintKey = this.textureAirbrushNeighborSeedKey?.(payload.neighborPaintSeed)
+	                || payload.neighborPaintSeed?.key
+	                || "neighbor";
+	            }
+	            if (strokeReset) {
+	              // DO NOT PAINT ON NON CAMERA FACING SIDES.
+	              // Large WebGPU Neighbor strokes stay entirely on the current
             // camera-facing WebGPU/screen-hit path. Do not trigger the legacy
             // projection rewarm here; it can monopolize the renderer before the
             // first paint and is not needed to reject back-facing normals.
-            payload.webGpuLiveNeighborProjectionCurrent = true;
+              payload.webGpuLiveNeighborProjectionCurrent = true;
+            }
+            const payloadQueued = this.textureAirbrushQueueScreenStrokePayload?.(payload) === true;
+            if (payloadQueued) {
+              queuedPayloadCount += 1;
+              previous = pathCurrent;
+              strokeResetPending = false;
+              strokePathResetPending = false;
+            }
+            queued = payloadQueued || queued;
           }
-          const payloadQueued = this.textureAirbrushQueueScreenStrokePayload?.(payload) === true;
-          if (payloadQueued) {
-            queuedPayloadCount += 1;
-          }
-          queued = payloadQueued || queued;
-          previous = current;
-          reset = false;
         }
       } finally {
         if (previousDeferScreenStrokeFlush === undefined) {
@@ -2391,6 +2517,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         sourceEvents: sourceEvents.length,
         queuedPayloads: queuedPayloadCount,
         skippedPayloads: skippedPayloadCount,
+        rejectedNeighborSamples: rejectedNeighborSampleCount,
         radiusPixels,
         minSamplePixels,
         queueLength: this.textureAirbrushScreenStrokeQueue?.length || 0
@@ -2602,11 +2729,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           immediateWebGpuFlush: true,
           maxImmediateWebGpuFlushBatches: TEXTURE_AIRBRUSH_LIVE_WEBGPU_IMMEDIATE_FIRST_PAINT_BATCHES,
           continuationCoalesceMs,
-          frameScheduled: largeLivePayload
+          ...(largeLivePayload ? { frameScheduled: true } : {})
         };
         const firstResetCanFlushSynchronously = payload.strokeReset === true
           && this.textureAirbrushImmediateWebGpuScreenFlushUsed !== true
-          && this.textureAirbrushAllowSynchronousImmediateWebGpuScreenFlush !== false
+          && this.textureAirbrushAllowSynchronousImmediateWebGpuScreenFlush === true
           && !largeLivePayload;
         if (
           (this.textureAirbrushAllowSynchronousImmediateWebGpuScreenFlush === true || firstResetCanFlushSynchronously)
@@ -3007,6 +3134,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const existing = this.textureAirbrushContinuousScreenStrokePath || null;
       const startsNewPath = Boolean(
         payload.strokeReset === true
+        || payload.strokePathReset === true
         || !existing
         || existing.key !== key
         || (existing.strokeUndo || null) !== (payload.strokeUndo || null)
@@ -3094,42 +3222,20 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         || this.textureAirbrushNeighborProjectionFirstStrokeRewarm === true
         || needsLayerCameraRewarm
         || needsLiveProjectionRewarm;
-      const prewarmOptions = {
-        ...(needsBroadCameraRewarm ? { all: true } : {}),
-        force: true,
-        skipHitLookup: true,
-        preserveLayerDisplay: true
-      };
-      let warmed = false;
-      let broadWarmed = false;
-      if (
-        activeTexturePaintLayerMode(this)
-        && this.prewarmTextureAirbrushLayerResetStroke?.(event) === true
-      ) {
-        warmed = true;
-        if (!needsBroadCameraRewarm) {
-          return true;
-        }
-      }
-      if (this.textureAirbrushPrewarm?.(event, null, prewarmOptions) === true) {
-        warmed = true;
-        broadWarmed = true;
+      if (needsBroadCameraRewarm) {
+        // The TSL paint pass renders the visible-surface target immediately
+        // before drawing this batch. Running the old broad atlas prewarm here
+        // duplicated that work and blocked the first pen sample.
         this.textureAirbrushNeighborProjectionDirty = false;
-      }
-      if (broadWarmed && needsBroadCameraRewarm) {
         // DO NOT PAINT ON NON CAMERA FACING SIDES.
-        // This consumes only the "first stroke after camera motion needs warm
-        // buffers" marker. The paint shader still rejects hidden/back-facing
-        // fragments; this flag is not permission to broaden visible coverage.
+        // These markers only request a current-camera rebuild; consuming them
+        // does not widen the paint shader's facing or depth gates.
         this.textureAirbrushNeighborProjectionFirstStrokeRewarm = false;
         if (needsLayerCameraRewarm) {
           this.textureAirbrushLayerProjectionFirstStrokeRewarm = false;
         }
       }
-      if (needsBroadCameraRewarm && !broadWarmed) {
-        return false;
-      }
-      return warmed;
+      return true;
     },
 
     textureAirbrushRewarmLayerResetProjection(event = null) {
@@ -3142,19 +3248,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       ) {
         return false;
       }
-      // DO NOT PAINT ON NON CAMERA FACING SIDES.
-      // This is the non-Neighbor version of the post-orbit warm repair: rebuild
-      // broad visible-surface layer projection/display caches before the first
-      // reset stroke paints. Do not use it to authorize hidden/back-side paint.
-      const warmed = this.textureAirbrushPrewarm?.(event, null, {
-        all: true,
-        force: true,
-        preserveLayerDisplay: true
-      }) === true;
-      if (warmed) {
-        this.textureAirbrushLayerProjectionFirstStrokeRewarm = false;
-      }
-      return warmed;
+      // The upcoming TSL paint dispatch rebuilds its current visible-surface
+      // target. A separate broad prewarm here only repeats the same render and
+      // stalls the first input sample.
+      this.textureAirbrushLayerProjectionFirstStrokeRewarm = false;
+      return true;
     },
 
     textureAirbrushQueueSpacedScreenStroke(event, options = {}) {
@@ -3171,6 +3269,9 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         && this.textureAirbrushNeighborProjectionStrokeRewarmedActive === true;
       const postCameraStrokeAccumulateActive = this.textureAirbrushPostCameraProjectionStrokeAccumulateActive === true;
       const forceStrokeReset = options.forceStrokeReset === true;
+      const preserveStrokeOpacity = forceStrokeReset
+        && options.preserveStrokeOpacity === true
+        && this.painting === true;
       const forcePostCameraStrokeReset = options.reset !== true
         && this.textureAirbrushForceNextScreenStrokeResetAfterCameraChange === true
         && (this.activeTool === "airbrush" || this.activeTool === "texture-eraser");
@@ -3180,7 +3281,9 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         && forcePostCameraStrokeReset !== true
         && this.painting === true
         && finiteClientPointLike(this.texturePaintStrokePoint);
-      const strokeReset = requestedStrokeReset && !duplicateActiveStrokeReset;
+      const strokeStateReset = requestedStrokeReset && !duplicateActiveStrokeReset;
+      const strokeReset = strokeStateReset && !preserveStrokeOpacity;
+      const strokePathReset = strokeStateReset && preserveStrokeOpacity;
       const liveQueueRadiusPixels = Math.max(
         1,
         Number(this.textureAirbrushCachedStrokeRadiusPixels?.()) || 0,
@@ -3323,7 +3426,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       }
       const baseOptions = this.textureAirbrushScreenStrokeBaseOptions?.() || {};
       if (
-        !strokeReset
+        !strokeStateReset
         && !largeLiveNeighborBrush
         && !neighborPaintActive
         && options.preserveCurveSamples !== true
@@ -3347,6 +3450,10 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
       const strokeStart = neighborSeedSwitched
         ? current
         : finiteClientPoint(options.strokeStart) || current;
+      const strokePathSerial = screenStrokePathSerial(
+        this,
+        strokeStateReset || neighborSeedSwitched
+      );
       const samplePayload = this.textureAirbrushScreenStrokePayload?.(event, strokeStart);
       const radiusPixels = Math.max(1, Number(samplePayload?.radiusPixels) || this.textureBrushRadiusScreenPixels?.() || 8);
       const spacingPercent = Math.max(0.1, Math.min(200, Number(samplePayload?.spacing ?? this.textureAirbrushSpacingPercent?.() ?? 1)));
@@ -3355,6 +3462,10 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           return null;
         }
         payload.strokeReset = strokeReset || neighborSeedSwitched;
+        payload.strokePathSerial = strokePathSerial;
+        if (strokePathReset && !neighborSeedSwitched) {
+          payload.strokePathReset = true;
+        }
         if (options.preserveCurveSamples === true) {
           payload.preserveCurveSample = true;
         }
@@ -3419,7 +3530,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         return this.textureAirbrushQueueScreenStrokePayload?.(stampPayload) || false;
       };
 
-      if (strokeReset || neighborSeedSwitched || !this.textureAirbrushStrokeSpacingState) {
+      if (strokeStateReset || neighborSeedSwitched || !this.textureAirbrushStrokeSpacingState) {
         this.textureAirbrushStrokeSpacingState = {
           distanceUntilNext: spacingPixels,
           lastPoint: current,
@@ -3776,6 +3887,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         const deferredNeighborPaintSeed = segment.deferredNeighborPaintSeed === true;
         const deferredNeighborProjectionRewarm = segment.deferredNeighborProjectionRewarm === true;
         const deferredPostCameraProjectionAccumulates = segment.deferredPostCameraProjectionAccumulates === true;
+        const strokePathReset = segment.strokePathReset === true;
+        const strokePathSerial = payloadStrokePathSerial(segment);
+        if (strokePathReset) {
+          continuousBatchCursor = null;
+        }
         const continuousStrokePath = continuousStrokePointsForPayload(segment).length >= 2;
         const incrementalPath = continuousStrokePath
           ? incrementalContinuousStrokePoints(segment, continuousBatchCursor)
@@ -3785,7 +3901,11 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
         }
         if (
           !activeBatch
-          || (segment.strokeReset === true && activeBatch.strokeSegments.length > 0)
+          || (
+            (segment.strokeReset === true || strokePathReset)
+            && activeBatch.strokeSegments.length > 0
+          )
+          || payloadStrokePathSerial(activeBatch) !== strokePathSerial
           || activeBatch.styleKey !== styleKey
           || (activeBatch.strokeUndo || null) !== strokeUndo
           || (activeBatch.neighborPaintKey || "") !== neighborPaintKey
@@ -3823,6 +3943,8 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             continuousStrokePath,
             preSmoothedStrokePath: segment.preSmoothedStrokePath === true,
             strokeReset: segment.strokeReset === true,
+            strokePathReset,
+            strokePathSerial,
             strokeStartedWithReset,
             layerCachedStartContinuation: segment.layerCachedStartContinuation === true,
             strokeSegments: []
@@ -3838,6 +3960,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           incrementalPath ? { continuousStrokePoints: incrementalPath.points } : {}
         );
         activeBatch.strokeReset = activeBatch.strokeReset || segment.strokeReset === true;
+        activeBatch.strokePathReset = activeBatch.strokePathReset || strokePathReset;
         activeBatch.strokeStartedWithReset = activeBatch.strokeStartedWithReset
           || segment.strokeReset === true
           || segment.strokeStartedWithReset === true
@@ -4261,6 +4384,7 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
           const lastSegment = batch.strokeSegments.at(-1);
           const paintEventPoint = (
             batch.strokeReset === true
+            || batch.strokePathReset === true
             || batch.neighborPaintSeed?.enabled === true
             || batch.deferredNeighborPaintSeed === true
           )
@@ -4329,6 +4453,8 @@ export function installTextureAirbrushScreenStrokeMethods(BirdWeightEditor) {
             spacing: batch.spacing,
             strength: batch.strength,
             strokeReset: batch.strokeReset === true,
+            strokePathReset: batch.strokePathReset === true,
+            strokePathSerial: payloadStrokePathSerial(batch),
             strokeStartedWithReset: batch.strokeStartedWithReset === true,
             erase: batch.erase === true,
             layerMode,

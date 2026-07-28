@@ -7,6 +7,10 @@ import {
 import { airbrushHaloRadius } from "./math.js";
 import { textureAirbrushRecordIdentity } from "./record-identity.js";
 import { textureAirbrushCloneSurfaceSegmentMetadata } from "./surface-path.js";
+import {
+  sourceRasterVisibleFaceKey,
+  sourceRasterVisibleFaceSet
+} from "../../texture-paint/source-raster-topology.js";
 
 const TEXTURE_AIRBRUSH_WEBGPU_TRIANGLE_CACHE_LIMIT = 4096;
 const TEXTURE_AIRBRUSH_WEBGPU_TRIANGLE_LIST_CACHE_LIMIT = 4096;
@@ -5159,6 +5163,63 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
   const neighborSurfacePaintActive = options.neighborPaintSeed?.enabled === true
     || Boolean(options.neighborPaintKey)
     || options.largeLiveNeighborPaint === true;
+  const neighborLocalTopologyVertices = options.neighborPaintSeed?.localTopologyVertices instanceof Set
+    && options.neighborPaintSeed.localTopologyVertices.size
+    ? options.neighborPaintSeed.localTopologyVertices
+    : null;
+  const neighborLocalTopologyKey = neighborLocalTopologyVertices
+    ? String(options.neighborPaintSeed?.localTopologyKey || options.neighborPaintSeed?.key || "neighbor")
+    : "";
+  const neighborLocalTopologySerial = neighborLocalTopologyVertices
+    ? Math.max(0, Math.floor(Number(options.neighborPaintSeed?.localTopologySerial)) || 0)
+    : 0;
+  const neighborVisibleTopologyFaces = (() => {
+    if (
+      !neighborLocalTopologyVertices
+      || !screenPaintStrokeSegments.length
+      || typeof editor?.textureAirbrushScreenTrianglesNearSegments !== "function"
+    ) {
+      return null;
+    }
+    const brushHardness = Math.max(0, Math.min(1, Number(options.hardness ?? 0.35)));
+    const brushScatter = Math.max(0, Math.min(1, Number(options.scatter) || 0));
+    const visibleRadius = Math.max(
+      screenRadiusPixels + 2,
+      airbrushHaloRadius(screenRadiusPixels, brushScatter, brushHardness) + 2
+    );
+    const visibleTriangles = editor.textureAirbrushScreenTrianglesNearSegments(
+      screenPaintStrokeSegments,
+      visibleRadius,
+      {
+        record,
+        materialIndex,
+        material,
+        editable,
+        rect: screenRect,
+        allowAnimationProgressMismatch: true,
+        surfaceContinuityFilter: true,
+        surfaceContinuitySamplesIgnoreMaterial: true,
+        surfaceContinuityRadiusScale: options.surfaceContinuityRadiusScale,
+        surfaceContinuityDepthWindow: options.surfaceContinuityDepthWindow,
+        surfaceContinuityComponentDepthWindow: options.surfaceContinuityComponentDepthWindow,
+        surfaceContinuityComponentNormalDot: options.surfaceContinuityComponentNormalDot,
+        surfaceContinuityComponentGapPixels: 0.6,
+        surfaceContinuityKeepDisconnected: false,
+        maxSurfaceContinuitySamples: options.maxSurfaceContinuitySamples,
+        frontSurfaceFilter: true,
+        skipTransparentTextureTriangles: options.skipTransparentScreenTextureTriangles,
+        maxTriangles: Math.max(
+          256,
+          Math.min(4096, Math.floor(Number(options.maxVisibilityTriangles) || 2048))
+        )
+      }
+    );
+    const faces = sourceRasterVisibleFaceSet(visibleTriangles, record, hit?.faceIndex);
+    return faces.size ? faces : null;
+  })();
+  const neighborVisibleTopologyKey = neighborVisibleTopologyFaces
+    ? sourceRasterVisibleFaceKey({ sourceRasterVisibleFaceIndices: neighborVisibleTopologyFaces })
+    : "";
   const neighborComponentCanConstrainSurfaceField = Boolean(
     options.neighborPaintSeed?.enabled === true
     && options.neighborPaintSeed?.component?.size
@@ -5853,6 +5914,19 @@ export function textureAirbrushWebGpuStrokeCandidateFromHit(editor = null, recor
     ...(componentIdsCanGateSurfaceField ? { hardTextureAirbrushComponentGate: true } : {}),
     ...(componentGateCanRelaxOnFrontmost ? { relaxComponentGateOnFrontmost: true } : {}),
     ...(neighborSourceRasterComponentIds ? { sourceRasterAllowedComponentIds: neighborSourceRasterComponentIds } : {}),
+    ...(neighborLocalTopologyVertices
+      ? {
+          sourceRasterTopologySeedVertices: neighborLocalTopologyVertices,
+          sourceRasterTopologyKey: neighborLocalTopologyKey,
+          sourceRasterTopologySerial: neighborLocalTopologySerial
+        }
+      : {}),
+    ...(neighborVisibleTopologyFaces
+      ? {
+          sourceRasterVisibleFaceIndices: neighborVisibleTopologyFaces,
+          sourceRasterVisibleFaceKey: neighborVisibleTopologyKey
+        }
+      : {}),
     ...(fullProjectedSurfacePaint ? { fullProjectedSurfaceRenderTriangles: true } : {}),
     ...(preferTslSurfaceProjectedPrimary && visibilityTriangles.length ? { projectedPrimary: true } : {}),
     ...(usesScreenProjectedVisibility
