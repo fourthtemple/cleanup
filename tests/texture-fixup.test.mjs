@@ -1011,13 +1011,23 @@ test("fixup import uses the frozen mask, hides it, and creates an undoable paint
   };
   editor.texturePaintUpdateLayerEmptyState = (layer) => {
     layer.isEmpty = false;
+    layer.texturePaintHasPaint = true;
+    layer.texturePaintCpuPainted = true;
   };
   editor.texturePaintSetSingleLayerSelection = (targetStack, layerId) => {
     targetStack.activeLayerId = layerId;
     targetStack.selectedLayerIds = [layerId];
   };
   editor.rememberTexturePaintLayerSelection = () => true;
+  editor.cancelTexturePaintLayerDisplayComposite = () => {
+    editor.canceledLayerDisplay = true;
+    return true;
+  };
   editor.discardTexturePaintMaterialAirbrushGpuTarget = () => true;
+  editor.discardTexturePaintMaterialGpuComposite = () => {
+    editor.discardedGpuComposite = true;
+    return true;
+  };
   editor.invalidateTexturePaintMaterialGpuCaches = () => true;
   editor.texturePaintCompositeMaterialLayers = () => true;
   editor.renderTexturePaintLayerPanel = () => true;
@@ -1049,6 +1059,8 @@ test("fixup import uses the frozen mask, hides it, and creates an undoable paint
   assert.equal(refreshSelectionCalls, 1);
   assert.equal(stack.layers[1].name, "AI Fixup 1");
   assert.equal(stack.layers[1].kind, "paint");
+  assert.equal(stack.layers[1].texturePaintCpuPainted, true);
+  assert.equal(stack.layers[1].texturePaintGpuPainted, false);
   assert.equal(maskLayer.visible, false);
   assert.equal(stack.activeLayerId, "fixup-1");
   assert.equal(editor.pushedUndo.label, "Import AI Fixup 1");
@@ -1056,6 +1068,8 @@ test("fixup import uses the frozen mask, hides it, and creates an undoable paint
   assert.equal(editor.pushedUndo.after.serial, 2);
   assert.match(editor.status, /Imported repair\.png as AI Fixup 1/);
   assert.equal(imageClosed, true);
+  assert.equal(editor.canceledLayerDisplay, true);
+  assert.equal(editor.discardedGpuComposite, true);
 
   const importedPixelOffset = (1 * stack.layers[1].canvas.width + 1) * 4;
   assert.deepEqual(
@@ -1107,7 +1121,19 @@ test("fixup color grade previews, cancels exactly, and applies as one undo step"
   editor.prepareTexturePaintLayerTargetChange = () => true;
   editor.disposeTexturePaintLayerGpuState = () => true;
   editor.texturePaintUpdateLayerEmptyState = () => true;
+  editor.cancelTexturePaintLayerDisplayComposite = () => {
+    editor.canceledColorGradeDisplay = (editor.canceledColorGradeDisplay || 0) + 1;
+    return true;
+  };
+  editor.texturePaintTslSurfaceAirbrushInvalidate = () => {
+    editor.invalidatedColorGradeSurface = (editor.invalidatedColorGradeSurface || 0) + 1;
+    return true;
+  };
   editor.discardTexturePaintMaterialAirbrushGpuTarget = () => true;
+  editor.discardTexturePaintMaterialGpuComposite = () => {
+    editor.discardedColorGradeComposite = (editor.discardedColorGradeComposite || 0) + 1;
+    return true;
+  };
   editor.invalidateTexturePaintMaterialGpuCaches = () => true;
   editor.texturePaintCompositeMaterialLayers = () => {
     editor.composites = (editor.composites || 0) + 1;
@@ -1127,8 +1153,14 @@ test("fixup color grade previews, cancels exactly, and applies as one undo step"
   assert.equal(await editor.previewTextureFixupColorGrade(), true);
   assert.ok(layerCanvas.data[0] > layerCanvas.data[1]);
   assert.equal(editor.pushedUndo, undefined);
+  assert.equal(editor.canceledColorGradeDisplay, 1);
+  assert.equal(editor.invalidatedColorGradeSurface, 1);
+  assert.equal(editor.discardedColorGradeComposite, 1);
   assert.equal(editor.cancelTextureFixupColorGrade(), true);
   assert.deepEqual(Array.from(layerCanvas.data), original);
+  assert.equal(editor.canceledColorGradeDisplay, 2);
+  assert.equal(editor.invalidatedColorGradeSurface, 2);
+  assert.equal(editor.discardedColorGradeComposite, 2);
 
   editor.textureFixupTintAmount.value = "100";
   assert.equal(await editor.previewTextureFixupColorGrade(), true);
@@ -1138,6 +1170,207 @@ test("fixup color grade previews, cancels exactly, and applies as one undo step"
   assert.equal(editor.pushedUndo.before.serial, 2);
   assert.equal(editor.pushedUndo.after.serial, 3);
   assert.match(editor.status, /Applied color grade to AI Fixup 1/);
+});
+
+test("a restored CPU fixup layer color grades through stale GPU display state", async () => {
+  class Editor {}
+  installTexturePaintLayerMethods(Editor);
+  installTextureFixupMethods(Editor);
+  const editor = new Editor();
+  editor.createTexturePaintCanvas = canvasFactory;
+  editor.renderTexturePaintLayerPanel = () => true;
+  editor.updateClonePaintPreviews = () => true;
+  editor.prewarmTexturePaintActiveLayerForAction = () => true;
+  editor.textureAirbrushSyncDeferredWebGpuCanvases = async () => true;
+  editor.textureFixupTintColor = { value: "#c58b57", disabled: false };
+  editor.textureFixupTintAmount = { value: "0", disabled: false };
+  editor.textureFixupToneRange = { value: "all", disabled: false };
+  editor.textureFixupHue = { value: "0", disabled: false };
+  editor.textureFixupSaturation = { value: "-100", disabled: false };
+  editor.textureFixupBrightness = { value: "0", disabled: false };
+
+  const baseImage = new FakeCanvas(2, 1);
+  baseImage.data.set([
+    10, 20, 30, 255,
+    40, 50, 60, 255
+  ]);
+  const fixupImage = new FakeCanvas(2, 1);
+  fixupImage.data.set([
+    180, 80, 20, 255,
+    30, 140, 210, 255
+  ]);
+  const compositeCanvas = new FakeCanvas(2, 1);
+  const cloneTexture = { needsUpdate: false };
+  const staleDisplayTexture = {};
+  const rebuiltTextures = [];
+  let staleCompositeDisposed = 0;
+  const material = {
+    map: cloneTexture,
+    needsUpdate: false,
+    userData: {
+      clonePaintCanvas: compositeCanvas,
+      clonePaintContext: compositeCanvas.context,
+      clonePaintTexture: cloneTexture
+    }
+  };
+  const editable = {
+    canvas: compositeCanvas,
+    context: compositeCanvas.context,
+    texture: cloneTexture
+  };
+  editor.rebuildTexturePaintCompositeCanvasTexture = (candidateMaterial) => {
+    const rebuilt = {
+      name: `rebuilt-color-grade-${rebuiltTextures.length + 1}`,
+      image: candidateMaterial.userData.clonePaintCanvas,
+      needsUpdate: true
+    };
+    rebuiltTextures.push(rebuilt);
+    candidateMaterial.userData.clonePaintTexture = rebuilt;
+    candidateMaterial.map = rebuilt;
+    candidateMaterial.needsUpdate = true;
+    return rebuilt;
+  };
+
+  assert.equal(editor.texturePaintApplyLayerStackImages(material, editable, {
+    activeLayerId: "ai-fixup-1",
+    layers: [{
+      id: "ai-fixup-1",
+      name: "AI Fixup 1",
+      visible: true,
+      opacity: 1,
+      blendMode: "normal",
+      kind: "paint"
+    }]
+  }, {
+    base: baseImage,
+    layers: new Map([["ai-fixup-1", fixupImage]])
+  }), true);
+  assert.equal(material.map, rebuiltTextures[0]);
+
+  material.userData.texturePaintCompositeGpuTarget = {
+    target: {
+      texture: staleDisplayTexture,
+      dispose() {
+        staleCompositeDisposed += 1;
+      }
+    }
+  };
+  material.map = staleDisplayTexture;
+
+  assert.equal(await editor.previewTextureFixupColorGrade(), true);
+  const layer = material.userData.texturePaintLayerStack.layers[0];
+  assert.equal(layer.texturePaintCpuPainted, true);
+  assert.equal(layer.texturePaintGpuPainted, false);
+  assert.equal(material.userData.texturePaintCompositeGpuTarget, undefined);
+  assert.equal(staleCompositeDisposed, 1);
+  assert.equal(material.map, rebuiltTextures[1]);
+  assert.equal(rebuiltTextures.length, 2);
+  assert.deepEqual(
+    Array.from(layer.canvas.data.slice(0, 3)),
+    [180, 180, 180]
+  );
+});
+
+test("tint picker eyedropper clicks cannot reach the viewport selection handlers", () => {
+  class Editor {}
+  installTextureFixupMethods(Editor);
+  const listenersFor = () => {
+    const listeners = new Map();
+    return {
+      listeners,
+      target: {
+        addEventListener(type, callback) {
+          const callbacks = listeners.get(type) || [];
+          callbacks.push(callback);
+          listeners.set(type, callbacks);
+        },
+        fire(type, event = {}) {
+          for (const callback of listeners.get(type) || []) {
+            callback({ type, target: this, ...event });
+          }
+        }
+      }
+    };
+  };
+  const tint = listenersFor();
+  const tintAmount = listenersFor();
+  const hue = listenersFor();
+  const saturation = listenersFor();
+  const brightness = listenersFor();
+  const toneRange = listenersFor();
+  const applyButton = listenersFor();
+  const cancelButton = listenersFor();
+  const viewportWindow = listenersFor();
+  const canvas = {
+    ownerDocument: {
+      defaultView: viewportWindow.target
+    }
+  };
+  let blurCalls = 0;
+  tint.target.blur = () => {
+    blurCalls += 1;
+  };
+  const editor = new Editor();
+  editor.canvas = canvas;
+  editor.textureFixupTintColor = tint.target;
+  editor.textureFixupTintAmount = tintAmount.target;
+  editor.textureFixupHue = hue.target;
+  editor.textureFixupSaturation = saturation.target;
+  editor.textureFixupBrightness = brightness.target;
+  editor.textureFixupToneRange = toneRange.target;
+  editor.textureFixupGradeApplyButton = applyButton.target;
+  editor.textureFixupGradeCancelButton = cancelButton.target;
+  editor.resetTextureFixupColorGradeInputs = () => {};
+  editor.syncTextureFixupColorGradeControls = () => {};
+  editor.scheduleTextureFixupColorGradePreview = () => {
+    editor.previewCalls = (editor.previewCalls || 0) + 1;
+  };
+  editor.pickTextureColorFromEvent = (event, options) => {
+    editor.tintPick = { event, options };
+    return true;
+  };
+
+  assert.equal(editor.bindTextureFixupColorGradeControls(), true);
+  tint.target.fire("pointerdown");
+  tint.target.fire("input");
+  assert.equal(editor.previewCalls, 1);
+
+  const stopped = [];
+  const pointerEvent = {
+    type: "pointerdown",
+    target: canvas,
+    preventDefault() {
+      stopped.push("preventDefault");
+    },
+    stopImmediatePropagation() {
+      stopped.push("stopImmediatePropagation");
+    },
+    stopPropagation() {
+      stopped.push("stopPropagation");
+    }
+  };
+  for (const callback of viewportWindow.listeners.get("pointerdown") || []) {
+    callback(pointerEvent);
+  }
+  assert.deepEqual(stopped, ["preventDefault", "stopImmediatePropagation", "stopPropagation"]);
+  assert.equal(blurCalls, 1);
+  assert.equal(editor.tintPick.event, pointerEvent);
+  assert.equal(editor.tintPick.options.input, tint.target);
+  assert.equal(editor.tintPick.options.statusLabel, "tint");
+
+  editor.textureFixupTintColorPickerGuardUntil = 0;
+  editor.textureFixupTintColorPickerGestureUntil = 0;
+  const ordinaryPointerEvent = {
+    type: "pointerdown",
+    target: canvas,
+    preventDefault() {
+      ordinaryPointerEvent.prevented = true;
+    }
+  };
+  for (const callback of viewportWindow.listeners.get("pointerdown") || []) {
+    callback(ordinaryPointerEvent);
+  }
+  assert.equal(ordinaryPointerEvent.prevented, undefined);
 });
 
 test("fixup layer kind survives templates, history, and serialization", () => {

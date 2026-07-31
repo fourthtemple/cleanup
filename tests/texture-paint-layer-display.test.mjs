@@ -809,6 +809,209 @@ test("hiding a TSL surface display layer drops the stale live display cache", ()
   assert.equal(targetEntry.liveCompositeLayerMutationSerial, undefined);
 });
 
+test("hiding a CPU-authored import immediately restores the base canvas", () => {
+  const editor = new TestEditor();
+  const baseCanvas = fakeCanvas();
+  const layerCanvas = fakeCanvas();
+  const compositeCanvas = fakeCanvas();
+  baseCanvas.data.set([
+    12, 24, 36, 255,
+    48, 60, 72, 255
+  ]);
+  layerCanvas.data.set([
+    180, 120, 60, 255,
+    200, 140, 80, 255
+  ]);
+  compositeCanvas.data.set(layerCanvas.data);
+  const cloneTexture = { needsUpdate: false };
+  const layer = {
+    id: "ai-fixup-1",
+    name: "AI Fixup 1",
+    visible: true,
+    opacity: 1,
+    blendMode: "normal",
+    canvas: layerCanvas,
+    context: layerCanvas.getContext("2d"),
+    isEmpty: false,
+    texturePaintHasPaint: true,
+    texturePaintCpuPainted: true,
+    texturePaintGpuPainted: false
+  };
+  const material = {
+    map: cloneTexture,
+    needsUpdate: false,
+    userData: {
+      clonePaintCanvas: compositeCanvas,
+      clonePaintContext: compositeCanvas.getContext("2d"),
+      clonePaintTexture: cloneTexture,
+      texturePaintLayerStack: {
+        baseCanvas,
+        baseContext: baseCanvas.getContext("2d"),
+        width: 2,
+        height: 1,
+        activeLayerId: layer.id,
+        selectedLayerIds: [layer.id],
+        selectionAnchorLayerId: layer.id,
+        layers: [layer]
+      }
+    }
+  };
+  editor.texturePaintActiveMaterial = material;
+  editor.textureAirbrushInvalidateWebGpuCache = () => true;
+  editor.texturePaintTslSurfaceAirbrushInvalidate = () => true;
+  editor.textureAirbrushResetSurfaceStroke = () => true;
+  editor.updateClonePaintPreviews = () => true;
+  editor.renderTexturePaintLayerPanel = () => true;
+
+  assert.equal(editor.toggleTexturePaintLayerVisibility(layer.id), true);
+  assert.equal(layer.visible, false);
+  assert.deepEqual(Array.from(compositeCanvas.data), Array.from(baseCanvas.data));
+  assert.equal(material.map, cloneTexture);
+  assert.equal(cloneTexture.needsUpdate, true);
+});
+
+test("forced GPU canvas sync preserves an authoritative CPU import", async () => {
+  const editor = new TestEditor();
+  const importedPixels = [
+    21, 42, 63, 255,
+    84, 105, 126, 255
+  ];
+  const layerCanvas = fakeCanvas();
+  layerCanvas.data.set(importedPixels);
+  const layer = {
+    id: "ai-fixup-1",
+    canvas: layerCanvas,
+    context: layerCanvas.getContext("2d"),
+    isEmpty: false,
+    texturePaintHasPaint: true,
+    texturePaintCpuPainted: true,
+    texturePaintGpuPainted: false,
+    gpuTarget: {
+      target: {
+        texture: {},
+        width: 2,
+        height: 1
+      },
+      width: 2,
+      height: 1,
+      paintRevision: 4,
+      canvasSyncedRevision: 0
+    }
+  };
+  const material = {
+    userData: {
+      texturePaintLayerStack: {
+        baseCanvas: fakeCanvas(),
+        width: 2,
+        height: 1,
+        layers: [layer]
+      }
+    }
+  };
+  let readbacks = 0;
+  editor.renderer = {
+    isWebGPURenderer: true,
+    backend: { isWebGPUBackend: true },
+    async readRenderTargetPixelsAsync() {
+      readbacks += 1;
+      return new Uint8Array([
+        255, 0, 0, 255,
+        255, 0, 0, 255
+      ]);
+    }
+  };
+
+  assert.equal(await editor.flushTexturePaintLayerGpuTargetsToCanvases({
+    material,
+    composite: false,
+    force: true
+  }), 0);
+  assert.equal(readbacks, 0);
+  assert.deepEqual(Array.from(layerCanvas.data), importedPixels);
+});
+
+test("a reloaded CPU fixup layer remains independently hideable", () => {
+  const editor = new TestEditor();
+  editor.createTexturePaintCanvas = fakeCanvas;
+  editor.textureAirbrushInvalidateWebGpuCache = () => true;
+  editor.texturePaintTslSurfaceAirbrushInvalidate = () => true;
+  editor.textureAirbrushResetSurfaceStroke = () => true;
+  editor.updateClonePaintPreviews = () => true;
+  editor.renderTexturePaintLayerPanel = () => true;
+  const rebuiltTextures = [];
+  editor.rebuildTexturePaintCompositeCanvasTexture = (candidateMaterial) => {
+    const texture = {
+      name: `rebuilt-${rebuiltTextures.length + 1}`,
+      image: candidateMaterial.userData.clonePaintCanvas,
+      needsUpdate: true
+    };
+    rebuiltTextures.push(texture);
+    candidateMaterial.userData.clonePaintTexture = texture;
+    candidateMaterial.map = texture;
+    candidateMaterial.needsUpdate = true;
+    return texture;
+  };
+  const baseImage = fakeCanvas();
+  const fixupImage = fakeCanvas();
+  const compositeCanvas = fakeCanvas();
+  baseImage.data.set([
+    10, 20, 30, 255,
+    40, 50, 60, 255
+  ]);
+  fixupImage.data.set([
+    150, 100, 50, 255,
+    180, 120, 60, 255
+  ]);
+  const cloneTexture = { needsUpdate: false };
+  const material = {
+    map: cloneTexture,
+    userData: {
+      clonePaintCanvas: compositeCanvas,
+      clonePaintContext: compositeCanvas.getContext("2d"),
+      clonePaintTexture: cloneTexture
+    }
+  };
+  const editable = {
+    canvas: compositeCanvas,
+    context: compositeCanvas.getContext("2d"),
+    texture: cloneTexture
+  };
+  const entry = {
+    width: 2,
+    height: 1,
+    activeLayerId: "ai-fixup-1",
+    layers: [{
+      id: "ai-fixup-1",
+      name: "AI Fixup 1",
+      visible: true,
+      opacity: 1,
+      blendMode: "normal",
+      kind: "paint"
+    }]
+  };
+
+  assert.equal(editor.texturePaintApplyLayerStackImages(material, editable, entry, {
+    base: baseImage,
+    layers: new Map([["ai-fixup-1", fixupImage]])
+  }), true);
+  const layer = material.userData.texturePaintLayerStack.layers[0];
+  assert.equal(layer.texturePaintCpuPainted, true);
+  assert.equal(layer.texturePaintGpuPainted, false);
+  assert.deepEqual(Array.from(compositeCanvas.data), Array.from(fixupImage.data));
+  assert.equal(rebuiltTextures.length, 1);
+
+  assert.equal(editor.toggleTexturePaintLayerVisibility(layer.id), true);
+  assert.equal(layer.visible, false);
+  assert.deepEqual(Array.from(compositeCanvas.data), Array.from(baseImage.data));
+  assert.equal(material.map, rebuiltTextures[1]);
+
+  assert.equal(editor.toggleTexturePaintLayerVisibility(layer.id), true);
+  assert.equal(layer.visible, true);
+  assert.deepEqual(Array.from(compositeCanvas.data), Array.from(fixupImage.data));
+  assert.equal(material.map, rebuiltTextures[2]);
+  assert.equal(rebuiltTextures.length, 3);
+});
+
 test("cached live layer display rejects stale blend modes", () => {
   const editor = new TestEditor();
   const material = { userData: {} };

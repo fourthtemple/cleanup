@@ -12,6 +12,7 @@ const animationLibraryRoot = resolve(root, "assets/models/animation-library");
 const tutorialMacroAssetPath = resolve(root, "assets/tutorial-macros.json");
 const tutorialRecipeAssetPath = resolve(root, "assets/tutorial-recipes.json");
 const animationFileExtensions = new Set([".fbx", ".glb", ".gltf"]);
+const animationLibraryCleanupRequestLimit = 256 * 1024 * 1024;
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -326,7 +327,7 @@ async function deleteAnimationLibraryFolder(request, response) {
 }
 
 async function saveAnimationLibraryCleanup(request, response) {
-  const payload = await readJsonRequest(request, 16 * 1024 * 1024);
+  const payload = await readJsonRequest(request, animationLibraryCleanupRequestLimit);
   const folderName = sanitizeLibraryFolderName(payload.folder);
   const fileName = sanitizeLibraryJsonFileName(payload.fileName);
   if (!folderName || !fileName) {
@@ -549,16 +550,26 @@ async function readJsonRequest(request, limit) {
 }
 
 async function readRequestBody(request, limit) {
-  let body = "";
+  const declaredLength = Number(request.headers?.["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > limit) {
+    const error = new Error("Request body too large");
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const chunks = [];
+  let byteLength = 0;
   for await (const chunk of request) {
-    body += chunk;
-    if (Buffer.byteLength(body, "utf8") > limit) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    byteLength += buffer.byteLength;
+    if (byteLength > limit) {
       const error = new Error("Request body too large");
       error.statusCode = 413;
       throw error;
     }
+    chunks.push(buffer);
   }
-  return body;
+  return Buffer.concat(chunks, byteLength).toString("utf8");
 }
 
 function sendJson(response, status, payload) {

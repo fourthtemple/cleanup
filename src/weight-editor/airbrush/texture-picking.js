@@ -93,8 +93,7 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
   void deps;
 
   Object.assign(BirdWeightEditor.prototype, {
-    dispatchPickedTextureColorEvents() {
-      const input = this.texturePaintColor || null;
+    dispatchPickedTextureColorEvents(input = this.texturePaintColor) {
       if (!input || typeof input.dispatchEvent !== "function" || typeof Event !== "function") {
         return false;
       }
@@ -103,7 +102,7 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
       return true;
     },
 
-    applyPickedTextureColor(sample) {
+    applyPickedTextureColor(sample, options = {}) {
       if (!sample) {
         return false;
       }
@@ -111,11 +110,13 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
         return false;
       }
       const hex = `#${byteHex(sample.r)}${byteHex(sample.g)}${byteHex(sample.b)}`;
-      if (this.texturePaintColor) {
-        this.texturePaintColor.value = hex;
-        this.dispatchPickedTextureColorEvents?.();
+      const input = options.input || this.texturePaintColor || null;
+      if (input) {
+        input.value = hex;
+        this.dispatchPickedTextureColorEvents?.(input);
       }
-      this.setStatus(`Picked ${hex}`);
+      const statusLabel = String(options.statusLabel || "").trim();
+      this.setStatus(`Picked${statusLabel ? ` ${statusLabel}` : ""} ${hex}`);
       return true;
     },
 
@@ -158,7 +159,7 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
       );
     },
 
-    texturePaintPickEditableColor(context = null) {
+    texturePaintPickEditableColor(context = null, options = {}) {
       const { editable, hitUv } = context || {};
       const { canvas, context: editableContext, texture } = editable || {};
       const pixel = this.clonePaintPixelFromUv(hitUv, canvas, texture);
@@ -167,7 +168,10 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
         return false;
       }
       const data = editableContext.getImageData(pixel.x, pixel.y, 1, 1).data;
-      return this.applyPickedTextureColor?.({ r: data[0], g: data[1], b: data[2], a: data[3] }) || false;
+      return this.applyPickedTextureColor?.(
+        { r: data[0], g: data[1], b: data[2], a: data[3] },
+        options
+      ) || false;
     },
 
     async texturePaintPickWebGpuColor(context = null, targetEntry = null, options = {}) {
@@ -205,32 +209,32 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
       if (options.rejectNearBlack === true && pickColorMagnitude(sample) <= 8) {
         return false;
       }
-      return this.applyPickedTextureColor?.(sample) || false;
+      return this.applyPickedTextureColor?.(sample, options) || false;
     },
 
-    pickTextureColorNear(record, hit) {
+    pickTextureColorNear(record, hit, options = {}) {
       const context = this.texturePaintPickContext?.(record, hit);
       if (!context) {
         return false;
       }
       const targetEntry = this.texturePaintGpuPickTargetEntry?.(context.material, context.editable);
       if (this.texturePaintCanReadWebGpuPickTarget?.(targetEntry)) {
-        this.pickTextureColorNearAsync(record, hit)
+        this.pickTextureColorNearAsync(record, hit, options)
           .then((picked) => {
             if (!picked) {
-              this.texturePaintPickEditableColor?.(context);
+              this.texturePaintPickEditableColor?.(context, options);
             }
           })
           .catch((error) => {
-            this.texturePaintPickEditableColor?.(context);
+            this.texturePaintPickEditableColor?.(context, options);
             this.setStatus?.(`Pick failed: ${error?.message || error}`);
           });
         return true;
       }
-      return this.texturePaintPickEditableColor?.(context) || false;
+      return this.texturePaintPickEditableColor?.(context, options) || false;
     },
 
-    async pickTextureColorNearAsync(record, hit) {
+    async pickTextureColorNearAsync(record, hit, options = {}) {
       const context = this.texturePaintPickContext?.(record, hit);
       if (!context) {
         return false;
@@ -253,7 +257,10 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
             continue;
           }
           try {
-            if (await this.texturePaintPickWebGpuColor(candidateContext, targetEntry, { rejectNearBlack: true })) {
+            if (await this.texturePaintPickWebGpuColor(candidateContext, targetEntry, {
+              ...options,
+              rejectNearBlack: true
+            })) {
               return true;
             }
           } catch (error) {
@@ -264,14 +271,14 @@ export function installTextureAirbrushTexturePickingMethods(BirdWeightEditor, de
       const targetEntry = this.texturePaintGpuPickTargetEntry?.(context.material, context.editable);
       if (this.texturePaintCanReadWebGpuPickTarget?.(targetEntry)) {
         try {
-          if (await this.texturePaintPickWebGpuColor(context, targetEntry)) {
+          if (await this.texturePaintPickWebGpuColor(context, targetEntry, options)) {
             return true;
           }
         } catch (error) {
           this.setStatus?.(`Pick failed: ${error?.message || error}`);
         }
       }
-      return this.texturePaintPickEditableColor?.(context) || false;
+      return this.texturePaintPickEditableColor?.(context, options) || false;
     }
   });
 }

@@ -538,6 +538,46 @@ test("texture picker samples editable pixels without WebGL render targets", () =
   assert.equal(editor.lastStatus, "Picked #0c2238");
 });
 
+test("texture picker can write a sampled color to the tint input", () => {
+  class AppEditor {}
+  installTextureAirbrushMethods(AppEditor, {});
+  const editor = new AppEditor();
+  const material = { map: { uuid: "editable-texture" } };
+  const record = { id: "picker-record" };
+  const hit = { uv: { x: 0.5, y: 0.5 } };
+  editor.clonePaintMaterialForHit = () => material;
+  editor.editableClonePaintTexture = () => ({
+    canvas: { width: 1, height: 1 },
+    context: {
+      getImageData() {
+        return { data: new Uint8ClampedArray([196, 139, 87, 255]) };
+      }
+    },
+    texture: material.map
+  });
+  editor.clonePaintPixelFromUv = () => ({ x: 0, y: 0 });
+  editor.texturePaintColor = { value: "#ffffff" };
+  const tintEvents = [];
+  const tintInput = {
+    value: "#000000",
+    dispatchEvent(event) {
+      tintEvents.push(event.type);
+    }
+  };
+  editor.setStatus = (message) => {
+    editor.lastStatus = message;
+  };
+
+  assert.equal(editor.pickTextureColorNear(record, hit, {
+    input: tintInput,
+    statusLabel: "tint"
+  }), true);
+  assert.equal(editor.texturePaintColor.value, "#ffffff");
+  assert.equal(tintInput.value, "#c48b57");
+  assert.deepEqual(tintEvents, ["input", "change"]);
+  assert.equal(editor.lastStatus, "Picked tint #c48b57");
+});
+
 test("texture picker samples current TSL WebGPU target before stale editable pixels", async () => {
   class AppEditor {}
   installTextureAirbrushMethods(AppEditor, {

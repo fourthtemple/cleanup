@@ -899,6 +899,10 @@ export function installTextureFixupMethods(BirdWeightEditor) {
           layer.name = layerName;
           layer.kind = "paint";
           layer.autoCreated = false;
+          layer.visible = true;
+          layer.opacity = 1;
+          layer.blendMode = "normal";
+          this.disposeTexturePaintLayerGpuState?.(layer);
           layer.context.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
         } else {
           layer = this.texturePaintNewLayer?.(stack, { name: layerName, kind: "paint" });
@@ -934,6 +938,7 @@ export function installTextureFixupMethods(BirdWeightEditor) {
         layer.context.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
         layer.context.drawImage(importedLayer, 0, 0);
         this.texturePaintUpdateLayerEmptyState?.(layer);
+        layer.texturePaintGpuPainted = false;
 
         const maskLayer = stack.layers.find((candidate) => candidate.id === selection.maskLayerId) || null;
         if (maskLayer) {
@@ -942,7 +947,9 @@ export function installTextureFixupMethods(BirdWeightEditor) {
         this.texturePaintSetSingleLayerSelection?.(stack, layer.id);
         this.rememberTexturePaintLayerSelection?.(stack, layer);
         this.texturePaintActiveMaterial = material;
+        this.cancelTexturePaintLayerDisplayComposite?.(material);
         this.discardTexturePaintMaterialAirbrushGpuTarget?.(material);
+        this.discardTexturePaintMaterialGpuComposite?.(material);
         this.invalidateTexturePaintMaterialGpuCaches?.(material, { resetSurfaceStroke: true });
         this.texturePaintCompositeMaterialLayers?.(material, {
           skipGpuFlush: true,

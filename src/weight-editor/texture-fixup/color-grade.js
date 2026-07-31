@@ -11,6 +11,12 @@ export const TEXTURE_FIXUP_COLOR_GRADE_DEFAULTS = Object.freeze({
 });
 
 const TEXTURE_FIXUP_COLOR_RANGES = new Set(["all", "shadows", "midtones", "highlights"]);
+const TEXTURE_FIXUP_COLOR_PICKER_OPEN_GUARD_MS = 60_000;
+const TEXTURE_FIXUP_COLOR_PICKER_SETTLE_GUARD_MS = 750;
+
+function textureFixupInteractionNow() {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
+}
 
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
@@ -313,6 +319,21 @@ function setDisabled(control, disabled) {
   }
 }
 
+function presentTextureFixupCpuLayer(editor, material, layer = null) {
+  if (editor.texturePaintPresentCpuLayerComposite?.(material, { changedLayer: layer })) {
+    return true;
+  }
+  editor.cancelTexturePaintLayerDisplayComposite?.(material);
+  editor.texturePaintTslSurfaceAirbrushInvalidate?.(material);
+  editor.discardTexturePaintMaterialAirbrushGpuTarget?.(material);
+  editor.discardTexturePaintMaterialGpuComposite?.(material);
+  editor.invalidateTexturePaintMaterialGpuCaches?.(material, { resetSurfaceStroke: true });
+  return editor.texturePaintCompositeMaterialLayers?.(material, {
+    skipGpuFlush: true,
+    preferCpuDisplay: true
+  }) === true;
+}
+
 export function installTextureFixupColorGradeMethods(BirdWeightEditor) {
   Object.assign(BirdWeightEditor.prototype, {
     textureFixupColorGradeEntry() {
@@ -515,12 +536,7 @@ export function installTextureFixupColorGradeMethods(BirdWeightEditor) {
       session.layer.texturePaintCpuPainted = true;
       session.layer.texturePaintGpuPainted = false;
       this.texturePaintUpdateLayerEmptyState?.(session.layer);
-      this.discardTexturePaintMaterialAirbrushGpuTarget?.(session.material);
-      this.invalidateTexturePaintMaterialGpuCaches?.(session.material, { resetSurfaceStroke: true });
-      this.texturePaintCompositeMaterialLayers?.(session.material, {
-        skipGpuFlush: true,
-        preferCpuDisplay: true
-      });
+      presentTextureFixupCpuLayer(this, session.material, session.layer);
       this.renderTextureFixupColorHistogram?.(null, { image: graded, layer: session.layer });
       this.syncTextureFixupColorGradeControls?.(session);
       return true;
@@ -610,12 +626,7 @@ export function installTextureFixupColorGradeMethods(BirdWeightEditor) {
       session.layer.texturePaintCpuPainted = true;
       session.layer.texturePaintGpuPainted = false;
       this.texturePaintUpdateLayerEmptyState?.(session.layer);
-      this.discardTexturePaintMaterialAirbrushGpuTarget?.(session.material);
-      this.invalidateTexturePaintMaterialGpuCaches?.(session.material, { resetSurfaceStroke: true });
-      this.texturePaintCompositeMaterialLayers?.(session.material, {
-        skipGpuFlush: true,
-        preferCpuDisplay: true
-      });
+      presentTextureFixupCpuLayer(this, session.material, session.layer);
       this.textureFixupColorGradeSession = null;
       this.invalidateTextureFixupColorHistogram?.();
       this.resetTextureFixupColorGradeInputs?.();
@@ -631,6 +642,53 @@ export function installTextureFixupColorGradeMethods(BirdWeightEditor) {
       return true;
     },
 
+    armTextureFixupTintColorPickerGuard(durationMs = TEXTURE_FIXUP_COLOR_PICKER_OPEN_GUARD_MS) {
+      const duration = Math.max(0, finiteNumber(durationMs));
+      this.textureFixupTintColorPickerGuardUntil = textureFixupInteractionNow() + duration;
+      return this.textureFixupTintColorPickerGuardUntil;
+    },
+
+    consumeTextureFixupTintColorPickerViewportEvent(event = null) {
+      if (!event || event.target !== this.canvas) {
+        return false;
+      }
+      const now = textureFixupInteractionNow();
+      const guardUntil = Math.max(
+        finiteNumber(this.textureFixupTintColorPickerGuardUntil),
+        finiteNumber(this.textureFixupTintColorPickerGestureUntil)
+      );
+      if (now > guardUntil) {
+        this.textureFixupTintColorPickerGuardUntil = 0;
+        this.textureFixupTintColorPickerGestureUntil = 0;
+        return false;
+      }
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      event.stopPropagation?.();
+      const primaryButton = event.button === undefined || event.button === 0;
+      const sampleTint = primaryButton
+        && (
+          event.type === "pointerdown"
+          || (event.type === "mousedown" && this.textureFixupTintColorPickerSampledGesture !== true)
+        );
+      if (sampleTint) {
+        this.textureFixupTintColorPickerSampledGesture = true;
+        this.pickTextureColorFromEvent?.(event, {
+          input: this.textureFixupTintColor,
+          statusLabel: "tint"
+        });
+      }
+      this.textureFixupTintColor?.blur?.();
+      this.textureFixupTintColorPickerGuardUntil = 0;
+      if (event.type === "click") {
+        this.textureFixupTintColorPickerGestureUntil = 0;
+        this.textureFixupTintColorPickerSampledGesture = false;
+      } else {
+        this.textureFixupTintColorPickerGestureUntil = now + TEXTURE_FIXUP_COLOR_PICKER_SETTLE_GUARD_MS;
+      }
+      return true;
+    },
+
     bindTextureFixupColorGradeControls() {
       for (const control of [
         this.textureFixupTintColor,
@@ -642,6 +700,32 @@ export function installTextureFixupColorGradeMethods(BirdWeightEditor) {
         control?.addEventListener("input", () => {
           this.scheduleTextureFixupColorGradePreview?.();
         });
+      }
+      const tintColor = this.textureFixupTintColor;
+      const armTintPicker = () => {
+        this.armTextureFixupTintColorPickerGuard?.();
+      };
+      const settleTintPicker = () => {
+        this.armTextureFixupTintColorPickerGuard?.(TEXTURE_FIXUP_COLOR_PICKER_SETTLE_GUARD_MS);
+      };
+      tintColor?.addEventListener("pointerdown", armTintPicker);
+      tintColor?.addEventListener("mousedown", armTintPicker);
+      tintColor?.addEventListener("click", armTintPicker);
+      tintColor?.addEventListener("input", settleTintPicker);
+      tintColor?.addEventListener("change", () => {
+        settleTintPicker();
+        tintColor.blur?.();
+      });
+      tintColor?.addEventListener("blur", settleTintPicker);
+      if (!this.textureFixupTintColorPickerViewportGuardBound) {
+        const viewportWindow = this.canvas?.ownerDocument?.defaultView || globalThis.window;
+        const guardViewportEvent = (event) => {
+          this.consumeTextureFixupTintColorPickerViewportEvent?.(event);
+        };
+        for (const eventName of ["pointerdown", "mousedown", "click"]) {
+          viewportWindow?.addEventListener?.(eventName, guardViewportEvent, { capture: true });
+        }
+        this.textureFixupTintColorPickerViewportGuardBound = true;
       }
       this.textureFixupToneRange?.addEventListener("change", () => {
         this.scheduleTextureFixupColorGradePreview?.();

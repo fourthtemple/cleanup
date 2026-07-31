@@ -4828,7 +4828,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
       }
     },
 
-    pickTextureColorFromEvent(event) {
+    pickTextureColorFromEvent(event, options = {}) {
       if (!this.model) {
         return false;
       }
@@ -4842,7 +4842,7 @@ export function installPaintToolMethods(BirdWeightEditor, deps) {
         this.setStatus("Pick needs the cursor over textured mesh");
         return false;
       }
-      return this.pickTextureColorNear?.(textureHit.record, textureHit.hit) || false;
+      return this.pickTextureColorNear?.(textureHit.record, textureHit.hit, options) || false;
     },
 
     refreshSkinnedRaycastBounds(options = {}) {
